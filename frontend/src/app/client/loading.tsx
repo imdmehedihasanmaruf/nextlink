@@ -1,0 +1,1 @@
+export default function Loading() { return <main className="loading-page" aria-label="Loading customer portal"><span className="loading-mark">n</span><span className="loading-line" /><span className="loading-line short" /></main>; }
