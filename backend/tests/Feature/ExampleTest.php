@@ -16,4 +16,9 @@ class ExampleTest extends TestCase
 
         $response->assertStatus(200);
     }
+
+    public function test_health_endpoint_does_not_require_a_database(): void
+    {
+        $this->get('/up')->assertOk()->assertSeeText('Application up');
+    }
 }

@@ -26,7 +26,7 @@ export function LiveReports() {
         finally { setBusy(false); }
     }, []);
 
-    useEffect(() => { void load(); }, [load]);
+    useEffect(() => { void Promise.resolve().then(load); }, [load]);
 
     const summary = useMemo(() => {
         if (!data) return null;

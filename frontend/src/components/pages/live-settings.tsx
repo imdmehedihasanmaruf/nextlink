@@ -55,7 +55,7 @@ export function LiveSettings() {
         }
     }, []);
 
-    useEffect(() => { void load(); }, [load]);
+    useEffect(() => { void Promise.resolve().then(load); }, [load]);
 
     const dirtyKeys = useMemo(() => {
         const original: Record<string, string> = {};

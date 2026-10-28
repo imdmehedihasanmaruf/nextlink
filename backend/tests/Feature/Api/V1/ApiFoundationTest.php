@@ -119,7 +119,7 @@ class ApiFoundationTest extends TestCase
         $one = User::create(['name' => 'One', 'email' => 'one@example.test', 'password' => Hash::make('password')]);
         $two = User::create(['name' => 'Two', 'email' => 'two@example.test', 'password' => Hash::make('password')]);
         $subscriber = Subscriber::create(['user_id' => $two->id, 'subscriber_number' => 'SUB-0005', 'status' => 'active']);
-        $this->actingAs($one)->postJson('/api/v1/tickets', ['subscriber_id' => $subscriber->id, 'subject' => 'Help', 'description' => 'Please help'])        ->assertForbidden();
+        $this->actingAs($one)->postJson('/api/v1/tickets', ['subscriber_id' => $subscriber->id, 'subject' => 'Help', 'description' => 'Please help'])->assertForbidden();
     }
 
     public function test_subscriber_cannot_read_another_subscribers_invoices(): void
