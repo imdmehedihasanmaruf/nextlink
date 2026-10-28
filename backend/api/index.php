@@ -2,7 +2,7 @@
 
 $storagePath = rtrim(sys_get_temp_dir(), DIRECTORY_SEPARATOR).DIRECTORY_SEPARATOR.'nextlink-laravel';
 
-foreach (['app', 'framework/cache/data', 'framework/sessions', 'framework/views', 'logs'] as $directory) {
+foreach (['app', 'bootstrap/cache', 'framework/cache/data', 'framework/sessions', 'framework/views', 'logs'] as $directory) {
     $path = $storagePath.DIRECTORY_SEPARATOR.$directory;
 
     if (! is_dir($path) && ! mkdir($path, 0755, true) && ! is_dir($path)) {
@@ -17,6 +17,19 @@ foreach (['app', 'framework/cache/data', 'framework/sessions', 'framework/views'
 $_ENV['LARAVEL_STORAGE_PATH'] = $storagePath;
 $_SERVER['LARAVEL_STORAGE_PATH'] = $storagePath;
 $_SERVER['SCRIPT_NAME'] = '/index.php';
+
+$cachePath = $storagePath.DIRECTORY_SEPARATOR.'bootstrap'.DIRECTORY_SEPARATOR.'cache';
+
+if (DIRECTORY_SEPARATOR === '\\' && preg_match('/^[A-Za-z]:/', $cachePath) === 1) {
+    $cachePath = substr($cachePath, 2);
+}
+
+foreach (['APP_CONFIG_CACHE' => 'config.php', 'APP_EVENTS_CACHE' => 'events.php', 'APP_PACKAGES_CACHE' => 'packages.php', 'APP_ROUTES_CACHE' => 'routes-v7.php', 'APP_SERVICES_CACHE' => 'services.php'] as $key => $file) {
+    $path = $cachePath.DIRECTORY_SEPARATOR.$file;
+    $_ENV[$key] = $path;
+    $_SERVER[$key] = $path;
+    putenv($key.'='.$path);
+}
 
 if ((getenv('APP_ENV') ?: 'production') === 'production') {
     ini_set('display_errors', '0');
