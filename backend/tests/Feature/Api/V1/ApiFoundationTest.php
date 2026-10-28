@@ -13,6 +13,31 @@ class ApiFoundationTest extends TestCase
 {
     use RefreshDatabase;
 
+    public function test_health_endpoint_returns_ok(): void
+    {
+        $this->get('/up')->assertOk()->assertSeeText('Application up');
+    }
+
+    public function test_cors_preflight_allows_the_production_frontend(): void
+    {
+        $this->withHeaders([
+            'Origin' => 'https://nextlink-isp.vercel.app',
+            'Access-Control-Request-Method' => 'POST',
+            'Access-Control-Request-Headers' => 'content-type,accept',
+        ])->options('/api/v1/auth/login')
+            ->assertNoContent()
+            ->assertHeader('Access-Control-Allow-Origin', 'https://nextlink-isp.vercel.app');
+    }
+
+    public function test_invalid_login_credentials_are_rejected(): void
+    {
+        User::create(['name' => 'Admin', 'email' => 'admin@example.test', 'password' => Hash::make('correct-horse-battery'), 'role' => 'super_admin']);
+
+        $this->postJson('/api/v1/auth/login', ['email' => 'admin@example.test', 'password' => 'incorrect-password'])
+            ->assertUnprocessable()
+            ->assertJsonValidationErrors('email');
+    }
+
     public function test_login_returns_a_sanctum_token_and_me_requires_authentication(): void
     {
         User::create(['name' => 'Admin', 'email' => 'admin@example.test', 'password' => Hash::make('correct-horse-battery'), 'role' => 'super_admin']);

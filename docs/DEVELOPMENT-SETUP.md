@@ -56,7 +56,7 @@ php artisan migrate
 php artisan serve --host=127.0.0.1 --port=8000
 ```
 
-The V1 API is served at `http://127.0.0.1:8000/api/v1`. Configure the frontend with `NEXT_PUBLIC_API_BASE_URL=http://127.0.0.1:8000/api/v1`. The admin, client, technician and most public screens are still demo UI, not real API-backed workflows. A configured API base URL is mandatory outside development; the client fails closed if it is missing.
+The V1 API is served at `http://127.0.0.1:8000/api/v1`. Configure the frontend with `NEXT_PUBLIC_API_BASE_URL=http://127.0.0.1:8000/api`; the API client appends `/v1`. The admin login and several API services are live; other portal workflows may still use demo UI. A configured API base URL is mandatory outside development; the client fails closed if it is missing.
 
 ## Demo and future backend
 
@@ -67,3 +67,11 @@ The administrator screen illustrates Super Admin, Accounts/Billing, Support/Help
 ## Production deployment gate
 
 This repository is not production-ready for live ISP operations. Before deployment, provide a generated `APP_KEY`, `APP_DEBUG=false`, production PostgreSQL credentials, HTTPS URLs, exact `CORS_ALLOWED_ORIGINS`, secure mail/queue/cache/storage configuration, and `NEXT_PUBLIC_API_BASE_URL`. Never use example SQLite/local/log settings as production configuration. Verify backups, migrations, monitoring, rate limits and recovery procedures. The `disabled` MikroTik adapter is intentional: no live router action should be reported as successful until an implemented adapter is configured. Production payment processing requires a real provider integration, signed callback verification and idempotency.
+
+### Split Vercel deployment
+
+Deploy `frontend/` and `backend/` as separate Vercel projects from the same repository. Set the frontend project's Root Directory to `frontend` and its Production environment variable `NEXT_PUBLIC_API_BASE_URL` to `https://nextlink-backend.vercel.app/api`. Set the backend project's Root Directory to `backend`, Framework Preset to `Other`, and Build Command override to empty; Laravel's PHP function does not need the backend Vite build. The backend `vercel.json` routes requests to its PHP function, and `backend/api/index.php` places Laravel's writable runtime storage under `/tmp`.
+
+Set these backend Production environment variables in Vercel: `APP_ENV=production`, `APP_DEBUG=false`, `APP_KEY` (generate a unique Laravel key and store it as a secret), `APP_URL=https://nextlink-backend.vercel.app`, `DB_CONNECTION=pgsql`, `DB_HOST`, `DB_PORT=5432`, `DB_DATABASE`, `DB_USERNAME`, `DB_PASSWORD` (or a provider-supported `DB_URL`), and `CORS_ALLOWED_ORIGINS=https://nextlink-isp.vercel.app`. Use a persistent managed PostgreSQL database; do not use SQLite on Vercel. Use `LOG_CHANNEL=stderr`. For cache and rate limiting use a persistent cache store, preferably database or Redis; do not use the in-memory array cache for production login throttling. The API uses Sanctum bearer tokens, so `SANCTUM_STATEFUL_DOMAINS` is not required for the current browser login flow. Set third-party credentials only when those integrations are implemented and needed.
+
+After setting backend variables, deploy the backend first and verify `/up` returns HTTP 200, `/api/v1/packages` returns JSON, `/api/v1/dashboard` returns 401 without a token, and an `OPTIONS` request from the frontend origin includes `Access-Control-Allow-Origin`. Then set the frontend variable and redeploy the frontend. Run database migrations against the managed production database from a controlled deployment process after taking a backup; never run destructive migrations against production without review.
