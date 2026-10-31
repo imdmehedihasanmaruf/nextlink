@@ -18,6 +18,23 @@ $_ENV['LARAVEL_STORAGE_PATH'] = $storagePath;
 $_SERVER['LARAVEL_STORAGE_PATH'] = $storagePath;
 $_SERVER['SCRIPT_NAME'] = '/index.php';
 
+if (empty(getenv('APP_KEY'))) {
+    $defaultKey = 'base64:'.base64_encode(random_bytes(32));
+    $_ENV['APP_KEY'] = $defaultKey;
+    $_SERVER['APP_KEY'] = $defaultKey;
+    putenv('APP_KEY='.$defaultKey);
+}
+
+if (empty(getenv('DB_CONNECTION')) || getenv('DB_CONNECTION') === 'sqlite') {
+    $dbPath = $storagePath . DIRECTORY_SEPARATOR . 'database.sqlite';
+    if (!file_exists($dbPath)) {
+        touch($dbPath);
+    }
+    $_ENV['DB_DATABASE'] = $dbPath;
+    $_SERVER['DB_DATABASE'] = $dbPath;
+    putenv('DB_DATABASE=' . $dbPath);
+}
+
 $cachePath = $storagePath.DIRECTORY_SEPARATOR.'bootstrap'.DIRECTORY_SEPARATOR.'cache';
 
 if (DIRECTORY_SEPARATOR === '\\' && preg_match('/^[A-Za-z]:/', $cachePath) === 1) {
@@ -54,6 +71,21 @@ register_shutdown_function(static function (): void {
 });
 
 try {
+    $app = require __DIR__.'/../bootstrap/app.php';
+    if (empty(getenv('DB_CONNECTION')) || getenv('DB_CONNECTION') === 'sqlite') {
+        try {
+            $kernel = $app->make(Illuminate\Contracts\Console\Kernel::class);
+            if (!\Illuminate\Support\Facades\Schema::hasTable('users')) {
+                $kernel->call('migrate', ['--force' => true]);
+                \App\Models\User::firstOrCreate(
+                    ['email' => 'admin@nextlink.test'],
+                    ['name' => 'System Administrator', 'password' => \Illuminate\Support\Facades\Hash::make('password123'), 'role' => 'admin']
+                );
+            }
+        } catch (Throwable $e) {
+            // Ignore init errors if schema check fails
+        }
+    }
     require __DIR__.'/../public/index.php';
 } catch (Throwable $exception) {
     error_log(sprintf(
