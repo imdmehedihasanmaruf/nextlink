@@ -1,0 +1,300 @@
+'use client';
+
+import { create } from 'zustand';
+import { persist } from 'zustand/middleware';
+import { 
+  mockPackages, 
+  mockSubscribers, 
+  mockInvoices, 
+  mockTickets, 
+  mockTechnicians, 
+  type Package, 
+  type Subscriber, 
+  type Invoice, 
+  type Ticket, 
+  type Technician, 
+  type TicketStatus, 
+  type TechnicianStatus 
+} from '@/lib/mockData';
+import { defaultRoles, type Role } from '@/lib/roles';
+
+interface AdminDataState {
+  packages: Package[];
+  subscribers: Subscriber[];
+  invoices: Invoice[];
+  tickets: Ticket[];
+  technicians: Technician[];
+  roles: Role[];
+  referralRewards?: any;
+  boostBandwidth?: any;
+  liveLatency?: any;
+  interfaceTraffic?: any;
+  peeringHubs?: any[];
+  isLoading: boolean;
+  lastSync: string | null;
+
+  fetchData: () => Promise<void>;
+  saveCollection: (type: string, data: any) => Promise<void>;
+  saveItem: (type: string, data: any) => Promise<void>;
+
+  // Package actions
+  addPackage: (pkg: Package) => Promise<void>;
+  updatePackage: (pkg: Package) => Promise<void>;
+  deletePackage: (id: string) => Promise<void>;
+
+  // Subscriber actions
+  addSubscriber: (sub: Subscriber) => Promise<void>;
+  updateSubscriber: (sub: Subscriber) => Promise<void>;
+  deleteSubscriber: (id: string) => Promise<void>;
+
+  // Invoice actions
+  updateInvoiceStatus: (id: string, status: 'paid' | 'unpaid' | 'overdue') => Promise<void>;
+  generateMonthlyInvoices: () => Promise<number>;
+  deleteInvoice: (id: string) => Promise<void>;
+
+  // Ticket actions
+  createTicket: (ticket: Ticket) => Promise<void>;
+  updateTicketStatus: (id: string, status: TicketStatus) => Promise<void>;
+  assignTicketTechnician: (ticketId: string, technicianName: string) => Promise<void>;
+  addTicketMessage: (ticketId: string, message: any) => Promise<void>;
+  deleteTicket: (id: string) => Promise<void>;
+
+  // Technician actions
+  updateTechnicianStatus: (id: string, status: TechnicianStatus) => Promise<void>;
+  addTechnician: (tech: Technician) => Promise<void>;
+  deleteTechnician: (id: string) => Promise<void>;
+
+  // Role actions (Requirement 27)
+  addRole: (role: Role) => Promise<void>;
+  updateRole: (role: Role) => Promise<void>;
+  deleteRole: (id: string) => Promise<void>;
+  removePermissionFromRole: (roleId: string, permKey: string) => Promise<void>;
+
+  clearCollection: (type: 'packages' | 'subscribers' | 'invoices' | 'tickets' | 'technicians') => Promise<void>;
+}
+
+export const useAdminDataStore = create<AdminDataState>()(
+  persist(
+    (set, get) => ({
+      packages: [],
+      subscribers: [],
+      invoices: [],
+      tickets: [],
+      technicians: [],
+      roles: defaultRoles,
+      isLoading: false,
+      lastSync: null,
+
+      fetchData: async () => {
+        try {
+          set({ isLoading: true });
+          const res = await fetch('/api/data?t=' + Date.now(), { cache: 'no-store' });
+          if (res.ok) {
+            const data = await res.json();
+            set({
+              packages: data.packages ?? [],
+              subscribers: data.subscribers ?? [],
+              invoices: data.invoices ?? [],
+              tickets: data.tickets ?? [],
+              technicians: data.technicians ?? [],
+              roles: data.roles ?? defaultRoles,
+              referralRewards: data.referralRewards ?? null,
+              boostBandwidth: data.boostBandwidth ?? null,
+              liveLatency: data.liveLatency ?? null,
+              interfaceTraffic: data.interfaceTraffic ?? null,
+              peeringHubs: data.peeringHubs ?? [],
+              lastSync: new Date().toISOString(),
+              isLoading: false,
+            });
+          } else {
+            set({ isLoading: false });
+          }
+        } catch (e) {
+          set({ isLoading: false });
+        }
+      },
+
+      saveCollection: async (type: string, data: any) => {
+        try {
+          await fetch('/api/data', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ type, data }),
+          });
+        } catch (e) {}
+      },
+
+      saveItem: async (type: string, data: any) => {
+        try {
+          set({ [type]: data } as any);
+          await fetch('/api/data', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ type, data }),
+          });
+        } catch (e) {}
+      },
+
+      // Packages
+      addPackage: async (pkg: Package) => {
+        const updated = [...get().packages, pkg];
+        set({ packages: updated });
+        await get().saveCollection('packages', updated);
+      },
+      updatePackage: async (pkg: Package) => {
+        const updated = get().packages.map(p => p.id === pkg.id ? pkg : p);
+        set({ packages: updated });
+        await get().saveCollection('packages', updated);
+      },
+      deletePackage: async (id: string) => {
+        const updated = get().packages.filter(p => p.id !== id);
+        set({ packages: updated });
+        await get().saveCollection('packages', updated);
+      },
+
+      // Subscribers
+      addSubscriber: async (sub: Subscriber) => {
+        const updated = [sub, ...get().subscribers];
+        set({ subscribers: updated });
+        await get().saveCollection('subscribers', updated);
+      },
+      updateSubscriber: async (sub: Subscriber) => {
+        const updated = get().subscribers.map(s => s.id === sub.id ? sub : s);
+        set({ subscribers: updated });
+        await get().saveCollection('subscribers', updated);
+      },
+      deleteSubscriber: async (id: string) => {
+        const updated = get().subscribers.filter(s => s.id !== id);
+        set({ subscribers: updated });
+        await get().saveCollection('subscribers', updated);
+      },
+
+      // Invoices
+      updateInvoiceStatus: async (id: string, status: 'paid' | 'unpaid' | 'overdue') => {
+        const updated = get().invoices.map(inv => inv.id === id ? {
+          ...inv,
+          status,
+          paidDate: status === 'paid' ? new Date().toISOString() : inv.paidDate
+        } : inv);
+        set({ invoices: updated });
+        await get().saveCollection('invoices', updated);
+      },
+      generateMonthlyInvoices: async () => {
+        const subscribers = get().subscribers.filter(s => s.status === 'active');
+        const currentMonth = new Date().toLocaleString('en-US', { month: 'short', year: 'numeric' });
+        const newInvoices: Invoice[] = subscribers.map((sub, idx) => ({
+          id: `INV-${new Date().getFullYear()}-${String(get().invoices.length + idx + 1).padStart(4, '0')}`,
+          subscriberId: sub.id,
+          subscriberName: sub.name,
+          phone: sub.phone,
+          packageName: sub.packageName,
+          amount: sub.balance < 0 ? Math.abs(sub.balance) : 79,
+          month: currentMonth,
+          issueDate: new Date().toISOString().split('T')[0],
+          dueDate: new Date(Date.now() + 10 * 86400000).toISOString().split('T')[0],
+          status: 'unpaid' as const,
+        }));
+        const updated = [...newInvoices, ...get().invoices];
+        set({ invoices: updated });
+        await get().saveCollection('invoices', updated);
+        return newInvoices.length;
+      },
+
+      // Tickets
+      createTicket: async (ticket: Ticket) => {
+        const updated = [ticket, ...get().tickets];
+        set({ tickets: updated });
+        await get().saveCollection('tickets', updated);
+      },
+      updateTicketStatus: async (id: string, status: TicketStatus) => {
+        const updated = get().tickets.map(t => t.id === id ? {
+          ...t,
+          status,
+          updatedAt: new Date().toISOString()
+        } : t);
+        set({ tickets: updated });
+        await get().saveCollection('tickets', updated);
+      },
+      assignTicketTechnician: async (ticketId: string, technicianName: string) => {
+        const updated = get().tickets.map(t => t.id === ticketId ? {
+          ...t,
+          assignedTo: technicianName,
+          updatedAt: new Date().toISOString()
+        } : t);
+        set({ tickets: updated });
+        await get().saveCollection('tickets', updated);
+      },
+      addTicketMessage: async (ticketId: string, message: any) => {
+        const updated = get().tickets.map(t => t.id === ticketId ? {
+          ...t,
+          messages: [...t.messages, message],
+          updatedAt: new Date().toISOString()
+        } : t);
+        set({ tickets: updated });
+        await get().saveCollection('tickets', updated);
+      },
+
+      // Technicians
+      updateTechnicianStatus: async (id: string, status: TechnicianStatus) => {
+        const updated = get().technicians.map(tech => tech.id === id ? {
+          ...tech,
+          status
+        } : tech);
+        set({ technicians: updated });
+        await get().saveCollection('technicians', updated);
+      },
+      addTechnician: async (tech: Technician) => {
+        const updated = [...get().technicians, tech];
+        set({ technicians: updated });
+        await get().saveCollection('technicians', updated);
+      },
+
+      // Roles (Requirement 27)
+      addRole: async (role: Role) => {
+        const updated = [...get().roles, role];
+        set({ roles: updated });
+        await get().saveCollection('roles', updated);
+      },
+      updateRole: async (role: Role) => {
+        const updated = get().roles.map(r => r.id === role.id ? role : r);
+        set({ roles: updated });
+        await get().saveCollection('roles', updated);
+      },
+      deleteRole: async (id: string) => {
+        const updated = get().roles.filter(r => r.id !== id);
+        set({ roles: updated });
+        await get().saveCollection('roles', updated);
+      },
+      deleteInvoice: async (id: string) => {
+        const updated = get().invoices.filter(i => i.id !== id);
+        set({ invoices: updated });
+        await get().saveCollection('invoices', updated);
+      },
+      deleteTicket: async (id: string) => {
+        const updated = get().tickets.filter(t => t.id !== id);
+        set({ tickets: updated });
+        await get().saveCollection('tickets', updated);
+      },
+      deleteTechnician: async (id: string) => {
+        const updated = get().technicians.filter(t => t.id !== id);
+        set({ technicians: updated });
+        await get().saveCollection('technicians', updated);
+      },
+      removePermissionFromRole: async (roleId: string, permKey: string) => {
+        const updated = get().roles.map(r => r.id === roleId ? {
+          ...r,
+          permissions: (r.permissions || []).filter(p => p !== permKey)
+        } : r);
+        set({ roles: updated });
+        await get().saveCollection('roles', updated);
+      },
+      clearCollection: async (type: string) => {
+        set({ [type]: [] } as any);
+        await get().saveCollection(type, []);
+      },
+    }),
+    {
+      name: 'nextlink-admin-persistent-store',
+    }
+  )
+);

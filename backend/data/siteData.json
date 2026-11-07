@@ -1,0 +1,237 @@
+{
+  "nav": {
+    "homeEn": "Home",
+    "applyEn": "Get Connected",
+    "supportEn": "Support",
+    "applyBtnEn": "Order Service",
+    "coverageEn": "Coverage",
+    "loginBtnEn": "Login"
+  },
+  "hero": {
+    "stats": [],
+    "badgeEn": "🚀 Ultra Low-Latency Tier-1 Global Backbone",
+    "titleEn": "Blazing Fast Optical Gigabit Internet For Homes & Enterprises Worldwide",
+    "subtitleEn": "Experience symmetrical gigabit speeds up to 2.5 Gbps with direct Tier-1 cloud peering, bufferless 8K streaming, and 99.99% uptime SLA.",
+    "primaryBtnTextEn": "Explore Plans",
+    "secondaryBtnTextEn": "Check Availability"
+  },
+  "brand": {
+    "name": "NextLink Global",
+    "email": "support@nextlink.global",
+    "phone": "+1 (800) 550-LINK",
+    "address": "One World Trade Center, Suite 8500, New York, NY 10007, USA",
+    "tagline": "Next-Gen Ultra Fast Optical Fiber & Global Gigabit Internet",
+    "youtube": "",
+    "facebook": "",
+    "officeHours": "24/7 Global NOC & Support",
+    "logoSubtitle": "GLOBAL FIBER NETWORK"
+  },
+  "footer": {
+    "copyrightEn": "All rights reserved."
+  },
+  "notice": {
+    "active": false,
+    "textEn": ""
+  },
+  "packages": [
+    {
+      "id": "PKG-8181",
+      "name": "Basic Fiber",
+      "speed": 50,
+      "uploadSpeed": 50,
+      "price": 99,
+      "bdixSpeed": 500,
+      "popular": false,
+      "features": [
+        "50 Mbps Symmetrical Fiber",
+        "Unlimited Global Bandwidth",
+        "24/7 Dedicated Support"
+      ]
+    }
+  ],
+  "ctaBanner": {
+    "titleEn": "Ready For Blazing Fast Gigabit Fiber Worldwide?",
+    "btnCallEn": "Call Support",
+    "btnApplyEn": "Apply Now"
+  },
+  "mediaHubs": {
+    "ftpUrl": "",
+    "liveTvUrl": "",
+    "speedtestUrl": ""
+  },
+  "retention": {},
+  "liveLatency": {
+    "title": "Realtime Ping & Latency",
+    "enabled": true,
+    "targets": [
+      {
+        "id": "LAT-1",
+        "host": "pop.nextlink.net",
+        "name": "Direct POP Peering",
+        "ping": "1.4 ms",
+        "status": "optimal"
+      },
+      {
+        "id": "LAT-2",
+        "host": "1.1.1.1",
+        "name": "Cloudflare Edge (1.1.1.1)",
+        "ping": "2.3 ms",
+        "status": "optimal"
+      },
+      {
+        "id": "LAT-3",
+        "host": "8.8.8.8",
+        "name": "Google DNS (8.8.8.8)",
+        "ping": "3.1 ms",
+        "status": "optimal"
+      },
+      {
+        "id": "LAT-4",
+        "host": "aws.amazon.com",
+        "name": "AWS Cloud Peering",
+        "ping": "5.0 ms",
+        "status": "optimal"
+      }
+    ],
+    "description": "Real-time response to Tier-1 international backbones"
+  },
+  "peeringHubs": [
+    {
+      "id": "HUB-1",
+      "url": "https://speedtest.net",
+      "name": "Speedtest Diagnostic",
+      "badge": "Tier-1",
+      "status": "Active",
+      "category": "speedtest"
+    },
+    {
+      "id": "HUB-2",
+      "url": "https://storage.nextlink.global",
+      "name": "Global Storage CDN",
+      "badge": "Gigabit",
+      "status": "Active",
+      "category": "cdn"
+    },
+    {
+      "id": "HUB-3",
+      "url": "https://tv.nextlink.global",
+      "name": "Ultra HD Streaming",
+      "badge": "4K HDR",
+      "status": "Active",
+      "category": "streaming"
+    },
+    {
+      "id": "HUB-4",
+      "url": "https://cloudflare.com",
+      "name": "Cloudflare IX Gateway",
+      "badge": "Edge Anycast",
+      "status": "Active",
+      "category": "peering"
+    }
+  ],
+  "coverageAreas": [],
+  "boostBandwidth": {
+    "title": "1-Click 1 Gbps Turbo Boost",
+    "status": "Ready",
+    "enabled": true,
+    "history": [
+      {
+        "id": "BST-001",
+        "date": "2026-11-05",
+        "speed": 1000,
+        "status": "Completed",
+        "duration": 6,
+        "subscriber": "NL-SUB-0192"
+      }
+    ],
+    "boostSpeed": 1000,
+    "description": "Instantly scale bandwidth for massive cloud syncs, torrents, or gaming",
+    "durationHours": 6,
+    "burstQuotaPerMonth": 3
+  },
+  "coverageSection": {
+    "titleEn": "Worldwide Active Metro Coverage Zones",
+    "subtitleEn": "Connected across global metropolitan cities and expanding."
+  },
+  "packagesSection": {
+    "badgeEn": "International Gigabit Plans",
+    "titleEn": "Choose Your Ideal Worldwide Fiber Plan",
+    "subtitleEn": "All plans include 100% symmetrical speeds, unlimited bandwidth, and dedicated IPv4/IPv6.",
+    "chooseBtnEn": "Select Plan",
+    "popularBadgeEn": "Most Popular"
+  },
+  "referralRewards": {
+    "title": "Earn $25 on Your Next Invoice",
+    "enabled": true,
+    "tierName": "Platinum Tier",
+    "referrals": [
+      {
+        "id": "REF-001",
+        "date": "2026-10-14",
+        "name": "Alexander Wright",
+        "email": "alex.w@cloudcorp.io",
+        "reward": 25,
+        "status": "Rewarded"
+      },
+      {
+        "id": "REF-002",
+        "date": "2026-10-28",
+        "name": "Elena Rostova",
+        "email": "elena.r@quantum.tech",
+        "reward": 25,
+        "status": "Rewarded"
+      },
+      {
+        "id": "REF-003",
+        "date": "2026-11-02",
+        "name": "Marcus Vance",
+        "email": "marcus.v@edgefiber.net",
+        "reward": 25,
+        "status": "Rewarded"
+      }
+    ],
+    "bonusAmount": 25,
+    "defaultCode": "NL-GLOBAL-REF",
+    "description": "Share your unique invite link with colleagues or neighbors worldwide",
+    "discountPercent": 10,
+    "totalSavedAmount": 75,
+    "friendsJoinedCount": 3
+  },
+  "interfaceTraffic": {
+    "oltPort": "2/1/4",
+    "interfaces": [
+      {
+        "id": "IF-1",
+        "rx": "4.82 Gbps",
+        "tx": "3.91 Gbps",
+        "name": "sfp-sfpplus1 (Uplink)",
+        "type": "Optical 10G SFP+",
+        "status": "Up"
+      },
+      {
+        "id": "IF-2",
+        "rx": "498.2 Mbps",
+        "tx": "494.7 Mbps",
+        "name": "ether1-gateway (Client Drop)",
+        "type": "Gigabit Ethernet",
+        "status": "Up"
+      },
+      {
+        "id": "IF-3",
+        "rx": "1.24 Gbps",
+        "tx": "1.18 Gbps",
+        "name": "gpon-olt-port (Fiber PON)",
+        "type": "GPON ITU-T G.984",
+        "status": "Up"
+      }
+    ],
+    "totalQuota": "Unlimited Symmetrical",
+    "gatewayIPv4": "198.51.100.12",
+    "gatewayIPv6": "2001:db8:85a3::8a2e:370:7334",
+    "allocatedSpeed": 500,
+    "consumedDataGB": "648.2 GB",
+    "terminalStatus": "Synchronized",
+    "uploadRateMbps": 494.7,
+    "downloadRateMbps": 498.2
+  }
+}
