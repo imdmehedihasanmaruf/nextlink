@@ -13,6 +13,7 @@ import { Label } from '@/components/ui/label'
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
 import { useTranslation } from '@/store/settingsStore'
 import { useAuthStore } from '@/store/authStore'
+import { subscriberLogin } from '@/lib/portalApi'
 
 const schema = z.object({
   username: z.string().min(2, 'Username or Customer ID is required'),
@@ -71,6 +72,11 @@ function LoginForm() {
 
       // Successful login
       login(result.user)
+
+      // Obtain a token for the billing service so real invoice payment and
+      // auto-reconnection work. The billing service may be offline during
+      // local development — that must never block the portal sign-in.
+      subscriberLogin(data.username.trim(), data.password.trim()).catch(() => undefined)
 
       const target = redirectParam || '/dashboard'
       router.push(target)

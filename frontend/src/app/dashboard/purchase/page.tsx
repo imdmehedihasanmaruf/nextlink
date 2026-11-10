@@ -332,7 +332,7 @@ function PurchaseContent() {
     try {
       const formattedTimestamp = `${currentTime.date || '09/11/2026'} · ${currentTime.time || '12:00PM'}`
       const formattedLocation = `${purchaseLocation.city}, ${purchaseLocation.postalCode}, ${purchaseLocation.state}, ${purchaseLocation.country}`
-      const formattedTypeLabel = purchaseType === 'upgrade' ? 'Package Plan Upgrade' : 'Additional Secondary Drop'
+      const formattedTypeLabel = purchaseType === 'UPGRADE' ? 'Package Plan Upgrade' : 'Additional Secondary Drop'
 
       const res = await fetch('/api/customer/orders/create-and-pay', {
         method: 'POST',

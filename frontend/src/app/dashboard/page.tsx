@@ -44,6 +44,7 @@ import { Label } from '@/components/ui/label'
 import { useAuthStore } from '@/store/authStore'
 import { useTranslation } from '@/store/settingsStore'
 import { useContentStore } from '@/store/contentStore'
+import { fetchMyInvoices, fetchMySummary, payInvoice, type PortalInvoice, type PortalSummary } from '@/lib/portalApi'
 
 interface PaymentRecord {
   id: string;
@@ -174,6 +175,51 @@ export default function DashboardPage() {
 
   // Payment History State
   const [paymentHistory, setPaymentHistory] = useState<PaymentRecord[]>([])
+
+  // Live billing data from the NextLink billing service (Express API)
+  const [liveInvoices, setLiveInvoices] = useState<PortalInvoice[]>([])
+  const [liveSummary, setLiveSummary] = useState<PortalSummary | null>(null)
+  const [billingOnline, setBillingOnline] = useState<boolean | null>(null)
+  const [payingInvoiceId, setPayingInvoiceId] = useState<string | null>(null)
+  const [gatewayChoice, setGatewayChoice] = useState<'bkash' | 'nagad' | 'sslcommerz' | 'rocket'>('bkash')
+  const [billingError, setBillingError] = useState<string | null>(null)
+
+  const loadLiveBilling = React.useCallback(async () => {
+    const summaryResult = await fetchMySummary()
+    if (!summaryResult.success) {
+      setBillingOnline(false)
+      return
+    }
+    setBillingOnline(true)
+    setLiveSummary(summaryResult.summary || null)
+
+    const invoicesResult = await fetchMyInvoices()
+    if (invoicesResult.success) {
+      setLiveInvoices(invoicesResult.invoices || [])
+    }
+  }, [])
+
+  useEffect(() => {
+    if (isAuthenticated) {
+      loadLiveBilling()
+    }
+  }, [isAuthenticated, loadLiveBilling])
+
+  // Pay a real invoice through the selected local gateway
+  const handlePayLiveInvoice = async (invoice: PortalInvoice) => {
+    setPayingInvoiceId(invoice.id)
+    setBillingError(null)
+    const result = await payInvoice(invoice.id, gatewayChoice)
+    setPayingInvoiceId(null)
+
+    if (!result.success || !result.redirectUrl) {
+      setBillingError(result.error || 'Could not start the payment. Please try again.')
+      return
+    }
+
+    // Redirect to the gateway checkout page (mock checkout in mock mode).
+    window.location.href = result.redirectUrl
+  }
 
   // Card form state
   const [cardHolder, setCardHolder] = useState('Alexander Wright')
@@ -715,6 +761,149 @@ export default function DashboardPage() {
           </CardContent>
         </Card>
       </div>
+
+      {/* ================= LIVE BILLING (NextLink Billing Service) ================= */}
+      <Card className="border shadow-sm">
+        <CardHeader>
+          <div className="flex items-center justify-between gap-3">
+            <div>
+              <CardTitle>Current Bills</CardTitle>
+              <CardDescription>
+                Live invoices issued by the NextLink billing service — settle with bKash, Nagad, SSLCommerz or Rocket
+              </CardDescription>
+            </div>
+            <div className="flex items-center gap-2">
+              <Badge
+                className={
+                  billingOnline === true
+                    ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-400 border-emerald-200'
+                    : billingOnline === false
+                      ? 'bg-amber-100 text-amber-700 dark:bg-amber-950 dark:text-amber-400 border-amber-200'
+                      : 'bg-muted text-muted-foreground border-border'
+                }
+              >
+                {billingOnline === true ? 'Billing Online' : billingOnline === false ? 'Billing Offline' : 'Checking…'}
+              </Badge>
+              <Button variant="outline" size="sm" onClick={loadLiveBilling}>
+                <RefreshCw className="mr-2 h-4 w-4" />
+                Refresh
+              </Button>
+            </div>
+          </div>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          {billingError && (
+            <div className="p-3 rounded-lg bg-destructive/10 border border-destructive/30 text-destructive text-sm flex items-center gap-2">
+              <AlertCircle size={16} className="shrink-0" />
+              <span>{billingError}</span>
+            </div>
+          )}
+
+          {liveSummary && (
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+              <div className="rounded-lg border p-3">
+                <p className="text-xs text-muted-foreground">Outstanding</p>
+                <p className="text-lg font-bold text-amber-600">
+                  {liveSummary.outstanding.toLocaleString('en-US', { maximumFractionDigits: 2 })}
+                </p>
+              </div>
+              <div className="rounded-lg border p-3">
+                <p className="text-xs text-muted-foreground">Unpaid Bills</p>
+                <p className="text-lg font-bold">{liveSummary.unpaidCount}</p>
+              </div>
+              <div className="rounded-lg border p-3">
+                <p className="text-xs text-muted-foreground">Paid Bills</p>
+                <p className="text-lg font-bold text-emerald-600">{liveSummary.paidCount}</p>
+              </div>
+              <div className="rounded-lg border p-3">
+                <p className="text-xs text-muted-foreground">Next Due</p>
+                <p className="text-lg font-bold">
+                  {liveSummary.nextInvoice ? liveSummary.nextInvoice.due_date : '—'}
+                </p>
+              </div>
+            </div>
+          )}
+
+          {billingOnline && liveInvoices.length > 0 && (
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="text-sm text-muted-foreground">Pay using</span>
+              {(['bkash', 'nagad', 'sslcommerz', 'rocket'] as const).map((gateway) => (
+                <Button
+                  key={gateway}
+                  size="sm"
+                  variant={gatewayChoice === gateway ? 'default' : 'outline'}
+                  onClick={() => setGatewayChoice(gateway)}
+                  className="h-8 text-xs"
+                >
+                  {gateway === 'sslcommerz' ? 'SSLCommerz' : gateway === 'bkash' ? 'bKash' : gateway === 'nagad' ? 'Nagad' : 'Rocket'}
+                </Button>
+              ))}
+            </div>
+          )}
+
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-b text-muted-foreground text-left">
+                  <th className="py-3 px-4 font-semibold">Invoice ID</th>
+                  <th className="py-3 px-4 font-semibold">Period</th>
+                  <th className="py-3 px-4 font-semibold">Due Date</th>
+                  <th className="py-3 px-4 font-semibold">Amount</th>
+                  <th className="py-3 px-4 font-semibold">Status</th>
+                  <th className="py-3 px-4 font-semibold text-right">Action</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y">
+                {liveInvoices.length === 0 ? (
+                  <tr>
+                    <td colSpan={6} className="text-center py-8 text-muted-foreground">
+                      {billingOnline
+                        ? 'No invoices issued yet. Your first bill will appear after the billing cycle runs.'
+                        : 'Billing service is currently unreachable.'}
+                    </td>
+                  </tr>
+                ) : (
+                  liveInvoices.map((invoice) => (
+                    <tr key={invoice.id} className="hover:bg-muted/30">
+                      <td className="py-3 px-4 font-mono text-xs">{invoice.id}</td>
+                      <td className="py-3 px-4">{invoice.raw_data?.period || '—'}</td>
+                      <td className="py-3 px-4 text-muted-foreground">{invoice.due_date}</td>
+                      <td className="py-3 px-4 font-bold">
+                        {Number(invoice.amount || 0).toLocaleString('en-US', { maximumFractionDigits: 2 })}
+                      </td>
+                      <td className="py-3 px-4">
+                        {invoice.status === 'paid' ? (
+                          <Badge className="bg-emerald-100 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-400 border-emerald-200">
+                            Paid
+                          </Badge>
+                        ) : (
+                          <Badge className="bg-amber-100 text-amber-700 dark:bg-amber-950 dark:text-amber-400 border-amber-200">
+                            Unpaid
+                          </Badge>
+                        )}
+                      </td>
+                      <td className="py-3 px-4 text-right">
+                        {invoice.status === 'paid' ? (
+                          <span className="text-xs text-muted-foreground">Settled</span>
+                        ) : (
+                          <Button
+                            size="sm"
+                            onClick={() => handlePayLiveInvoice(invoice)}
+                            disabled={payingInvoiceId === invoice.id || !billingOnline}
+                            className="h-8 text-xs"
+                          >
+                            {payingInvoiceId === invoice.id ? 'Redirecting…' : 'Pay now'}
+                          </Button>
+                        )}
+                      </td>
+                    </tr>
+                  ))
+                )}
+              </tbody>
+            </table>
+          </div>
+        </CardContent>
+      </Card>
 
       {/* Bill History Table */}
       <Card className="border shadow-sm">

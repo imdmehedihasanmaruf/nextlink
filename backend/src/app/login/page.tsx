@@ -12,6 +12,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { useAuthStore } from '@/store/authStore';
+import { apiLogin } from '@/lib/apiClient';
 import type { UserRole } from '@/lib/mockData';
 
 const schema = z.object({
@@ -43,6 +44,17 @@ export default function LoginPage() {
     const account = authorizedStaff.find(a => a.email === data.email && a.passwords.includes(data.password));
     if (account) {
       login({ id: 'ADM-001', name: account.name, email: account.email, role: account.role });
+
+      // Obtain a JWT for the NextLink Express API so the live Phase 3
+      // features (billing engine, MikroTik, payments) are usable. The API may
+      // be offline during local development — that must not block sign-in.
+      const apiUser = await apiLogin(data.email, data.password);
+      if (!apiUser) {
+        toast('Signed in to the console. The NextLink API is offline — live automation is unavailable.', {
+          icon: '⚠️',
+        });
+      }
+
       toast.success('Logged in successfully!');
       router.push('/dashboard');
     } else {
