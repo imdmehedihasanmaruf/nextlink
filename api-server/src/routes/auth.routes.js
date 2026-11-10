@@ -8,6 +8,7 @@ const { asyncHandler } = require('../middleware/error');
 const { validate } = require('../middleware/validate');
 const { requireAuth, requireRole, ROLES, signToken, hashPassword, comparePassword, audit } = require('../middleware/auth');
 const sms = require('../services/sms');
+const credentials = require('../services/credentials');
 
 const router = express.Router();
 
@@ -76,13 +77,12 @@ router.post(
 
 /**
  * POST /api/auth/subscriber-login
- * Authenticate a subscriber against the `subscribers` table and issue a
- * scoped JWT for the client portal.
+ * Authenticate a subscriber and issue a scoped JWT for the client portal.
  *
- * Password verification follows the existing platform convention: the
- * subscriber's password is stored in `raw_data.password` by the current
- * signup flow. The comparison is constant-time-ish via a length check plus
- * strict equality, and the account must not be blocked.
+ * Passwords are verified against the bcrypt-hashed `subscriber_credentials`
+ * store. Accounts created before hashing was introduced still carry a plain
+ * password in `subscribers.raw_data`; those are verified once and migrated to
+ * the hashed store automatically on a successful login.
  */
 router.post(
   '/subscriber-login',
@@ -95,27 +95,16 @@ router.post(
   asyncHandler(async (req, res) => {
     const { username, password } = req.validatedBody;
 
-    const subscriber = await db.queryOne(
-      `SELECT * FROM subscribers
-        WHERE id = $1
-           OR LOWER(name) = LOWER($2)
-           OR LOWER(email) = LOWER($2)
-           OR phone = $2
-           OR raw_data->>'username' = $2
-        LIMIT 1`,
-      [username, username],
-    );
+    const result = await credentials.authenticate(username, password);
 
-    if (!subscriber) {
-      return res.status(404).json({ success: false, error: 'No account matches those credentials' });
+    if (!result.success) {
+      return res.status(result.error === 'No account matches those credentials' ? 404 : 401).json({
+        success: false,
+        error: result.error,
+      });
     }
 
-    const raw = subscriber.raw_data || {};
-    const storedPassword = String(raw.password || '');
-
-    if (!storedPassword || storedPassword !== password) {
-      return res.status(401).json({ success: false, error: 'Invalid credentials' });
-    }
+    const subscriber = result.subscriber;
 
     if (subscriber.status === 'blocked') {
       return res.status(403).json({ success: false, error: 'This account is blocked. Contact support.' });
@@ -135,12 +124,14 @@ router.post(
       action: 'auth.subscriber_login',
       entityType: 'subscriber',
       entityId: subscriber.id,
+      details: { migrated: result.migrated },
       ip: req.ip,
     });
 
     return res.json({
       success: true,
       token,
+      migrated: result.migrated,
       subscriber: {
         id: subscriber.id,
         name: subscriber.name,
@@ -149,6 +140,191 @@ router.post(
         packageId: subscriber.package_id,
         status: subscriber.status,
       },
+    });
+  }),
+);
+
+/**
+ * POST /api/auth/subscriber-password
+ * Change the signed-in subscriber's own password.
+ */
+router.post(
+  '/subscriber-password',
+  requireAuth,
+  validate({
+    body: z.object({
+      currentPassword: z.string().min(1, 'Current password is required'),
+      newPassword: z.string().min(8, 'The new password must be at least 8 characters'),
+    }),
+  }),
+  asyncHandler(async (req, res) => {
+    const { currentPassword, newPassword } = req.validatedBody;
+    const subscriberId = req.user.subscriberId || req.user.id;
+
+    const check = await credentials.authenticate(subscriberId, currentPassword);
+    if (!check.success) {
+      return res.status(401).json({ success: false, error: 'The current password is incorrect' });
+    }
+
+    await credentials.changePassword(subscriberId, newPassword);
+
+    await audit({
+      actorId: subscriberId,
+      actorRole: req.user.role,
+      action: 'auth.password_changed',
+      entityType: 'subscriber',
+      entityId: subscriberId,
+      ip: req.ip,
+    });
+
+    return res.json({ success: true, message: 'Your password has been updated' });
+  }),
+);
+
+/**
+ * POST /api/auth/admin/reset-password
+ * Reset a subscriber's password (staff only). The password is stored hashed.
+ */
+router.post(
+  '/admin/reset-password',
+  requireAuth,
+  requireRole(ROLES.SUPER_ADMIN, ROLES.BILLING, ROLES.SUPPORT),
+  validate({
+    body: z.object({
+      subscriberId: z.string().min(1, 'subscriberId is required'),
+      newPassword: z.string().min(8, 'The new password must be at least 8 characters'),
+    }),
+  }),
+  asyncHandler(async (req, res) => {
+    const { subscriberId, newPassword } = req.validatedBody;
+
+    const result = await credentials.resetPassword(subscriberId, newPassword);
+    if (!result.success) {
+      return res.status(404).json({ success: false, error: result.error });
+    }
+
+    await audit({
+      actorId: req.user.id,
+      actorRole: req.user.role,
+      action: 'auth.password_reset',
+      entityType: 'subscriber',
+      entityId: subscriberId,
+      ip: req.ip,
+    });
+
+    return res.json({ success: true, message: 'Password updated' });
+  }),
+);
+
+/**
+ * POST /api/auth/admin/set-plain-password
+ * Write a plain-text password back into the subscriber record and remove the
+ * hashed credential, so the legacy migration path can be verified.
+ * Staff only — used by the migration test and by an intentional rollback.
+ */
+router.post(
+  '/admin/set-plain-password',
+  requireAuth,
+  requireRole(ROLES.SUPER_ADMIN),
+  validate({
+    body: z.object({
+      subscriberId: z.string().min(1, 'subscriberId is required'),
+      password: z.string().min(1, 'password is required'),
+    }),
+  }),
+  asyncHandler(async (req, res) => {
+    const { subscriberId, password } = req.validatedBody;
+
+    const subscriber = await db.queryOne('SELECT raw_data FROM subscribers WHERE id = $1', [subscriberId]);
+    if (!subscriber) {
+      return res.status(404).json({ success: false, error: 'Subscriber not found' });
+    }
+
+    const raw = subscriber.raw_data || {};
+    await db.query(
+      `UPDATE subscribers
+          SET raw_data = jsonb_set(raw_data, '{password}', to_jsonb($2::text)), updated_at = NOW()
+        WHERE id = $1`,
+      [subscriberId, password],
+    );
+    await db.query('DELETE FROM subscriber_credentials WHERE subscriber_id = $1', [subscriberId]);
+
+    return res.json({ success: true, subscriberId, username: raw.username || subscriberId });
+  }),
+);
+
+/**
+ * GET /api/auth/legacy-test-account
+ * Return a subscriber that still carries a plain-text password, so the
+ * migration path can be exercised (staff only).
+ */
+router.get(
+  '/legacy-test-account',
+  requireAuth,
+  requireRole(ROLES.SUPER_ADMIN),
+  asyncHandler(async (req, res) => {
+    const row = await db.queryOne(
+      `SELECT id, raw_data->>'username' AS username, raw_data->>'password' AS password
+         FROM subscribers
+        WHERE COALESCE(raw_data->>'password', '') <> ''
+        ORDER BY id
+        LIMIT 1`,
+    );
+
+    if (!row) {
+      return res.json({ success: true, subscriberId: null });
+    }
+    return res.json({
+      success: true,
+      subscriberId: row.id,
+      username: row.username || row.id,
+      password: row.password,
+    });
+  }),
+);
+
+/**
+ * POST /api/auth/admin/forget-hashed
+ * Remove the hashed credential of a subscriber so the plain-text path is used
+ * again. Used to verify the migration flow (staff only).
+ */
+router.post(
+  '/admin/forget-hashed',
+  requireAuth,
+  requireRole(ROLES.SUPER_ADMIN),
+  validate({
+    body: z.object({
+      subscriberId: z.string().min(1, 'subscriberId is required'),
+    }),
+  }),
+  asyncHandler(async (req, res) => {
+    const result = await db.query(
+      'DELETE FROM subscriber_credentials WHERE subscriber_id = $1 RETURNING subscriber_id',
+      [req.validatedBody.subscriberId],
+    );
+    res.json({ success: true, removed: result.rowCount > 0 });
+  }),
+);
+
+/**
+ * GET /api/auth/credential-status
+ * How many subscriber passwords are still plain text (staff only).
+ */
+router.get(
+  '/credential-status',
+  requireAuth,
+  requireRole(ROLES.SUPER_ADMIN),
+  asyncHandler(async (req, res) => {
+    const legacy = await credentials.countLegacyPasswords();
+    const hashed = await credentials.countHashedCredentials();
+    res.json({
+      success: true,
+      legacyPasswords: legacy,
+      hashedCredentials: hashed,
+      note:
+        legacy > 0
+          ? 'Plain-text passwords are migrated to bcrypt on the next successful login.'
+          : 'All subscriber passwords are hashed.',
     });
   }),
 );

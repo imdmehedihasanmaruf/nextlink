@@ -238,6 +238,25 @@ CREATE TABLE IF NOT EXISTS system_settings (
 );
 
 -- ---------------------------------------------------------------------------
+-- Subscriber credentials (hashed).
+--
+-- Kept in its own table on purpose: the legacy `subscribers` table is
+-- rewritten with DELETE FROM + re-INSERT by the admin store, so a password
+-- column added there would be lost on the next admin save.
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS subscriber_credentials (
+  subscriber_id       VARCHAR(100) PRIMARY KEY,
+  username            VARCHAR(120),
+  password_hash       TEXT NOT NULL,
+  legacy_password     TEXT,
+  migrated_at         TIMESTAMPTZ,
+  last_login_at       TIMESTAMPTZ,
+  raw_data            JSONB,
+  created_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at          TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+-- ---------------------------------------------------------------------------
 -- Indexes (IF NOT EXISTS keeps re-runs safe)
 -- ---------------------------------------------------------------------------
 CREATE INDEX IF NOT EXISTS idx_subscriber_billing_next_invoice ON subscriber_billing (next_invoice_date);
@@ -273,3 +292,5 @@ CREATE INDEX IF NOT EXISTS idx_ticket_details_assigned  ON ticket_details (assig
 CREATE INDEX IF NOT EXISTS idx_ticket_details_sla       ON ticket_details (sla_due_at);
 
 CREATE INDEX IF NOT EXISTS idx_ticket_messages_ticket ON ticket_messages (ticket_id);
+
+CREATE INDEX IF NOT EXISTS idx_subscriber_credentials_username ON subscriber_credentials (username);

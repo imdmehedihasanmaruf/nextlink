@@ -18,6 +18,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { type Subscriber, type SubscriberStatus } from '@/lib/mockData';
 import { useAdminDataStore } from '@/store/adminDataStore';
 import { formatDate } from '@/lib/utils';
+import { apiPost } from '@/lib/apiClient';
 
 export default function UserDetailsPage() {
   const { subscribers, packages, addSubscriber, updateSubscriber, deleteSubscriber, fetchData, isLoading } = useAdminDataStore();
@@ -160,8 +161,8 @@ export default function UserDetailsPage() {
 
   const handleSavePassword = async () => {
     if (!userForPasswordReset) return;
-    if (!newPassword || newPassword.length < 6) {
-      toast.error('Password must be at least 6 characters long');
+    if (!newPassword || newPassword.length < 8) {
+      toast.error('Password must be at least 8 characters long');
       return;
     }
     if (newPassword !== confirmPassword) {
@@ -169,9 +170,23 @@ export default function UserDetailsPage() {
       return;
     }
 
+    // The password is stored hashed by the API, so it is never written to the
+    // local store in plain text.
+    const apiResult = await apiPost(`/api/auth/admin/reset-password`, {
+      subscriberId: userForPasswordReset.id,
+      newPassword,
+    });
+
+    if (!apiResult.success) {
+      toast.error(apiResult.error || 'Could not update the password');
+      return;
+    }
+
+    // Keep the local record in sync without the plain password.
     const updated = {
       ...userForPasswordReset,
-      password: newPassword,
+      password: '',
+      passwordUpdated: true,
     };
 
     await updateSubscriber(updated);

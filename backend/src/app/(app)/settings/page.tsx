@@ -1,9 +1,9 @@
 'use client';
-import { useState } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import Link from 'next/link';
 import { 
   Sun, Moon, Monitor, Palette, Type, Languages, Save, Server, ShieldCheck, Shield, 
-  Users, Check, Smartphone, Key, Radio, Trash2 
+  Users, Check, Smartphone, Key, Radio, Trash2, Loader2, RefreshCw, Wifi, CreditCard
 } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
@@ -13,8 +13,10 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Switch } from '@/components/ui/switch';
 import { Badge } from '@/components/ui/badge';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { useSettingsStore, SUPPORTED_LANGUAGES, ThemeColor, FontSize, ThemeMode, Language } from '@/store/settingsStore';
 import { mockAdminUsers } from '@/lib/mockData';
+import { apiGet, apiFetch, apiPost, getApiToken } from '@/lib/apiClient';
 
 const colors: { name: ThemeColor; label: string; bg: string }[] = [
   { name: 'blue', label: 'Blue', bg: 'bg-blue-500' },
@@ -23,6 +25,32 @@ const colors: { name: ThemeColor; label: string; bg: string }[] = [
   { name: 'red', label: 'Red', bg: 'bg-rose-500' },
   { name: 'orange', label: 'Orange', bg: 'bg-amber-500' },
 ];
+
+interface SystemSettings {
+  mikrotik: {
+    mode: string;
+    host: string;
+    apiPort: number;
+    username: string;
+    password: string;
+    timeoutMs: number;
+  };
+  sms: {
+    mode: string;
+    provider: string;
+    providerUrl: string;
+    apiKey: string;
+    senderId: string;
+  };
+  payments: { mode: string };
+  billing: {
+    timezone: string;
+    dueDay: number;
+    lateGraceDays: number;
+    suspendAfterDays: number;
+    currency: string;
+  };
+}
 
 export default function SettingsPage() {
   const { 
@@ -40,17 +68,128 @@ export default function SettingsPage() {
 
   const t = (en: string, _bn?: string) => en;
 
-  // System Config State
-  const [ispName, setIspName] = useState('NextLink Global Optical Network');
-  const [mikrotikIp, setMikrotikIp] = useState('198.51.100.1');
-  const [mikrotikPort, setMikrotikPort] = useState('8728');
-  const [mikrotikUser, setMikrotikUser] = useState('api_admin');
-  const [smsGateway, setSmsGateway] = useState('Twilio Global / Infobip SMS Gateway');
-  const [smsApiKey, setSmsApiKey] = useState('gw_live_99812401823908');
+  // Core infrastructure configuration — persisted through the Express API.
+  const [system, setSystem] = useState<SystemSettings | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [testing, setTesting] = useState(false);
+  const [hasToken, setHasToken] = useState(false);
+  const [mikrotikPassword, setMikrotikPassword] = useState('');
+  const [smsApiKey, setSmsApiKey] = useState('');
 
-  const handleSaveSystem = (e: React.FormEvent) => {
+  const loadSettings = useCallback(async () => {
+    setLoading(true);
+    const result = await apiGet<{ settings: SystemSettings }>('/api/settings/system');
+    setLoading(false);
+    if (result.success && result.settings) {
+      setSystem(result.settings);
+      // Secret fields come back masked; keep the mask visible until edited.
+      setMikrotikPassword(result.settings.mikrotik.password || '');
+      setSmsApiKey(result.settings.sms.apiKey || '');
+    }
+  }, []);
+
+  useEffect(() => {
+    setHasToken(Boolean(getApiToken()));
+    loadSettings();
+  }, [loadSettings]);
+
+  const updateSystem = (patch: Partial<SystemSettings>) => {
+    setSystem((prev) => (prev ? { ...prev, ...patch } : prev));
+  };
+
+  /**
+   * Persist the MikroTik configuration.
+   */
+  const handleSaveMikrotik = async (e: React.FormEvent) => {
     e.preventDefault();
-    toast.success(t('Core ISP & MikroTik configuration saved!', 'আইএসপি ও মাইক্রোটিক কনফিগারেশন সংরক্ষিত হয়েছে!'));
+    if (!system) return;
+
+    setSaving(true);
+    const result = await apiFetch('/api/settings/system/mikrotik', {
+      method: 'PUT',
+      body: JSON.stringify({
+        mode: system.mikrotik.mode,
+        host: system.mikrotik.host,
+        apiPort: Number(system.mikrotik.apiPort) || 8728,
+        username: system.mikrotik.username,
+        timeoutMs: Number(system.mikrotik.timeoutMs) || 8000,
+        // Only send the secret when it was actually changed.
+        ...(mikrotikPassword && !mikrotikPassword.includes('•') ? { password: mikrotikPassword } : {}),
+      }),
+    });
+    setSaving(false);
+
+    if (result.success) {
+      toast.success('MikroTik configuration saved to the billing service.');
+      loadSettings();
+    } else {
+      toast.error(result.error || 'Could not save the configuration');
+    }
+  };
+
+  /**
+   * Persist the SMS gateway configuration.
+   */
+  const handleSaveSms = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!system) return;
+
+    setSaving(true);
+    const result = await apiFetch('/api/settings/system/sms', {
+      method: 'PUT',
+      body: JSON.stringify({
+        mode: system.sms.mode,
+        provider: system.sms.provider,
+        providerUrl: system.sms.providerUrl,
+        senderId: system.sms.senderId,
+        ...(smsApiKey && !smsApiKey.includes('•') ? { apiKey: smsApiKey } : {}),
+      }),
+    });
+    setSaving(false);
+
+    if (result.success) {
+      toast.success('SMS gateway configuration saved.');
+      loadSettings();
+    } else {
+      toast.error(result.error || 'Could not save the configuration');
+    }
+  };
+
+  /**
+   * Test the real router connection.
+   */
+  const handleTestRouter = async () => {
+    setTesting(true);
+    const result = await apiPost('/api/settings/mikrotik/test');
+    setTesting(false);
+
+    if (result.success && result.success === true) {
+      toast.success(`Router reachable — ${result.router?.identity || 'MikroTik'} (${result.latencyMs}ms)`);
+    } else if (result.error) {
+      toast.error(result.error);
+    }
+  };
+
+  /**
+   * Clear the stored MikroTik and SMS credentials.
+   */
+  const handleDeleteCredentials = async () => {
+    if (!confirm('Delete and clear the saved MikroTik & SMS credentials?')) return;
+
+    setSaving(true);
+    await apiFetch('/api/settings/system/mikrotik', {
+      method: 'PUT',
+      body: JSON.stringify({ password: '' }),
+    });
+    await apiFetch('/api/settings/system/sms', {
+      method: 'PUT',
+      body: JSON.stringify({ apiKey: '' }),
+    });
+    setSaving(false);
+
+    toast.success('MikroTik & SMS credentials cleared');
+    loadSettings();
   };
 
   return (
@@ -262,80 +401,262 @@ export default function SettingsPage() {
 
         {/* TAB 2: MikroTik & Core Integration (from SRS section 3.2 & 4) */}
         <TabsContent value="system" className="space-y-6">
-          <Card>
-            <CardHeader>
-              <CardTitle className="text-base flex items-center gap-2">
-                <Server className="h-5 w-5 text-primary" />
-                MikroTik RouterOS API Synchronization (v6 / v7)
-              </CardTitle>
-              <CardDescription>
-                Real-time automated PPPoE / Static user enable/disable based on bill payment status
-              </CardDescription>
-            </CardHeader>
-            <CardContent>
-              <form onSubmit={handleSaveSystem} className="space-y-4">
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                  <div>
-                    <Label>Router Host IP</Label>
-                    <Input value={mikrotikIp} onChange={(e) => setMikrotikIp(e.target.value)} />
-                  </div>
-                  <div>
-                    <Label>API Port</Label>
-                    <Input value={mikrotikPort} onChange={(e) => setMikrotikPort(e.target.value)} />
-                  </div>
-                  <div>
-                    <Label>API Username</Label>
-                    <Input value={mikrotikUser} onChange={(e) => setMikrotikUser(e.target.value)} />
-                  </div>
-                </div>
+          {!hasToken ? (
+            <Card>
+              <CardContent className="p-8 text-center space-y-3">
+                <Key className="h-10 w-10 mx-auto text-amber-500" />
+                <p className="font-semibold">API session required</p>
+                <p className="text-sm text-muted-foreground max-w-md mx-auto">
+                  Sign out and sign in again to obtain a session token for the NextLink Express API (port 3001).
+                  The MikroTik and SMS credentials are stored there so the billing engine can use them.
+                </p>
+                <Button variant="outline" onClick={() => window.location.reload()} className="mt-2">
+                  <RefreshCw className="h-4 w-4 mr-2" />
+                  Retry
+                </Button>
+              </CardContent>
+            </Card>
+          ) : loading || !system ? (
+            <Card>
+              <CardContent className="p-8 text-center">
+                <Loader2 className="h-6 w-6 mx-auto animate-spin text-primary" />
+                <p className="text-sm text-muted-foreground mt-3">Loading configuration…</p>
+              </CardContent>
+            </Card>
+          ) : (
+            <>
+              <Card>
+                <CardHeader>
+                  <CardTitle className="text-base flex items-center gap-2">
+                    <Server className="h-5 w-5 text-primary" />
+                    MikroTik RouterOS API Synchronization (v6 / v7)
+                  </CardTitle>
+                  <CardDescription>
+                    Real-time automated PPPoE / Static user enable/disable based on bill payment status
+                  </CardDescription>
+                </CardHeader>
+                <CardContent>
+                  <form onSubmit={handleSaveMikrotik} className="space-y-4">
+                    <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+                      <div>
+                        <Label>Mode</Label>
+                        <Select
+                          value={system.mikrotik.mode}
+                          onValueChange={(value) =>
+                            updateSystem({
+                              mikrotik: { ...system.mikrotik, mode: value },
+                            })
+                          }
+                        >
+                          <SelectTrigger>
+                            <SelectValue placeholder="Select mode" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="simulator">Simulator (no hardware)</SelectItem>
+                            <SelectItem value="live">Live RouterOS</SelectItem>
+                          </SelectContent>
+                        </Select>
+                      </div>
+                      <div>
+                        <Label>Router Host IP</Label>
+                        <Input
+                          value={system.mikrotik.host}
+                          onChange={(e) =>
+                            updateSystem({
+                              mikrotik: { ...system.mikrotik, host: e.target.value },
+                            })
+                          }
+                        />
+                      </div>
+                      <div>
+                        <Label>API Port</Label>
+                        <Input
+                          value={String(system.mikrotik.apiPort)}
+                          onChange={(e) =>
+                            updateSystem({
+                              mikrotik: { ...system.mikrotik, apiPort: Number(e.target.value) || 8728 },
+                            })
+                          }
+                        />
+                      </div>
+                      <div>
+                        <Label>API Username</Label>
+                        <Input
+                          value={system.mikrotik.username}
+                          onChange={(e) =>
+                            updateSystem({
+                              mikrotik: { ...system.mikrotik, username: e.target.value },
+                            })
+                          }
+                        />
+                      </div>
+                    </div>
 
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pt-2">
-                  <div>
-                    <Label>SMS Gateway Provider</Label>
-                    <Input value={smsGateway} onChange={(e) => setSmsGateway(e.target.value)} />
-                  </div>
-                  <div>
-                    <Label>SMS API Secret Key</Label>
-                    <Input type="password" value={smsApiKey} onChange={(e) => setSmsApiKey(e.target.value)} />
-                  </div>
-                </div>
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pt-2">
+                      <div>
+                        <Label>API Password</Label>
+                        <Input
+                          type="password"
+                          placeholder="Leave unchanged to keep the stored password"
+                          value={mikrotikPassword}
+                          onChange={(e) => setMikrotikPassword(e.target.value)}
+                        />
+                        <p className="text-[11px] text-muted-foreground mt-1">
+                          Stored hashed-style and never returned in clear text.
+                        </p>
+                      </div>
+                      <div>
+                        <Label>Timeout (ms)</Label>
+                        <Input
+                          value={String(system.mikrotik.timeoutMs)}
+                          onChange={(e) =>
+                            updateSystem({
+                              mikrotik: { ...system.mikrotik, timeoutMs: Number(e.target.value) || 8000 },
+                            })
+                          }
+                        />
+                      </div>
+                    </div>
 
-                <div className="flex items-center justify-between pt-3">
-                  <div className="flex items-center gap-3">
-                    <Button type="submit" className="gap-2">
-                      <Save className="h-4 w-4" />
-                      Save Configuration
+                    <div className="flex items-center justify-between pt-3">
+                      <div className="flex items-center gap-3">
+                        <Button type="submit" disabled={saving} className="gap-2">
+                          {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
+                          Save Configuration
+                        </Button>
+                        <Button type="button" variant="outline" disabled={testing} onClick={handleTestRouter}>
+                          {testing ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <Wifi className="h-4 w-4 mr-2" />}
+                          Test Router Connection
+                        </Button>
+                      </div>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        disabled={saving}
+                        onClick={handleDeleteCredentials}
+                        className="gap-1.5 text-xs text-rose-600 hover:text-rose-700 hover:bg-rose-50"
+                      >
+                        <Trash2 className="h-3.5 w-3.5" />
+                        Delete Credentials
+                      </Button>
+                    </div>
+                  </form>
+                </CardContent>
+              </Card>
+
+              <Card>
+                <CardHeader>
+                  <CardTitle className="text-base flex items-center gap-2">
+                    <Smartphone className="h-5 w-5 text-primary" />
+                    SMS Notification Gateway
+                  </CardTitle>
+                  <CardDescription>
+                    Bill reminders, suspension notices, reconnection confirmations and ticket updates.
+                  </CardDescription>
+                </CardHeader>
+                <CardContent>
+                  <form onSubmit={handleSaveSms} className="space-y-4">
+                    <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+                      <div>
+                        <Label>Mode</Label>
+                        <Select
+                          value={system.sms.mode}
+                          onValueChange={(value) =>
+                            updateSystem({ sms: { ...system.sms, mode: value } })
+                          }
+                        >
+                          <SelectTrigger>
+                            <SelectValue placeholder="Select mode" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="mock">Mock (logged only)</SelectItem>
+                            <SelectItem value="live">Live gateway</SelectItem>
+                          </SelectContent>
+                        </Select>
+                      </div>
+                      <div>
+                        <Label>Provider</Label>
+                        <Input
+                          value={system.sms.provider}
+                          onChange={(e) =>
+                            updateSystem({ sms: { ...system.sms, provider: e.target.value } })
+                          }
+                        />
+                      </div>
+                      <div>
+                        <Label>Sender ID</Label>
+                        <Input
+                          value={system.sms.senderId}
+                          onChange={(e) =>
+                            updateSystem({ sms: { ...system.sms, senderId: e.target.value } })
+                          }
+                        />
+                      </div>
+                      <div>
+                        <Label>API Key</Label>
+                        <Input
+                          type="password"
+                          placeholder="Leave unchanged to keep the stored key"
+                          value={smsApiKey}
+                          onChange={(e) => setSmsApiKey(e.target.value)}
+                        />
+                      </div>
+                    </div>
+
+                    <div className="pt-2">
+                      <Label>Provider Endpoint URL</Label>
+                      <Input
+                        placeholder="https://sms-gateway.example.com/api/send"
+                        value={system.sms.providerUrl}
+                        onChange={(e) =>
+                          updateSystem({ sms: { ...system.sms, providerUrl: e.target.value } })
+                        }
+                      />
+                    </div>
+
+                    <Button type="submit" disabled={saving} className="gap-2">
+                      {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
+                      Save SMS Configuration
                     </Button>
-                    <Button 
-                      type="button" 
-                      variant="outline" 
-                      onClick={() => toast.success('Ping to MikroTik Router SUCCESS (2ms latency)')}
-                    >
-                      Test Router Connection
-                    </Button>
+                  </form>
+                </CardContent>
+              </Card>
+
+              <Card>
+                <CardHeader>
+                  <CardTitle className="text-base flex items-center gap-2">
+                    <CreditCard className="h-5 w-5 text-primary" />
+                    Payment Gateway & Billing Engine
+                  </CardTitle>
+                  <CardDescription>Read-only summary of the active gateway and billing configuration.</CardDescription>
+                </CardHeader>
+                <CardContent>
+                  <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
+                    <div className="rounded-lg border p-3">
+                      <p className="text-xs text-muted-foreground">Payment Mode</p>
+                      <p className="text-lg font-bold mt-1 capitalize">{system.payments.mode}</p>
+                    </div>
+                    <div className="rounded-lg border p-3">
+                      <p className="text-xs text-muted-foreground">Currency</p>
+                      <p className="text-lg font-bold mt-1">{system.billing.currency}</p>
+                    </div>
+                    <div className="rounded-lg border p-3">
+                      <p className="text-xs text-muted-foreground">Due Day</p>
+                      <p className="text-lg font-bold mt-1">{system.billing.dueDay}</p>
+                    </div>
+                    <div className="rounded-lg border p-3">
+                      <p className="text-xs text-muted-foreground">Grace Days</p>
+                      <p className="text-lg font-bold mt-1">{system.billing.lateGraceDays}</p>
+                    </div>
+                    <div className="rounded-lg border p-3">
+                      <p className="text-xs text-muted-foreground">Timezone</p>
+                      <p className="text-sm font-bold mt-2">{system.billing.timezone}</p>
+                    </div>
                   </div>
-                  <Button
-                    type="button"
-                    variant="outline"
-                    onClick={() => {
-                      if (confirm('Delete and clear saved MikroTik & SMS credentials?')) {
-                        setMikrotikIp('');
-                        setMikrotikPort('');
-                        setMikrotikUser('');
-                        setSmsGateway('');
-                        setSmsApiKey('');
-                        toast.success('MikroTik & SMS credentials deleted');
-                      }
-                    }}
-                    className="gap-1.5 text-xs text-rose-600 hover:text-rose-700 hover:bg-rose-50"
-                  >
-                    <Trash2 className="h-3.5 w-3.5" />
-                    Delete Credentials
-                  </Button>
-                </div>
-              </form>
-            </CardContent>
-          </Card>
+                </CardContent>
+              </Card>
+            </>
+          )}
         </TabsContent>
 
         {/* TAB 3: Admin User Roles (from SRS Matrix) */}

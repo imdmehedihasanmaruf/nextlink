@@ -10,6 +10,14 @@ const corsHeaders = {
   'Access-Control-Allow-Headers': 'Content-Type, Authorization',
 };
 
+/**
+ * Base URL of the NextLink Express API (Backend Engine).
+ * The API owns password verification (bcrypt) and the plain-text to hash
+ * migration, so the portal and the API can never disagree on credentials.
+ */
+const API_BASE_URL =
+  process.env.NEXT_PUBLIC_BILLING_API_URL?.replace(/\/api$/, '') || 'http://localhost:3001';
+
 export async function OPTIONS() {
   return NextResponse.json({}, { headers: corsHeaders });
 }
@@ -26,29 +34,62 @@ export async function POST(request: Request) {
       );
     }
 
+    if (!password) {
+      return NextResponse.json(
+        { success: false, error: 'Password is required.' },
+        { status: 400, headers: corsHeaders }
+      );
+    }
+
+    // Verify the credentials against the billing service, which stores the
+    // password hashed with bcrypt.
+    let apiResponse: Response;
+    try {
+      apiResponse = await fetch(`${API_BASE_URL}/api/auth/subscriber-login`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ username: username.trim(), password }),
+      });
+    } catch {
+      return NextResponse.json(
+        {
+          success: false,
+          error: 'Authentication service is currently unavailable. Please try again shortly.',
+        },
+        { status: 503, headers: corsHeaders }
+      );
+    }
+
+    const apiResult = await apiResponse.json().catch(() => ({}));
+
+    if (!apiResponse.ok || !apiResult.success) {
+      const status = apiResponse.status === 404 ? 404 : 401;
+      return NextResponse.json(
+        {
+          success: false,
+          error:
+            apiResult.error ||
+            'Invalid password. Please check your customer account credentials.',
+        },
+        { status, headers: corsHeaders }
+      );
+    }
+
+    // Load the full subscriber record for the portal session.
     const subscriber = await findSubscriber(username.trim());
 
     if (!subscriber) {
       return NextResponse.json(
-        { 
-          success: false, 
-          error: 'Customer account not found. Package purchases and plan upgrades are strictly restricted to existing NextLink subscribers. Please verify your credentials or contact customer support.' 
+        {
+          success: false,
+          error:
+            'Customer account not found. Package purchases and plan upgrades are strictly restricted to existing NextLink subscribers. Please verify your credentials or contact customer support.',
         },
         { status: 404, headers: corsHeaders }
       );
     }
 
-    // Verify Password if provided in record
-    if (subscriber.password && password) {
-      if (subscriber.password.trim() !== password.trim()) {
-        return NextResponse.json(
-          { success: false, error: 'Invalid password. Please check your customer account credentials.' },
-          { status: 401, headers: corsHeaders }
-        );
-      }
-    }
-
-    // Return sanitized subscriber customer record
+    // Return the sanitized subscriber customer record.
     const customerUser = {
       id: subscriber.id,
       name: subscriber.name,
@@ -84,4 +125,3 @@ export async function POST(request: Request) {
     );
   }
 }
-

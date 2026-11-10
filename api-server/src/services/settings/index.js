@@ -139,7 +139,8 @@ async function getMasked() {
  */
 async function testMikrotik() {
   const settings = await getGroup('mikrotik');
-  const mikrotik = require('../services/mikrotik');
+  // eslint-disable-next-line global-require
+  const mikrotik = require('../mikrotik');
   const result = await mikrotik.testConnection();
   return { ...result, configured: { host: settings.host, port: settings.apiPort, mode: settings.mode } };
 }
