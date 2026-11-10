@@ -131,6 +131,31 @@ npm run test:live
 
 This is how the live path stays verified without a merchant account.
 
+### Trying the live mode yourself
+
+`npm run live:demo` starts the whole stack in live mode — the protocol
+servers plus the API with every `*_MODE` set to `live`. It runs on port 3002
+so the normal development API on 3001 keeps running.
+
+```bash
+npm run live:demo        # terminal 1
+npm run diagnose:live    # terminal 2
+```
+
+The demo API answers `/health` with the active modes:
+
+```json
+{ "mikrotikMode": "live", "paymentMode": "live", "smsMode": "live" }
+```
+
+### A note on the currency symbol
+
+`BILLING_CURRENCY_SYMBOL` is used for the PDF invoice and the web UI, where
+the Bengali Taka sign (`৳`) is displayed correctly. SMS messages travel as
+GSM 7-bit, which has no Taka sign, so they use
+`BILLING_CURRENCY_SYMBOL_SMS` (`BDT` by default). Run
+`node scripts/check-gsm-encoding.js` to see why.
+
 ---
 
 ## API reference

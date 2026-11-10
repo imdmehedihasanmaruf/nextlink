@@ -55,8 +55,6 @@ async function run() {
   const uniqueSubscribers = [...new Set(invoices.body.invoices.map((i) => i.subscriber_id))];
   assert(uniqueSubscribers.length >= 2, 'at least two subscribers have invoices', uniqueSubscribers.length);
 
-  const staffToken = token;
-
   // Subscriber credentials: seeded demo accounts.
   const demoLogin = await api('/api/auth/subscriber-login', {
     method: 'POST',
@@ -91,26 +89,34 @@ async function run() {
   );
 
   // Cross-subscriber isolation: paying another subscriber's invoice must fail.
-  // A fresh invoice is created for another subscriber so the check always
-  // has something to work with.
+  // Another subscriber is activated first, because the billing cycle only
+  // invoices the active accounts.
+  const period = '2016-11';
+  const listForCleanup = await api('/api/billing/invoices?limit=200', { token: staffToken });
+  for (const leftover of listForCleanup.body.invoices.filter((i) => i.raw_data?.period === period)) {
+    await api(`/api/billing/invoices/${leftover.id}`, { method: 'DELETE', token: staffToken });
+  }
+
+  // Pick a subscriber that is not the one signed in and make sure the
+  // account is active so it is billed.
   const otherSubscriberId = uniqueSubscribers.find((id) => id !== demoLogin.body.subscriber.id);
-  let otherInvoice = null;
   if (otherSubscriberId) {
-    const period = '2016-11';
-    const listForCleanup = await api('/api/billing/invoices?limit=200', { token: staffToken });
-    for (const leftover of listForCleanup.body.invoices.filter((i) => i.raw_data?.period === period)) {
-      await api(`/api/billing/invoices/${leftover.id}`, { method: 'DELETE', token: staffToken });
-    }
-    await api('/api/billing/cycle/run', {
+    await api('/api/mikrotik/restore', {
       method: 'POST',
       token: staffToken,
-      body: { period },
+      body: { subscriberId: otherSubscriberId, username: otherSubscriberId },
     });
-    const list = await api('/api/billing/invoices?limit=200', { token: staffToken });
-    otherInvoice = list.body.invoices.find(
-      (i) => i.raw_data?.period === period && i.subscriber_id !== demoLogin.body.subscriber.id,
-    );
   }
+
+  await api('/api/billing/cycle/run', {
+    method: 'POST',
+    token: staffToken,
+    body: { period },
+  });
+  const list = await api('/api/billing/invoices?limit=200', { token: staffToken });
+  const otherInvoice = list.body.invoices.find(
+    (i) => i.raw_data?.period === period && i.subscriber_id !== demoLogin.body.subscriber.id,
+  );
 
   if (otherInvoice) {
     const crossPay = await api('/api/portal/pay', {

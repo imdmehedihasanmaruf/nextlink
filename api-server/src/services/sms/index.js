@@ -20,7 +20,10 @@ const db = require('../../lib/db');
  * provider URL.
  */
 
-const money = (amount) => `${config.billing.currencySymbol}${String(amount).replace(/\B(?=(\d{3})+(?!\d))/g, ',')}`;
+// SMS travels as GSM 7-bit, which does not contain the Taka sign, so the
+// message body uses the plain currency code instead.
+const money = (amount) =>
+  `${config.billing.currencySymbolSms} ${String(amount).replace(/\B(?=(\d{3})+(?!\d))/g, ',')}`;
 
 const TEMPLATES = {
   bill_reminder: (ctx) =>
