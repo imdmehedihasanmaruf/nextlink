@@ -1,6 +1,7 @@
 'use client'
 
 import React, { useState, useEffect } from 'react'
+import { useRouter } from 'next/navigation'
 import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { z } from 'zod'
@@ -13,6 +14,7 @@ import { Textarea } from '@/components/ui/textarea'
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
 import { useTranslation, useSettingsStore } from '@/store/settingsStore'
 import { useContentStore } from '@/store/contentStore'
+import { useAuthStore } from '@/store/authStore'
 
 const schema = z.object({
   fullName: z.string().min(3, 'Full name must be at least 3 characters'),
@@ -38,6 +40,8 @@ const ontOptions = [
 ]
 
 export default function ApplyPage() {
+  const router = useRouter()
+  const { isAuthenticated } = useAuthStore()
   const { t } = useTranslation()
   const { autoSave } = useSettingsStore()
   const { packages: livePackages, fetchContent } = useContentStore()
@@ -91,7 +95,21 @@ export default function ApplyPage() {
     localStorage.setItem(AUTO_SAVE_KEY, JSON.stringify({ ...rest, package: pkg, ontConfig }))
   }, [watchedValues, autoSave])
 
+  const handleFormSubmit = (e: React.FormEvent) => {
+    // If user is not authenticated, redirect to login page before submitting order
+    if (!isAuthenticated) {
+      e.preventDefault()
+      router.push('/login?redirect=apply')
+      return
+    }
+    handleSubmit(onSubmit)(e)
+  }
+
   const onSubmit = async (data: FormData) => {
+    if (!isAuthenticated) {
+      router.push('/login?redirect=apply')
+      return
+    }
     await new Promise((r) => setTimeout(r, 1200))
     localStorage.removeItem(AUTO_SAVE_KEY)
     setSubmitted(true)
@@ -151,7 +169,7 @@ export default function ApplyPage() {
           )}
         </div>
 
-        <form onSubmit={handleSubmit(onSubmit)}>
+        <form onSubmit={handleFormSubmit}>
           {/* Personal Info */}
           <Card className="mb-6 shadow-sm border">
             <CardHeader>

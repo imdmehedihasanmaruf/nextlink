@@ -1,12 +1,12 @@
 'use client'
 
-import React, { useState } from 'react'
-import { useRouter } from 'next/navigation'
+import React, { useState, useEffect, Suspense } from 'react'
+import { useRouter, useSearchParams } from 'next/navigation'
 import Link from 'next/link'
 import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { z } from 'zod'
-import { Wifi, Eye, EyeOff, AlertCircle, ArrowLeft, UserPlus, LogIn } from 'lucide-react'
+import { Wifi, Eye, EyeOff, AlertCircle, ArrowLeft, UserPlus, LogIn, ShieldAlert, CheckCircle2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -15,19 +15,31 @@ import { useTranslation } from '@/store/settingsStore'
 import { useAuthStore } from '@/store/authStore'
 
 const schema = z.object({
-  username: z.string().min(3, 'Username must be at least 3 characters'),
-  password: z.string().min(6, 'Password must be at least 6 characters'),
+  username: z.string().min(2, 'Username or Customer ID is required'),
+  password: z.string().min(3, 'Password must be at least 3 characters'),
   rememberMe: z.boolean().optional(),
 })
 
 type FormData = z.infer<typeof schema>
 
-export default function LoginPage() {
+function LoginForm() {
   const { language } = useTranslation()
   const router = useRouter()
+  const searchParams = useSearchParams()
   const { login } = useAuthStore()
   const [showPassword, setShowPassword] = useState(false)
   const [loginError, setLoginError] = useState('')
+  const [infoMessage, setInfoMessage] = useState('')
+
+  const redirectParam = searchParams.get('redirect')
+
+  useEffect(() => {
+    if (redirectParam && redirectParam.includes('purchase')) {
+      setInfoMessage(
+        'Existing Customer Authentication Required: Internet package purchases, bandwidth upgrades, and plan changes are strictly restricted to authenticated NextLink customers. Please log in with your customer account.'
+      )
+    }
+  }, [redirectParam])
 
   const {
     register,
@@ -40,22 +52,39 @@ export default function LoginPage() {
 
   const onSubmit = async (data: FormData) => {
     setLoginError('')
-    await new Promise((r) => setTimeout(r, 600))
-
-    if (data.username && data.username.length >= 3 && data.password && data.password.length >= 4) {
-      login({
-        id: `NL-${Math.floor(1000 + Math.random() * 9000)}`,
-        name: data.username,
-        username: data.username,
-        phone: 'Registered Line',
-        package: 'Optical Gigabit',
-        address: 'Connected Premises',
-        joinDate: new Date().toISOString().split('T')[0]
+    try {
+      const res = await fetch('/api/auth/customer-login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          username: data.username.trim(),
+          password: data.password.trim(),
+        }),
       })
-      router.push('/dashboard')
-    } else {
-      setLoginError(language === 'bn' ? 'ভুল ইউজারনেম বা পাসওয়ার্ড।' : 'Invalid username or password.')
+
+      const result = await res.json()
+
+      if (!res.ok || !result.success) {
+        setLoginError(result.error || 'Invalid customer username or password.')
+        return
+      }
+
+      // Successful login
+      login(result.user)
+
+      const target = redirectParam || '/dashboard'
+      router.push(target)
+    } catch (err: any) {
+      console.error('Login error:', err)
+      setLoginError('Could not connect to authentication service. Please try again.')
     }
+  }
+
+  // Quick fill helper for existing customers
+  const quickFill = (username: string, pass: string) => {
+    setValue('username', username)
+    setValue('password', pass)
+    setLoginError('')
   }
 
   return (
@@ -178,5 +207,17 @@ export default function LoginPage() {
         </Card>
       </div>
     </div>
+  )
+}
+
+export default function LoginPage() {
+  return (
+    <Suspense fallback={
+      <div className="min-h-screen flex items-center justify-center">
+        <div className="text-sm text-muted-foreground animate-pulse">Loading login portal...</div>
+      </div>
+    }>
+      <LoginForm />
+    </Suspense>
   )
 }

@@ -39,7 +39,7 @@
   --popover: 222.2 47% 10%;
   --popover-foreground: 210 40% 98%;
   --primary: 217.2 91.2% 59.8%;
-  --primary-foreground: 222.2 47.4% 11.2%;
+  --primary-foreground: 210 40% 98%;
   --secondary: 217.2 32.6% 17.5%;
   --secondary-foreground: 210 40% 98%;
   --muted: 217.2 32.6% 17.5%;
@@ -56,30 +56,35 @@
 /* Theme Color Presets */
 [data-color="blue"] {
   --primary: 221.2 83.2% 53.3%;
+  --primary-foreground: 210 40% 98%;
   --ring: 221.2 83.2% 53.3%;
   --primary-hex: #2563eb;
   --primary-hex-dark: #1d4ed8;
 }
 [data-color="green"] {
   --primary: 142.1 76.2% 40%;
+  --primary-foreground: 210 40% 98%;
   --ring: 142.1 76.2% 40%;
   --primary-hex: #16a34a;
   --primary-hex-dark: #15803d;
 }
 [data-color="purple"] {
   --primary: 270 75% 60%;
+  --primary-foreground: 210 40% 98%;
   --ring: 270 75% 60%;
   --primary-hex: #9333ea;
   --primary-hex-dark: #7e22ce;
 }
 [data-color="red"] {
   --primary: 0 84.2% 60.2%;
+  --primary-foreground: 210 40% 98%;
   --ring: 0 84.2% 60.2%;
   --primary-hex: #dc2626;
   --primary-hex-dark: #b91c1c;
 }
 [data-color="orange"] {
   --primary: 24.6 95% 53.1%;
+  --primary-foreground: 210 40% 98%;
   --ring: 24.6 95% 53.1%;
   --primary-hex: #ea580c;
   --primary-hex-dark: #c2410c;
@@ -99,7 +104,7 @@
     font-feature-settings: "rlig" 1, "calt" 1;
   }
   h1, h2, h3, h4, h5, h6 {
-    @apply text-foreground font-bold tracking-tight;
+    @apply font-bold tracking-tight;
   }
   p {
     @apply leading-relaxed;

@@ -10,8 +10,17 @@ export interface SubscriberUser {
   email?: string
   phone: string
   package: string
+  packageName?: string
+  packageId?: string
   address: string
   joinDate: string
+  status?: string
+  balance?: number
+  dueDate?: string
+  ipAddress?: string
+  macAddress?: string
+  connectionType?: string
+  zone?: string
 }
 
 interface AuthState {

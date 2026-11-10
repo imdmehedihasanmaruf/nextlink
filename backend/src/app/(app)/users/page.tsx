@@ -1,0 +1,1258 @@
+'use client';
+
+import React, { useState, useEffect, useMemo } from 'react';
+import {
+  Users, ShieldAlert, ShieldCheck, Eye, EyeOff, Ban, CheckCircle2,
+  Trash2, KeyRound, Search, Plus, RefreshCw, AlertTriangle, Globe,
+  Shield, MapPin, Phone, Mail, Wifi, Copy, Check, Lock, AlertOctagon,
+  ExternalLink, UserCheck
+} from 'lucide-react';
+import toast from 'react-hot-toast';
+import { Button } from '@/components/ui/button';
+import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
+import { Badge } from '@/components/ui/badge';
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription } from '@/components/ui/dialog';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { type Subscriber, type SubscriberStatus } from '@/lib/mockData';
+import { useAdminDataStore } from '@/store/adminDataStore';
+import { formatDate } from '@/lib/utils';
+
+export default function UserDetailsPage() {
+  const { subscribers, packages, addSubscriber, updateSubscriber, deleteSubscriber, fetchData, isLoading } = useAdminDataStore();
+  
+  // State
+  const [activeTab, setActiveTab] = useState<'all' | 'active' | 'vpn' | 'spam' | 'scam' | 'blocked'>('all');
+  const [searchQuery, setSearchQuery] = useState('');
+  const [riskFilter, setRiskFilter] = useState('all');
+  const [visiblePasswords, setVisiblePasswords] = useState<Record<string, boolean>>({});
+  const [copiedId, setCopiedId] = useState<string | null>(null);
+
+  // Modals state
+  const [selectedUser, setSelectedUser] = useState<Subscriber | null>(null);
+  const [viewDetailsOpen, setViewDetailsOpen] = useState(false);
+  const [passwordModalOpen, setPasswordModalOpen] = useState(false);
+  const [userForPasswordReset, setUserForPasswordReset] = useState<Subscriber | null>(null);
+  const [newPassword, setNewPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
+  const [addUserOpen, setAddUserOpen] = useState(false);
+
+  // New user form state
+  const [newUserForm, setNewUserForm] = useState({
+    name: '',
+    username: '',
+    phone: '',
+    email: '',
+    password: '',
+    packageId: '',
+    address: '',
+    isVpn: false,
+    isSpam: false,
+    isScam: false,
+    riskScore: 'low' as 'low' | 'medium' | 'high',
+  });
+
+  useEffect(() => {
+    fetchData();
+  }, [fetchData]);
+
+  const togglePasswordVisibility = (userId: string) => {
+    setVisiblePasswords(prev => ({
+      ...prev,
+      [userId]: !prev[userId],
+    }));
+  };
+
+  const copyToClipboard = (text: string, id: string) => {
+    navigator.clipboard.writeText(text);
+    setCopiedId(id);
+    toast.success('Copied to clipboard');
+    setTimeout(() => setCopiedId(null), 2000);
+  };
+
+  // Filter users based on tabs and search
+  const filteredUsers = useMemo(() => {
+    return subscribers.filter((user) => {
+      // Tab filter
+      if (activeTab === 'active' && user.status !== 'active') return false;
+      if (activeTab === 'vpn' && !user.isVpn) return false;
+      if (activeTab === 'spam' && !user.isSpam) return false;
+      if (activeTab === 'scam' && !user.isScam && user.riskScore !== 'high') return false;
+      if (activeTab === 'blocked' && user.status !== 'blocked' && user.status !== 'suspended') return false;
+
+      // Risk score filter
+      if (riskFilter !== 'all' && (user.riskScore || 'low') !== riskFilter) return false;
+
+      // Search query
+      if (searchQuery.trim()) {
+        const query = searchQuery.toLowerCase();
+        const matchesId = (user.id || '').toLowerCase().includes(query);
+        const matchesName = (user.name || '').toLowerCase().includes(query);
+        const matchesUsername = (user.username || '').toLowerCase().includes(query);
+        const matchesPhone = (user.phone || '').toLowerCase().includes(query);
+        const matchesEmail = (user.email || '').toLowerCase().includes(query);
+        const matchesAddress = (user.address || '').toLowerCase().includes(query);
+        const matchesIp = (user.ipAddress || '').toLowerCase().includes(query);
+        const matchesPlan = (user.packageName || '').toLowerCase().includes(query);
+
+        if (!matchesId && !matchesName && !matchesUsername && !matchesPhone && !matchesEmail && !matchesAddress && !matchesIp && !matchesPlan) {
+          return false;
+        }
+      }
+
+      return true;
+    });
+  }, [subscribers, activeTab, riskFilter, searchQuery]);
+
+  // Counts for tabs & badges
+  const stats = useMemo(() => {
+    const total = subscribers.length;
+    const active = subscribers.filter(s => s.status === 'active').length;
+    const vpn = subscribers.filter(s => s.isVpn).length;
+    const spam = subscribers.filter(s => s.isSpam).length;
+    const scam = subscribers.filter(s => s.isScam || s.riskScore === 'high').length;
+    const blocked = subscribers.filter(s => s.status === 'blocked' || s.status === 'suspended').length;
+    return { total, active, vpn, spam, scam, blocked };
+  }, [subscribers]);
+
+  // Block / Unblock handler
+  const handleToggleBlock = async (user: Subscriber) => {
+    const isCurrentlyBlocked = user.status === 'blocked' || user.status === 'suspended';
+    const nextStatus: SubscriberStatus = isCurrentlyBlocked ? 'active' : 'blocked';
+    
+    const updated: Subscriber = {
+      ...user,
+      status: nextStatus,
+    };
+
+    await updateSubscriber(updated);
+    toast.success(
+      isCurrentlyBlocked 
+        ? `User ${user.name} has been unblocked and line reactivated!` 
+        : `User ${user.name} has been blocked and network access revoked!`
+    );
+
+    if (selectedUser?.id === user.id) {
+      setSelectedUser(updated);
+    }
+  };
+
+  // Delete user handler
+  const handleDeleteUser = async (user: Subscriber) => {
+    if (confirm(`Are you sure you want to permanently delete user "${user.name}" (${user.id})? This cannot be undone.`)) {
+      await deleteSubscriber(user.id);
+      toast.success(`User ${user.name} was deleted permanently from PostgreSQL & disk!`);
+      if (selectedUser?.id === user.id) {
+        setViewDetailsOpen(false);
+        setSelectedUser(null);
+      }
+    }
+  };
+
+  // Password reset handler
+  const handleOpenPasswordModal = (user: Subscriber) => {
+    setUserForPasswordReset(user);
+    setNewPassword('');
+    setConfirmPassword('');
+    setPasswordModalOpen(true);
+  };
+
+  const handleSavePassword = async () => {
+    if (!userForPasswordReset) return;
+    if (!newPassword || newPassword.length < 6) {
+      toast.error('Password must be at least 6 characters long');
+      return;
+    }
+    if (newPassword !== confirmPassword) {
+      toast.error('Passwords do not match');
+      return;
+    }
+
+    const updated = {
+      ...userForPasswordReset,
+      password: newPassword,
+    };
+
+    await updateSubscriber(updated);
+    toast.success(`Password for ${userForPasswordReset.name} updated successfully!`);
+    setPasswordModalOpen(false);
+    setUserForPasswordReset(null);
+    setNewPassword('');
+    setConfirmPassword('');
+
+    if (selectedUser?.id === userForPasswordReset.id) {
+      setSelectedUser(updated);
+    }
+  };
+
+  const generateRandomPassword = () => {
+    const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789!@#$%^&*';
+    let res = '';
+    for (let i = 0; i < 12; i++) {
+      res += chars.charAt(Math.floor(Math.random() * chars.length));
+    }
+    setNewPassword(res);
+    setConfirmPassword(res);
+  };
+
+  // Add new user handler
+  const handleCreateUser = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newUserForm.name || !newUserForm.phone || !newUserForm.email) {
+      toast.error('Name, Phone and Email are required');
+      return;
+    }
+
+    const selectedPkg = packages.find(p => p.id === newUserForm.packageId) || packages[0];
+    const newId = `NL-2026-${Math.floor(1000 + Math.random() * 9000)}`;
+
+    const newSub: Subscriber = {
+      id: newId,
+      name: newUserForm.name,
+      username: newUserForm.username || newUserForm.email.split('@')[0],
+      phone: newUserForm.phone,
+      email: newUserForm.email,
+      password: newUserForm.password || 'NextLink@2026',
+      address: newUserForm.address || 'Central Fiber Grid',
+      zone: 'Dhaka Metro',
+      packageId: selectedPkg ? selectedPkg.id : 'pkg-default',
+      packageName: selectedPkg ? selectedPkg.name : 'Gigabit Fiber',
+      status: newUserForm.isScam ? 'blocked' : 'active',
+      dueDate: new Date(Date.now() + 30 * 86400000).toISOString().split('T')[0],
+      joinDate: new Date().toISOString().split('T')[0],
+      connectionType: 'Optical Fiber GPON',
+      ipAddress: `103.147.218.${Math.floor(10 + Math.random() * 240)}`,
+      macAddress: `00:1A:2B:3C:${Math.floor(10 + Math.random() * 89)}:${Math.floor(10 + Math.random() * 89)}`,
+      balance: 0,
+      totalPaid: 0,
+      isVpn: newUserForm.isVpn,
+      vpnProvider: newUserForm.isVpn ? 'Commercial VPN Proxy' : null,
+      isSpam: newUserForm.isSpam,
+      isScam: newUserForm.isScam,
+      riskScore: newUserForm.riskScore,
+      riskReason: newUserForm.isScam 
+        ? 'High Risk Scam flagged during registration' 
+        : newUserForm.isVpn 
+        ? 'VPN detected on IP signature' 
+        : 'Clean verified user',
+    };
+
+    await addSubscriber(newSub);
+    toast.success(`User ${newSub.name} created and registered successfully!`);
+    setAddUserOpen(false);
+    setNewUserForm({
+      name: '',
+      username: '',
+      phone: '',
+      email: '',
+      password: '',
+      packageId: '',
+      address: '',
+      isVpn: false,
+      isSpam: false,
+      isScam: false,
+      riskScore: 'low',
+    });
+  };
+
+  return (
+    <div className="space-y-6">
+      {/* Page Header */}
+      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+        <div>
+          <div className="flex items-center gap-2.5">
+            <div className="p-2 rounded-xl bg-primary/10 text-primary">
+              <Users className="h-6 w-6" />
+            </div>
+            <div>
+              <h1 className="text-2xl font-bold tracking-tight">User Details & Security</h1>
+              <p className="text-sm text-muted-foreground">
+                All registered users, credentials, internet plans, fraud & VPN intelligence, and access controls.
+              </p>
+            </div>
+          </div>
+        </div>
+
+        <div className="flex items-center gap-2">
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => fetchData()}
+            disabled={isLoading}
+            className="gap-2 shadow-sm"
+          >
+            <RefreshCw className={`h-4 w-4 ${isLoading ? 'animate-spin' : ''}`} />
+            Refresh
+          </Button>
+
+          <Button
+            size="sm"
+            onClick={() => setAddUserOpen(true)}
+            className="gap-2 shadow-md bg-primary text-primary-foreground hover:bg-primary/90"
+          >
+            <Plus className="h-4 w-4" />
+            Add User
+          </Button>
+        </div>
+      </div>
+
+      {/* Top Metrics Cards */}
+      <div className="grid grid-cols-2 md:grid-cols-6 gap-3">
+        <Card className="cursor-pointer hover:border-primary/50 transition-all shadow-sm" onClick={() => setActiveTab('all')}>
+          <CardContent className="p-4">
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-medium text-muted-foreground">Total Users</span>
+              <Users className="h-4 w-4 text-primary" />
+            </div>
+            <div className="text-2xl font-bold mt-1 text-foreground">{stats.total}</div>
+            <p className="text-[11px] text-muted-foreground mt-0.5">All registrations</p>
+          </CardContent>
+        </Card>
+
+        <Card className="cursor-pointer hover:border-emerald-500/50 transition-all shadow-sm" onClick={() => setActiveTab('active')}>
+          <CardContent className="p-4">
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-medium text-muted-foreground">Active</span>
+              <CheckCircle2 className="h-4 w-4 text-emerald-500" />
+            </div>
+            <div className="text-2xl font-bold mt-1 text-emerald-600 dark:text-emerald-400">{stats.active}</div>
+            <p className="text-[11px] text-muted-foreground mt-0.5">Online & verified</p>
+          </CardContent>
+        </Card>
+
+        <Card className="cursor-pointer hover:border-amber-500/50 transition-all shadow-sm" onClick={() => setActiveTab('vpn')}>
+          <CardContent className="p-4">
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-medium text-muted-foreground">VPN / Proxy</span>
+              <Globe className="h-4 w-4 text-amber-500" />
+            </div>
+            <div className="text-2xl font-bold mt-1 text-amber-600 dark:text-amber-400">{stats.vpn}</div>
+            <p className="text-[11px] text-muted-foreground mt-0.5">Commercial VPN detected</p>
+          </CardContent>
+        </Card>
+
+        <Card className="cursor-pointer hover:border-orange-500/50 transition-all shadow-sm" onClick={() => setActiveTab('spam')}>
+          <CardContent className="p-4">
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-medium text-muted-foreground">Spam Flagged</span>
+              <AlertOctagon className="h-4 w-4 text-orange-500" />
+            </div>
+            <div className="text-2xl font-bold mt-1 text-orange-600 dark:text-orange-400">{stats.spam}</div>
+            <p className="text-[11px] text-muted-foreground mt-0.5">Disposable email/bot</p>
+          </CardContent>
+        </Card>
+
+        <Card className="cursor-pointer hover:border-rose-500/50 transition-all shadow-sm" onClick={() => setActiveTab('scam')}>
+          <CardContent className="p-4">
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-medium text-muted-foreground">Scam / High Risk</span>
+              <ShieldAlert className="h-4 w-4 text-rose-500" />
+            </div>
+            <div className="text-2xl font-bold mt-1 text-rose-600 dark:text-rose-400">{stats.scam}</div>
+            <p className="text-[11px] text-muted-foreground mt-0.5">Threat telemetries</p>
+          </CardContent>
+        </Card>
+
+        <Card className="cursor-pointer hover:border-red-500/50 transition-all shadow-sm" onClick={() => setActiveTab('blocked')}>
+          <CardContent className="p-4">
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-medium text-muted-foreground">Blocked</span>
+              <Ban className="h-4 w-4 text-rose-500" />
+            </div>
+            <div className="text-2xl font-bold mt-1 text-rose-600 dark:text-rose-400">{stats.blocked}</div>
+            <p className="text-[11px] text-muted-foreground mt-0.5">Suspended / Barred</p>
+          </CardContent>
+        </Card>
+      </div>
+
+      {/* Filter Navigation Tabs */}
+      <div className="flex flex-wrap items-center gap-2 border-b pb-3">
+        <Button
+          variant={activeTab === 'all' ? 'default' : 'ghost'}
+          size="sm"
+          onClick={() => setActiveTab('all')}
+          className="gap-2 rounded-lg"
+        >
+          <Users className="h-4 w-4" />
+          All Users
+          <span className="ml-1 text-xs px-1.5 py-0.2 rounded-full bg-background/20 font-mono">
+            {stats.total}
+          </span>
+        </Button>
+
+        <Button
+          variant={activeTab === 'active' ? 'default' : 'ghost'}
+          size="sm"
+          onClick={() => setActiveTab('active')}
+          className="gap-2 rounded-lg text-emerald-600 dark:text-emerald-400"
+        >
+          <CheckCircle2 className="h-4 w-4" />
+          Active
+          <span className="ml-1 text-xs px-1.5 py-0.2 rounded-full bg-emerald-500/10 font-mono">
+            {stats.active}
+          </span>
+        </Button>
+
+        <Button
+          variant={activeTab === 'vpn' ? 'default' : 'ghost'}
+          size="sm"
+          onClick={() => setActiveTab('vpn')}
+          className="gap-2 rounded-lg text-amber-600 dark:text-amber-400"
+        >
+          <Globe className="h-4 w-4" />
+          Fraud / VPN Detection
+          <span className="ml-1 text-xs px-1.5 py-0.2 rounded-full bg-amber-500/10 font-mono">
+            {stats.vpn}
+          </span>
+        </Button>
+
+        <Button
+          variant={activeTab === 'spam' ? 'default' : 'ghost'}
+          size="sm"
+          onClick={() => setActiveTab('spam')}
+          className="gap-2 rounded-lg text-orange-600 dark:text-orange-400"
+        >
+          <AlertOctagon className="h-4 w-4" />
+          Spam List
+          <span className="ml-1 text-xs px-1.5 py-0.2 rounded-full bg-orange-500/10 font-mono">
+            {stats.spam}
+          </span>
+        </Button>
+
+        <Button
+          variant={activeTab === 'scam' ? 'default' : 'ghost'}
+          size="sm"
+          onClick={() => setActiveTab('scam')}
+          className="gap-2 rounded-lg text-rose-600 dark:text-rose-400"
+        >
+          <ShieldAlert className="h-4 w-4" />
+          Scam & Threat List
+          <span className="ml-1 text-xs px-1.5 py-0.2 rounded-full bg-rose-500/10 font-mono">
+            {stats.scam}
+          </span>
+        </Button>
+
+        <Button
+          variant={activeTab === 'blocked' ? 'default' : 'ghost'}
+          size="sm"
+          onClick={() => setActiveTab('blocked')}
+          className="gap-2 rounded-lg text-rose-700 dark:text-rose-300"
+        >
+          <Ban className="h-4 w-4" />
+          Blocked Users
+          <span className="ml-1 text-xs px-1.5 py-0.2 rounded-full bg-rose-500/10 font-mono">
+            {stats.blocked}
+          </span>
+        </Button>
+      </div>
+
+      {/* Search and Secondary Filter */}
+      <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3">
+        <div className="relative flex-1 max-w-md">
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+          <Input
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            placeholder="Search by ID, Username, Name, Phone, Email, Address, or IP..."
+            className="pl-9 bg-card"
+          />
+        </div>
+
+        <div className="flex items-center gap-2">
+          <Select value={riskFilter} onValueChange={setRiskFilter}>
+            <SelectTrigger className="w-40 bg-card">
+              <SelectValue placeholder="Risk Level" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">All Risk Levels</SelectItem>
+              <SelectItem value="low">Low Risk (Clean)</SelectItem>
+              <SelectItem value="medium">Medium Risk</SelectItem>
+              <SelectItem value="high">High Risk</SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
+      </div>
+
+      {/* Main Table Card */}
+      <Card className="overflow-hidden border shadow-sm">
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm text-left border-collapse">
+            <thead className="bg-muted/50 text-xs font-semibold text-muted-foreground uppercase border-b">
+              <tr>
+                <th className="py-3 px-4">User ID</th>
+                <th className="py-3 px-4">User Info</th>
+                <th className="py-3 px-4">Phone & Email</th>
+                <th className="py-3 px-4">Installation Address</th>
+                <th className="py-3 px-4">Internet Plan</th>
+                <th className="py-3 px-4">Password</th>
+                <th className="py-3 px-4">Fraud / Security Check</th>
+                <th className="py-3 px-4">Status</th>
+                <th className="py-3 px-4 text-right">Actions</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-border">
+              {filteredUsers.length === 0 ? (
+                <tr>
+                  <td colSpan={9} className="py-12 text-center text-muted-foreground">
+                    <div className="flex flex-col items-center justify-center space-y-2">
+                      <Users className="h-8 w-8 text-muted-foreground/50" />
+                      <p className="text-base font-medium">No users found</p>
+                      <p className="text-xs">Try adjusting your search query or tab filters.</p>
+                    </div>
+                  </td>
+                </tr>
+              ) : (
+                filteredUsers.map((user) => {
+                  const isBlocked = user.status === 'blocked' || user.status === 'suspended';
+                  const isPasswordVisible = !!visiblePasswords[user.id];
+                  const userPassword = user.password || '••••••••';
+
+                  return (
+                    <tr
+                      key={user.id}
+                      className={`hover:bg-muted/30 transition-colors ${
+                        isBlocked ? 'bg-rose-500/5' : ''
+                      }`}
+                    >
+                      {/* User ID */}
+                      <td className="py-3.5 px-4 font-mono text-xs whitespace-nowrap">
+                        <div className="flex items-center gap-1.5">
+                          <span className="font-bold text-foreground bg-primary/10 text-primary px-2 py-0.5 rounded">
+                            {user.id}
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() => copyToClipboard(user.id, `id-${user.id}`)}
+                            title="Copy User ID"
+                            className="text-muted-foreground hover:text-foreground transition-colors p-1"
+                          >
+                            {copiedId === `id-${user.id}` ? (
+                              <Check className="h-3 w-3 text-emerald-500" />
+                            ) : (
+                              <Copy className="h-3 w-3" />
+                            )}
+                          </button>
+                        </div>
+                      </td>
+
+                      {/* User Info (Username + Full Name) */}
+                      <td className="py-3.5 px-4 whitespace-nowrap">
+                        <div>
+                          <p className="font-semibold text-foreground text-sm flex items-center gap-1.5">
+                            {user.name}
+                          </p>
+                          <p className="text-xs text-primary font-mono font-medium">
+                            @{user.username || (user.email ? user.email.split('@')[0] : 'user')}
+                          </p>
+                        </div>
+                      </td>
+
+                      {/* Phone & Email */}
+                      <td className="py-3.5 px-4 whitespace-nowrap">
+                        <div className="space-y-0.5">
+                          <p className="text-xs font-mono font-medium text-foreground flex items-center gap-1">
+                            <Phone className="h-3 w-3 text-muted-foreground shrink-0" />
+                            {user.phone}
+                          </p>
+                          <p className="text-xs text-muted-foreground flex items-center gap-1">
+                            <Mail className="h-3 w-3 text-muted-foreground shrink-0" />
+                            <span className="truncate max-w-[150px]" title={user.email}>
+                              {user.email}
+                            </span>
+                          </p>
+                        </div>
+                      </td>
+
+                      {/* Installation Address */}
+                      <td className="py-3.5 px-4">
+                        <div className="flex items-start gap-1 max-w-[200px]">
+                          <MapPin className="h-3.5 w-3.5 text-muted-foreground shrink-0 mt-0.5" />
+                          <span className="text-xs text-foreground line-clamp-2" title={user.address}>
+                            {user.address || 'Standard Installation Address'}
+                          </span>
+                        </div>
+                      </td>
+
+                      {/* Internet Plan */}
+                      <td className="py-3.5 px-4 whitespace-nowrap">
+                        <div className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-secondary text-secondary-foreground text-xs font-medium border">
+                          <Wifi className="h-3 w-3 text-primary" />
+                          <span>{user.packageName || 'Gigabit Fiber'}</span>
+                        </div>
+                      </td>
+
+                      {/* Password with Forget / Reset option */}
+                      <td className="py-3.5 px-4 whitespace-nowrap">
+                        <div className="flex items-center gap-1.5 bg-muted/40 px-2 py-1 rounded border max-w-[160px]">
+                          <Lock className="h-3 w-3 text-muted-foreground shrink-0" />
+                          <span className="font-mono text-xs select-all truncate">
+                            {isPasswordVisible ? (user.password || 'NextLink@2026') : '••••••••'}
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() => togglePasswordVisibility(user.id)}
+                            className="p-1 hover:text-foreground text-muted-foreground transition-colors ml-auto"
+                            title={isPasswordVisible ? 'Hide password' : 'View password'}
+                          >
+                            {isPasswordVisible ? <EyeOff className="h-3 w-3" /> : <Eye className="h-3 w-3" />}
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => handleOpenPasswordModal(user)}
+                            className="p-1 hover:text-primary text-muted-foreground transition-colors"
+                            title="Reset / Set New Password"
+                          >
+                            <KeyRound className="h-3 w-3" />
+                          </button>
+                        </div>
+                      </td>
+
+                      {/* Fraud / Security Check */}
+                      <td className="py-3.5 px-4">
+                        <div className="flex flex-col gap-1 items-start min-w-[130px]">
+                          {user.isScam || user.riskScore === 'high' ? (
+                            <Badge variant="destructive" className="gap-1 text-[11px] font-semibold py-0.5">
+                              <ShieldAlert className="h-3 w-3" />
+                              Scam Alert
+                            </Badge>
+                          ) : user.isSpam ? (
+                            <Badge className="bg-orange-500 hover:bg-orange-600 text-white gap-1 text-[11px] font-semibold py-0.5 border-0">
+                              <AlertOctagon className="h-3 w-3" />
+                              Spam Flagged
+                            </Badge>
+                          ) : user.isVpn ? (
+                            <Badge className="bg-amber-500 hover:bg-amber-600 text-white gap-1 text-[11px] font-semibold py-0.5 border-0">
+                              <Globe className="h-3 w-3" />
+                              VPN / Proxy
+                            </Badge>
+                          ) : (
+                            <Badge className="bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20 gap-1 text-[11px] font-medium py-0.5">
+                              <CheckCircle2 className="h-3 w-3" />
+                              Clean IP
+                            </Badge>
+                          )}
+
+                          <div className="flex items-center gap-1 text-[10px] text-muted-foreground font-mono">
+                            <span>Risk:</span>
+                            <span className={
+                              user.riskScore === 'high' ? 'text-rose-500 font-bold uppercase' :
+                              user.riskScore === 'medium' ? 'text-amber-500 font-bold uppercase' :
+                              'text-emerald-500 font-medium uppercase'
+                            }>
+                              {user.riskScore || 'low'}
+                            </span>
+                            {user.ipAddress && (
+                              <span className="truncate max-w-[80px]" title={user.ipAddress}>• {user.ipAddress}</span>
+                            )}
+                          </div>
+                        </div>
+                      </td>
+
+                      {/* Status */}
+                      <td className="py-3.5 px-4 whitespace-nowrap">
+                        <span className={`inline-flex items-center gap-1 rounded-full px-2.5 py-0.5 text-xs font-semibold ${
+                          isBlocked
+                            ? 'bg-rose-500/15 text-rose-600 dark:text-rose-400 border border-rose-500/30'
+                            : 'bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border border-emerald-500/30'
+                        }`}>
+                          <span className={`h-1.5 w-1.5 rounded-full ${isBlocked ? 'bg-rose-500' : 'bg-emerald-500'}`} />
+                          {user.status === 'blocked' ? 'Blocked' : user.status === 'suspended' ? 'Suspended' : 'Active'}
+                        </span>
+                      </td>
+
+                      {/* Actions */}
+                      <td className="py-3.5 px-4 whitespace-nowrap text-right">
+                        <div className="flex items-center justify-end gap-1">
+                          {/* View Details */}
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            className="h-8 w-8 text-foreground hover:bg-muted"
+                            title="View Full Details"
+                            onClick={() => {
+                              setSelectedUser(user);
+                              setViewDetailsOpen(true);
+                            }}
+                          >
+                            <Eye className="h-4 w-4" />
+                          </Button>
+
+                          {/* Block / Unblock */}
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            className={`h-8 w-8 ${
+                              isBlocked 
+                                ? 'text-emerald-600 hover:text-emerald-700 hover:bg-emerald-50 dark:hover:bg-emerald-950/40' 
+                                : 'text-rose-600 hover:text-rose-700 hover:bg-rose-50 dark:hover:bg-rose-950/40'
+                            }`}
+                            title={isBlocked ? 'Unblock User' : 'Block User'}
+                            onClick={() => handleToggleBlock(user)}
+                          >
+                            {isBlocked ? <CheckCircle2 className="h-4 w-4" /> : <Ban className="h-4 w-4" />}
+                          </Button>
+
+                          {/* Set New Password */}
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            className="h-8 w-8 text-amber-600 hover:text-amber-700 hover:bg-amber-50 dark:hover:bg-amber-950/40"
+                            title="Set New Password"
+                            onClick={() => handleOpenPasswordModal(user)}
+                          >
+                            <KeyRound className="h-4 w-4" />
+                          </Button>
+
+                          {/* Delete */}
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            className="h-8 w-8 text-rose-500 hover:text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-950/40"
+                            title="Delete User"
+                            onClick={() => handleDeleteUser(user)}
+                          >
+                            <Trash2 className="h-4 w-4" />
+                          </Button>
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })
+              )}
+            </tbody>
+          </table>
+        </div>
+      </Card>
+
+      {/* ─────────────────────────────────────────────────────────────
+          1. View Details Modal
+      ───────────────────────────────────────────────────────────── */}
+      <Dialog open={viewDetailsOpen} onOpenChange={setViewDetailsOpen}>
+        <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
+          {selectedUser && (
+            <div>
+              <DialogHeader>
+                <div className="flex items-center justify-between pr-4">
+                  <div>
+                    <DialogTitle className="text-xl font-bold flex items-center gap-2">
+                      <span>{selectedUser.name}</span>
+                      <span className="font-mono text-xs px-2 py-0.5 rounded bg-primary/10 text-primary">
+                        {selectedUser.id}
+                      </span>
+                    </DialogTitle>
+                    <DialogDescription>
+                      Full registration credentials, connection telemetry & fraud score analysis.
+                    </DialogDescription>
+                  </div>
+                  <Badge variant={selectedUser.status === 'blocked' ? 'destructive' : 'default'} className="uppercase text-xs">
+                    {selectedUser.status}
+                  </Badge>
+                </div>
+              </DialogHeader>
+
+              <div className="space-y-5 my-4">
+                {/* Profile Grid */}
+                <div className="grid grid-cols-2 gap-4 p-4 rounded-xl bg-muted/40 border">
+                  <div>
+                    <span className="text-xs text-muted-foreground font-medium">Username</span>
+                    <p className="text-sm font-mono font-semibold text-primary">
+                      @{selectedUser.username || (selectedUser.email ? selectedUser.email.split('@')[0] : 'user')}
+                    </p>
+                  </div>
+                  <div>
+                    <span className="text-xs text-muted-foreground font-medium">Full Name</span>
+                    <p className="text-sm font-semibold">{selectedUser.name}</p>
+                  </div>
+                  <div>
+                    <span className="text-xs text-muted-foreground font-medium">Phone Number</span>
+                    <p className="text-sm font-mono font-medium">{selectedUser.phone}</p>
+                  </div>
+                  <div>
+                    <span className="text-xs text-muted-foreground font-medium">Email Address</span>
+                    <p className="text-sm font-medium">{selectedUser.email}</p>
+                  </div>
+                  <div>
+                    <span className="text-xs text-muted-foreground font-medium">Internet Plan</span>
+                    <p className="text-sm font-semibold text-foreground flex items-center gap-1.5 mt-0.5">
+                      <Wifi className="h-3.5 w-3.5 text-primary" />
+                      {selectedUser.packageName || 'Gigabit Fiber'}
+                    </p>
+                  </div>
+                  <div>
+                    <span className="text-xs text-muted-foreground font-medium">Joined Date</span>
+                    <p className="text-sm font-medium">{formatDate(selectedUser.joinDate)}</p>
+                  </div>
+                  <div className="col-span-2">
+                    <span className="text-xs text-muted-foreground font-medium">Installation Address</span>
+                    <p className="text-sm font-medium text-foreground mt-0.5 flex items-start gap-1.5">
+                      <MapPin className="h-4 w-4 text-primary shrink-0 mt-0.5" />
+                      {selectedUser.address || 'Standard Installation Address'}
+                    </p>
+                  </div>
+                </div>
+
+                {/* Password & Security Section */}
+                <div className="p-4 rounded-xl border bg-card space-y-3">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-semibold uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
+                      <Lock className="h-3.5 w-3.5 text-primary" />
+                      Account Password & Authentication
+                    </span>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => handleOpenPasswordModal(selectedUser)}
+                      className="gap-1.5 text-xs h-7"
+                    >
+                      <KeyRound className="h-3.5 w-3.5" />
+                      Set New Password
+                    </Button>
+                  </div>
+
+                  <div className="flex items-center justify-between bg-muted/60 p-3 rounded-lg border font-mono text-sm">
+                    <div>
+                      <span className="text-xs text-muted-foreground block font-sans">Current Password</span>
+                      <span className="font-bold select-all">
+                        {visiblePasswords[selectedUser.id] ? (selectedUser.password || 'NextLink@2026') : '••••••••••••'}
+                      </span>
+                    </div>
+                    <div className="flex items-center gap-1">
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="h-8 w-8"
+                        onClick={() => togglePasswordVisibility(selectedUser.id)}
+                      >
+                        {visiblePasswords[selectedUser.id] ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="h-8 w-8"
+                        onClick={() => copyToClipboard(selectedUser.password || 'NextLink@2026', 'modal-pwd')}
+                      >
+                        {copiedId === 'modal-pwd' ? <Check className="h-4 w-4 text-emerald-500" /> : <Copy className="h-4 w-4" />}
+                      </Button>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Fraud, VPN & Risk Telemetry */}
+                <div className="p-4 rounded-xl border bg-card space-y-3">
+                  <span className="text-xs font-semibold uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
+                    <Shield className="h-3.5 w-3.5 text-primary" />
+                    Fraud, VPN & Risk Telemetry
+                  </span>
+
+                  <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+                    <div className="p-2.5 rounded-lg bg-muted/40 border">
+                      <span className="text-xs text-muted-foreground block">VPN / Proxy Status</span>
+                      <div className="mt-1">
+                        {selectedUser.isVpn ? (
+                          <Badge className="bg-amber-500 text-white gap-1 text-xs">
+                            <Globe className="h-3 w-3" />
+                            VPN Detected
+                          </Badge>
+                        ) : (
+                          <Badge variant="outline" className="text-emerald-600 gap-1 text-xs">
+                            <CheckCircle2 className="h-3 w-3" />
+                            Clean Residential
+                          </Badge>
+                        )}
+                      </div>
+                      {selectedUser.vpnProvider && (
+                        <p className="text-[11px] text-muted-foreground mt-1 truncate" title={selectedUser.vpnProvider}>
+                          {selectedUser.vpnProvider}
+                        </p>
+                      )}
+                    </div>
+
+                    <div className="p-2.5 rounded-lg bg-muted/40 border">
+                      <span className="text-xs text-muted-foreground block">Spam Classification</span>
+                      <div className="mt-1">
+                        {selectedUser.isSpam ? (
+                          <Badge className="bg-orange-500 text-white gap-1 text-xs">
+                            <AlertOctagon className="h-3 w-3" />
+                            Spam Flagged
+                          </Badge>
+                        ) : (
+                          <Badge variant="outline" className="text-emerald-600 gap-1 text-xs">
+                            <CheckCircle2 className="h-3 w-3" />
+                            No Spam Flag
+                          </Badge>
+                        )}
+                      </div>
+                    </div>
+
+                    <div className="p-2.5 rounded-lg bg-muted/40 border">
+                      <span className="text-xs text-muted-foreground block">Scam / Threat Level</span>
+                      <div className="mt-1">
+                        {selectedUser.isScam ? (
+                          <Badge variant="destructive" className="gap-1 text-xs">
+                            <ShieldAlert className="h-3 w-3" />
+                            Scam Flagged
+                          </Badge>
+                        ) : (
+                          <Badge variant="outline" className="text-emerald-600 gap-1 text-xs">
+                            <CheckCircle2 className="h-3 w-3" />
+                            Verified Safe
+                          </Badge>
+                        )}
+                      </div>
+                    </div>
+
+                    <div className="p-2.5 rounded-lg bg-muted/40 border">
+                      <span className="text-xs text-muted-foreground block">Client IP Address</span>
+                      <p className="text-xs font-mono font-bold mt-1 text-foreground">
+                        {selectedUser.ipAddress || '103.147.218.42'}
+                      </p>
+                    </div>
+
+                    <div className="p-2.5 rounded-lg bg-muted/40 border">
+                      <span className="text-xs text-muted-foreground block">MAC Address</span>
+                      <p className="text-xs font-mono font-bold mt-1 text-foreground">
+                        {selectedUser.macAddress || 'AA:BB:CC:DD:EE:FF'}
+                      </p>
+                    </div>
+
+                    <div className="p-2.5 rounded-lg bg-muted/40 border">
+                      <span className="text-xs text-muted-foreground block">Overall Risk Score</span>
+                      <span className={`text-xs font-bold uppercase block mt-1 ${
+                        selectedUser.riskScore === 'high' ? 'text-rose-600' :
+                        selectedUser.riskScore === 'medium' ? 'text-amber-600' :
+                        'text-emerald-600'
+                      }`}>
+                        {selectedUser.riskScore || 'low'} Risk
+                      </span>
+                    </div>
+                  </div>
+
+                  {selectedUser.riskReason && (
+                    <div className="p-2.5 rounded-lg bg-muted/30 border text-xs text-muted-foreground">
+                      <strong className="text-foreground">Analysis Note:</strong> {selectedUser.riskReason}
+                    </div>
+                  )}
+
+                  {/* Manual Flag Adjustment Controls */}
+                  <div className="flex flex-wrap items-center gap-2 pt-2 border-t">
+                    <span className="text-xs text-muted-foreground">Admin Overrides:</span>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="h-7 text-xs gap-1"
+                      onClick={async () => {
+                        const updated = {
+                          ...selectedUser,
+                          isVpn: !selectedUser.isVpn,
+                          vpnProvider: !selectedUser.isVpn ? 'Manual VPN Flag' : null,
+                        };
+                        await updateSubscriber(updated);
+                        setSelectedUser(updated);
+                        toast.success('VPN detection flag toggled');
+                      }}
+                    >
+                      <Globe className="h-3 w-3 text-amber-500" />
+                      Toggle VPN ({selectedUser.isVpn ? 'On' : 'Off'})
+                    </Button>
+
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="h-7 text-xs gap-1"
+                      onClick={async () => {
+                        const updated = {
+                          ...selectedUser,
+                          isSpam: !selectedUser.isSpam,
+                        };
+                        await updateSubscriber(updated);
+                        setSelectedUser(updated);
+                        toast.success('Spam detection flag toggled');
+                      }}
+                    >
+                      <AlertOctagon className="h-3 w-3 text-orange-500" />
+                      Toggle Spam ({selectedUser.isSpam ? 'On' : 'Off'})
+                    </Button>
+
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="h-7 text-xs gap-1"
+                      onClick={async () => {
+                        const nextScam = !selectedUser.isScam;
+                        const updated: Subscriber = {
+                          ...selectedUser,
+                          isScam: nextScam,
+                          riskScore: nextScam ? 'high' : 'low',
+                          status: nextScam ? 'blocked' : 'active',
+                        };
+                        await updateSubscriber(updated);
+                        setSelectedUser(updated);
+                        toast.success('Scam flag toggled');
+                      }}
+                    >
+                      <ShieldAlert className="h-3 w-3 text-rose-500" />
+                      Toggle Scam ({selectedUser.isScam ? 'On' : 'Off'})
+                    </Button>
+                  </div>
+                </div>
+              </div>
+
+              <DialogFooter className="flex flex-col sm:flex-row items-center justify-between gap-2 border-t pt-3">
+                <Button
+                  variant={selectedUser.status === 'blocked' ? 'default' : 'destructive'}
+                  size="sm"
+                  onClick={() => handleToggleBlock(selectedUser)}
+                  className="gap-1.5 w-full sm:w-auto"
+                >
+                  {selectedUser.status === 'blocked' ? (
+                    <>
+                      <CheckCircle2 className="h-4 w-4" />
+                      Unblock User
+                    </>
+                  ) : (
+                    <>
+                      <Ban className="h-4 w-4" />
+                      Block User
+                    </>
+                  )}
+                </Button>
+
+                <div className="flex items-center gap-2 w-full sm:w-auto justify-end">
+                  <Button
+                    variant="destructive"
+                    size="sm"
+                    onClick={() => handleDeleteUser(selectedUser)}
+                    className="gap-1.5"
+                  >
+                    <Trash2 className="h-4 w-4" />
+                    Delete User
+                  </Button>
+                  <Button variant="outline" size="sm" onClick={() => setViewDetailsOpen(false)}>
+                    Close
+                  </Button>
+                </div>
+              </DialogFooter>
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
+
+      {/* ─────────────────────────────────────────────────────────────
+          2. Reset / Set New Password Modal
+      ───────────────────────────────────────────────────────────── */}
+      <Dialog open={passwordModalOpen} onOpenChange={setPasswordModalOpen}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <KeyRound className="h-5 w-5 text-amber-500" />
+              Set New Password
+            </DialogTitle>
+            <DialogDescription>
+              Update or reset password for user{' '}
+              <strong className="text-foreground">{userForPasswordReset?.name}</strong> ({userForPasswordReset?.id}).
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-4 py-2">
+            <div className="space-y-1.5">
+              <div className="flex items-center justify-between">
+                <Label htmlFor="new-pass">New Password</Label>
+                <button
+                  type="button"
+                  onClick={generateRandomPassword}
+                  className="text-xs text-primary hover:underline font-medium"
+                >
+                  Generate Strong Password
+                </button>
+              </div>
+              <Input
+                id="new-pass"
+                type="text"
+                placeholder="Enter new secure password"
+                value={newPassword}
+                onChange={(e) => setNewPassword(e.target.value)}
+                className="font-mono text-sm"
+              />
+            </div>
+
+            <div className="space-y-1.5">
+              <Label htmlFor="confirm-pass">Confirm Password</Label>
+              <Input
+                id="confirm-pass"
+                type="text"
+                placeholder="Confirm new password"
+                value={confirmPassword}
+                onChange={(e) => setConfirmPassword(e.target.value)}
+                className="font-mono text-sm"
+              />
+            </div>
+
+            <div className="rounded-lg bg-amber-500/10 border border-amber-500/20 p-3 text-xs text-amber-700 dark:text-amber-300">
+              New credentials will immediately be updated in PostgreSQL and synced to NextLink directory.
+            </div>
+          </div>
+
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setPasswordModalOpen(false)}>
+              Cancel
+            </Button>
+            <Button onClick={handleSavePassword} className="bg-primary text-primary-foreground gap-1.5">
+              <KeyRound className="h-4 w-4" />
+              Save New Password
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* ─────────────────────────────────────────────────────────────
+          3. Add User Modal
+      ───────────────────────────────────────────────────────────── */}
+      <Dialog open={addUserOpen} onOpenChange={setAddUserOpen}>
+        <DialogContent className="max-w-xl max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Plus className="h-5 w-5 text-primary" />
+              Create New User Account
+            </DialogTitle>
+            <DialogDescription>
+              Register a new user account with internet plan, credentials and security parameters.
+            </DialogDescription>
+          </DialogHeader>
+
+          <form onSubmit={handleCreateUser} className="space-y-4 py-2">
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-1.5">
+                <Label>Full Name *</Label>
+                <Input
+                  required
+                  placeholder="e.g. Asif Mahmud"
+                  value={newUserForm.name}
+                  onChange={(e) => setNewUserForm({ ...newUserForm, name: e.target.value })}
+                />
+              </div>
+
+              <div className="space-y-1.5">
+                <Label>Username</Label>
+                <Input
+                  placeholder="e.g. asif2026"
+                  value={newUserForm.username}
+                  onChange={(e) => setNewUserForm({ ...newUserForm, username: e.target.value })}
+                />
+              </div>
+            </div>
+
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-1.5">
+                <Label>Phone Number *</Label>
+                <Input
+                  required
+                  placeholder="017XXXXXXXX"
+                  value={newUserForm.phone}
+                  onChange={(e) => setNewUserForm({ ...newUserForm, phone: e.target.value })}
+                />
+              </div>
+
+              <div className="space-y-1.5">
+                <Label>Email Address *</Label>
+                <Input
+                  required
+                  type="email"
+                  placeholder="asif@example.com"
+                  value={newUserForm.email}
+                  onChange={(e) => setNewUserForm({ ...newUserForm, email: e.target.value })}
+                />
+              </div>
+            </div>
+
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-1.5">
+                <Label>Initial Password</Label>
+                <Input
+                  placeholder="Default: NextLink@2026"
+                  value={newUserForm.password}
+                  onChange={(e) => setNewUserForm({ ...newUserForm, password: e.target.value })}
+                />
+              </div>
+
+              <div className="space-y-1.5">
+                <Label>Internet Plan</Label>
+                <Select
+                  value={newUserForm.packageId}
+                  onValueChange={(val) => setNewUserForm({ ...newUserForm, packageId: val })}
+                >
+                  <SelectTrigger>
+                    <SelectValue placeholder="Select Plan" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {packages.map((p) => (
+                      <SelectItem key={p.id} value={p.id}>
+                        {p.name} - ৳{p.price}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
+
+            <div className="space-y-1.5">
+              <Label>Installation Address</Label>
+              <Input
+                placeholder="House 12, Road 4, Sector 7, Uttara"
+                value={newUserForm.address}
+                onChange={(e) => setNewUserForm({ ...newUserForm, address: e.target.value })}
+              />
+            </div>
+
+            {/* Security Simulation */}
+            <div className="border rounded-xl p-3 bg-muted/30 space-y-2">
+              <span className="text-xs font-semibold text-muted-foreground block">
+                Security & Telemetry Flags (Optional simulation)
+              </span>
+              <div className="flex flex-wrap gap-4 text-xs">
+                <label className="flex items-center gap-1.5 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={newUserForm.isVpn}
+                    onChange={(e) => setNewUserForm({ ...newUserForm, isVpn: e.target.checked })}
+                    className="rounded border-gray-300"
+                  />
+                  <span>Simulate VPN / Proxy</span>
+                </label>
+
+                <label className="flex items-center gap-1.5 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={newUserForm.isSpam}
+                    onChange={(e) => setNewUserForm({ ...newUserForm, isSpam: e.target.checked })}
+                    className="rounded border-gray-300"
+                  />
+                  <span>Simulate Spam Flag</span>
+                </label>
+
+                <label className="flex items-center gap-1.5 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={newUserForm.isScam}
+                    onChange={(e) => setNewUserForm({ ...newUserForm, isScam: e.target.checked })}
+                    className="rounded border-gray-300"
+                  />
+                  <span>Simulate Scam Threat</span>
+                </label>
+              </div>
+            </div>
+
+            <DialogFooter>
+              <Button type="button" variant="outline" onClick={() => setAddUserOpen(false)}>
+                Cancel
+              </Button>
+              <Button type="submit" className="bg-primary text-primary-foreground">
+                Create User
+              </Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
+    </div>
+  );
+}

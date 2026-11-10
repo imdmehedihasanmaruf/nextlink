@@ -35,7 +35,7 @@
   --popover: 222.2 47% 10%;
   --popover-foreground: 210 40% 98%;
   --primary: 217.2 91.2% 59.8%;
-  --primary-foreground: 222.2 47.4% 11.2%;
+  --primary-foreground: 210 40% 98%;
   --secondary: 217.2 32.6% 17.5%;
   --secondary-foreground: 210 40% 98%;
   --muted: 217.2 32.6% 17.5%;
@@ -56,7 +56,7 @@
 }
 [data-color="green"] {
   --primary: 142.1 76.2% 40%;
-  --primary-foreground: 355.7 100% 97.3%;
+  --primary-foreground: 210 40% 98%;
   --primary-dark: #15803d;
 }
 [data-color="purple"] {
@@ -71,7 +71,7 @@
 }
 [data-color="orange"] {
   --primary: 24.6 95% 53.1%;
-  --primary-foreground: 60 9.1% 97.8%;
+  --primary-foreground: 210 40% 98%;
   --primary-dark: #c2410c;
 }
 
@@ -88,7 +88,7 @@
     @apply bg-background text-foreground antialiased;
   }
   h1, h2, h3, h4, h5, h6 {
-    @apply text-foreground font-bold tracking-tight;
+    @apply font-bold tracking-tight;
   }
 }
 

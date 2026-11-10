@@ -2,28 +2,69 @@
 
 import React from 'react'
 import Link from 'next/link'
-import { Wifi, Phone, Mail, MapPin, Facebook, Youtube, Globe } from 'lucide-react'
+import { useRouter } from 'next/navigation'
+import { Wifi, Phone, Mail, MapPin, Facebook, Youtube } from 'lucide-react'
 import { useTranslation } from '@/store/settingsStore'
 import { useContentStore } from '@/store/contentStore'
+import { useAuthStore } from '@/store/authStore'
 
 export function Footer() {
+  const router = useRouter()
   const { t } = useTranslation()
-  const { brand, packages, footer } = useContentStore()
+  const { brand } = useContentStore()
+  const { isAuthenticated } = useAuthStore()
+
+  const handleProtectedAction = (e: React.MouseEvent, targetHref: string = '/dashboard') => {
+    e.preventDefault()
+    if (!isAuthenticated) {
+      router.push('/login')
+    } else {
+      router.push(targetHref)
+    }
+  }
+
+  const subscriberServices = [
+    { label: 'Online Bill Payment', href: '/dashboard' },
+    { label: '1-Click Turbo Boost', href: '/dashboard' },
+    { label: 'Upgrade Fiber Plan', href: '/packages' },
+    { label: 'Line Shifting Request', href: '/tickets' },
+    { label: 'Router Configuration', href: '/dashboard' },
+  ]
+
+  const helpdeskTools = [
+    { label: 'Submit Support Ticket', href: '/tickets' },
+    { label: 'Live Speedtest Tool', href: '/dashboard' },
+    { label: 'Bandwidth Traffic Monitor', href: '/dashboard' },
+    { label: 'Referral Rewards & Bonus', href: '/dashboard' },
+    { label: 'Invoice & Billing Receipts', href: '/dashboard' },
+  ]
 
   return (
     <footer className="bg-muted/70 border-t border-border mt-auto">
       <div className="container mx-auto px-4 py-10 max-w-6xl">
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-8">
-          {/* Brand */}
+          {/* Brand (Supports 260x70 size web logo) */}
           <div className="space-y-3">
-            <div className="flex items-center gap-2">
-              <div className="flex items-center justify-center h-9 w-9 rounded-xl bg-primary text-primary-foreground shadow-sm">
-                <Wifi size={18} />
+            {brand?.logoUrl ? (
+              <div className="flex items-center">
+                <img
+                  src={brand.logoUrl}
+                  alt={brand?.name || 'NextLink Global'}
+                  width={260}
+                  height={70}
+                  className="w-[260px] h-[70px] max-w-[260px] max-h-[70px] object-contain"
+                />
               </div>
-              <span className="text-foreground font-extrabold text-xl tracking-tight">
-                {brand?.name || 'NextLink Global'}
-              </span>
-            </div>
+            ) : (
+              <div className="flex items-center gap-2">
+                <div className="flex items-center justify-center h-9 w-9 rounded-xl bg-primary text-primary-foreground shadow-sm">
+                  <Wifi size={18} />
+                </div>
+                <span className="text-foreground font-extrabold text-xl tracking-tight">
+                  {brand?.name || 'NextLink Global'}
+                </span>
+              </div>
+            )}
             <p className="text-muted-foreground text-sm leading-relaxed">
               {brand?.tagline || 'Next-Gen Ultra Fast Optical Fiber & Global Gigabit Internet.'}
             </p>
@@ -37,77 +78,74 @@ export function Footer() {
             </div>
           </div>
 
-          {/* Quick Links */}
+          {/* Useful Section 1: Subscriber Services (Redirects to Login before login) */}
           <div>
-            <h3 className="font-bold mb-4 text-foreground text-sm uppercase tracking-wider">Navigation</h3>
+            <h3 className="font-bold mb-4 text-foreground text-sm uppercase tracking-wider">Subscriber Services</h3>
             <ul className="space-y-2">
-              {[
-                { href: '/', label: t('home') },
-                { href: '/coverage', label: t('coverage') },
-                { href: '/apply', label: t('apply') },
-                { href: '/dashboard', label: t('dashboard') },
-                { href: '/profile', label: t('profile') },
-                { href: '/settings', label: t('settings') },
-              ].map(({ href, label }) => (
-                <li key={href}>
-                  <Link href={href} className="text-sm text-muted-foreground hover:text-primary transition-colors">
-                    {label}
-                  </Link>
+              {subscriberServices.map((item) => (
+                <li key={item.label}>
+                  <a
+                    href={!isAuthenticated ? '/login' : item.href}
+                    onClick={(e) => handleProtectedAction(e, item.href)}
+                    className="text-muted-foreground hover:text-primary text-sm transition-colors block py-0.5 cursor-pointer"
+                  >
+                    {item.label}
+                  </a>
                 </li>
               ))}
             </ul>
           </div>
 
-          {/* Live Packages */}
+          {/* Useful Section 2: Helpdesk & Tools (Redirects to Login before login) */}
           <div>
-            <h3 className="font-bold mb-4 text-foreground text-sm uppercase tracking-wider">Worldwide Plans</h3>
-            <ul className="space-y-2 text-sm text-muted-foreground">
-              {packages?.slice(0, 5).map((p) => (
-                <li key={p.id} className="flex items-center justify-between">
-                  <span>{p.name}</span>
-                  <span className="font-bold text-foreground">${p.price}/mo</span>
+            <h3 className="font-bold mb-4 text-foreground text-sm uppercase tracking-wider">Helpdesk & Tools</h3>
+            <ul className="space-y-2">
+              {helpdeskTools.map((item) => (
+                <li key={item.label}>
+                  <a
+                    href={!isAuthenticated ? '/login' : item.href}
+                    onClick={(e) => handleProtectedAction(e, item.href)}
+                    className="text-muted-foreground hover:text-primary text-sm transition-colors block py-0.5 cursor-pointer"
+                  >
+                    {item.label}
+                  </a>
                 </li>
               ))}
             </ul>
           </div>
 
-          {/* Contact */}
-          <div>
+          {/* Contact Details */}
+          <div className="space-y-3">
             <h3 className="font-bold mb-4 text-foreground text-sm uppercase tracking-wider">
               Global NOC & Support
             </h3>
-            <ul className="space-y-3">
-              <li className="flex items-start gap-2 text-sm text-muted-foreground">
-                <MapPin size={16} className="mt-0.5 text-primary shrink-0" />
-                <span>{brand?.address || 'One World Trade Center, Suite 8500, New York, NY 10007, USA'}</span>
-              </li>
-              <li className="flex items-center gap-2 text-sm text-muted-foreground">
+            <div className="space-y-2.5 text-sm text-muted-foreground">
+              <div className="flex items-start gap-2.5">
+                <MapPin size={16} className="text-primary shrink-0 mt-0.5" />
+                <span>{brand?.address || 'One World Trade Center, Suite 8500, New York, NY'}</span>
+              </div>
+              <div className="flex items-center gap-2.5">
                 <Phone size={16} className="text-primary shrink-0" />
-                <a href={`tel:${brand?.phone || '+18005505465'}`} className="hover:text-primary font-medium transition-colors">
-                  {brand?.phone || '+1 (800) 550-LINK'}
+                <a href={`tel:${brand?.phone?.replace(/\s+/g, '') || '+8801575XXXXXX'}`} className="hover:text-primary font-medium transition-colors">
+                  {brand?.phone || '+880 1575 XXXXXX'}
                 </a>
-              </li>
-              <li className="flex items-center gap-2 text-sm text-muted-foreground">
+              </div>
+              <div className="flex items-center gap-2.5">
                 <Mail size={16} className="text-primary shrink-0" />
                 <a href={`mailto:${brand?.email || 'support@nextlink.global'}`} className="hover:text-primary transition-colors">
                   {brand?.email || 'support@nextlink.global'}
                 </a>
-              </li>
-            </ul>
-            <div className="mt-4 p-3 bg-primary/10 border border-primary/20 rounded-xl">
+              </div>
+            </div>
+            <div className="pt-2 border-t border-border/60">
               <p className="text-xs font-semibold text-primary">{brand?.officeHours || '24/7 Global NOC & Support'}</p>
-              <p className="text-base font-bold text-foreground mt-0.5">{brand?.phone || '+1 (800) 550-LINK'}</p>
+              <p className="text-base font-bold text-foreground mt-0.5">{brand?.phone || '+880 1575 XXXXXX'}</p>
             </div>
           </div>
         </div>
 
-        <div className="mt-10 pt-6 border-t border-border flex flex-col sm:flex-row items-center justify-between gap-4 text-xs text-muted-foreground">
-          <p>© {new Date().getFullYear()} NextLink Global Fiber Technologies Inc. {footer?.copyrightEn || 'All rights reserved.'}</p>
-          <div className="flex gap-4">
-            <span className="hover:text-foreground cursor-pointer">Global Privacy Policy</span>
-            <span className="hover:text-foreground cursor-pointer">Terms of Service</span>
-            <span className="hover:text-foreground cursor-pointer">SLA Agreement</span>
-          </div>
+        <div className="border-t border-border mt-10 pt-6 text-center text-xs text-muted-foreground">
+          <p>© {new Date().getFullYear()} {brand?.name || 'NextLink Global'}. All rights reserved. Tier-1 Optical Infrastructure.</p>
         </div>
       </div>
     </footer>

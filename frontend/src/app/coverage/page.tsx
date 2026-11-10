@@ -1,6 +1,7 @@
 'use client'
 
 import React, { useState } from 'react'
+import { useRouter } from 'next/navigation'
 import { Search, MapPin, CheckCircle, XCircle, ArrowRight, Globe } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
@@ -8,6 +9,7 @@ import { Select } from '@/components/ui/select'
 import { Badge } from '@/components/ui/badge'
 import { useTranslation } from '@/store/settingsStore'
 import { useContentStore } from '@/store/contentStore'
+import { useAuthStore } from '@/store/authStore'
 import Link from 'next/link'
 
 const globalCoverageData: Record<string, Record<string, string[]>> = {
@@ -38,7 +40,9 @@ const coveredAreas = [
 ]
 
 export default function CoveragePage() {
+  const router = useRouter()
   const { t } = useTranslation()
+  const { isAuthenticated } = useAuthStore()
   const { coverageAreas } = useContentStore()
   const [region, setRegion] = useState('')
   const [metro, setMetro] = useState('')
@@ -51,6 +55,11 @@ export default function CoveragePage() {
   const areas = region && metro ? (globalCoverageData[region]?.[metro] || []) : []
 
   const handleCheck = () => {
+    // If user is not authenticated, redirect to login page before verifying
+    if (!isAuthenticated) {
+      router.push('/login?redirect=coverage')
+      return
+    }
     if (!area) return
     setLoading(true)
     setTimeout(() => {
@@ -140,7 +149,7 @@ export default function CoveragePage() {
 
             <Button
               onClick={handleCheck}
-              disabled={!area || loading}
+              disabled={isAuthenticated && (!area || loading)}
               className="w-full font-bold shadow"
             >
               {loading ? 'Verifying Optical Ring...' : 'Verify Gigabit Fiber Coverage'}

@@ -1,9 +1,11 @@
-export type SubscriberStatus = 'active' | 'suspended' | 'pending' | 'inactive';
+export type SubscriberStatus = 'active' | 'suspended' | 'pending' | 'inactive' | 'blocked';
 export type InvoiceStatus = 'paid' | 'unpaid' | 'overdue';
 export type TicketStatus = 'open' | 'in-progress' | 'resolved' | 'closed';
 export type TicketPriority = 'low' | 'medium' | 'high' | 'critical';
 export type TechnicianStatus = 'available' | 'busy' | 'off-duty';
 export type UserRole = 'super_admin' | 'billing' | 'support' | 'technician';
+
+export type PackageCategory = 'Home Internet' | 'Advanced Internet' | 'Business Internet';
 
 export interface Package {
   id: string;
@@ -14,13 +16,40 @@ export interface Package {
   duration: number; // days
   description: string;
   subscriberCount: number;
+  category?: PackageCategory;
+  targetCustomer?: string;
+  popular?: boolean;
+  badge?: string;
+  speedLabel?: string;
+  features?: string[];
+  // Feature matrix flags
+  unlimitedData?: boolean;
+  symmetricalSpeed?: boolean;
+  fiberConnection?: boolean;
+  ipv6Support?: boolean;
+  gamingOptimized?: boolean;
+  streaming4k8k?: boolean;
+  staticIp?: string;
+  prioritySupport?: boolean;
+  dedicatedBandwidth?: string;
+  businessSla?: string;
+  support24_7?: boolean;
+  // 6 Quality ISP Features
+  lowLatencyRouting?: boolean;
+  directCloudPeering?: boolean;
+  hardwareReady?: string;
+  ddosProtection?: string;
+  bgpFailover?: string;
+  cirGuarantee?: string;
 }
 
 export interface Subscriber {
   id: string;
   name: string;
+  username?: string;
   phone: string;
   email: string;
+  password?: string;
   address: string;
   zone: string;
   packageId: string;
@@ -33,6 +62,13 @@ export interface Subscriber {
   macAddress: string;
   balance: number;
   totalPaid: number;
+  // Security & Fraud Detection Intelligence
+  isVpn?: boolean;
+  vpnProvider?: string | null;
+  isSpam?: boolean;
+  isScam?: boolean;
+  riskScore?: 'low' | 'medium' | 'high';
+  riskReason?: string;
 }
 
 export interface Invoice {
@@ -107,28 +143,357 @@ export interface SubscriberGrowth {
   churned: number;
 }
 
-// ─── Packages (Worldwide Fiber Plans in USD) ────────────────────────────────
+// ─── Packages (NextLink Global Internet Plans in USD) ────────────────────────
 export const mockPackages: Package[] = [
-  { id: 'PKG-001', name: 'Starter Fiber 50', downloadSpeed: 50, uploadSpeed: 50, price: 29, duration: 30, description: 'Symmetrical 50 Mbps fiber with unlimited global bandwidth', subscriberCount: 85 },
-  { id: 'PKG-002', name: 'Turbo 150', downloadSpeed: 150, uploadSpeed: 150, price: 49, duration: 30, description: 'Direct Tier-1 cloud peering with ultra-low latency', subscriberCount: 142 },
-  { id: 'PKG-003', name: 'Ultra Gigabit 500', downloadSpeed: 500, uploadSpeed: 500, price: 79, duration: 30, description: 'Dedicated public IPv4 & 4K/8K bufferless streaming', subscriberCount: 93 },
-  { id: 'PKG-004', name: 'Gigabit Extreme 1000', downloadSpeed: 1000, uploadSpeed: 1000, price: 109, duration: 30, description: 'Blazing 1 Gbps symmetrical pipe for power users & studios', subscriberCount: 47 },
-  { id: 'PKG-005', name: 'Enterprise Cloud 2500', downloadSpeed: 2500, uploadSpeed: 2500, price: 199, duration: 30, description: '2.5 Gbps with BGP failover and /29 IPv4 subnet', subscriberCount: 18 },
+  {
+    id: 'PKG-001',
+    name: 'Essential',
+    downloadSpeed: 100,
+    uploadSpeed: 100,
+    price: 0,
+    duration: 30,
+    category: 'Home Internet',
+    targetCustomer: 'Individual / Small Household',
+    popular: false,
+    badge: 'Starter Symmetrical',
+    speedLabel: '100 Mbps',
+    description: 'Reliable 100 Mbps symmetrical optical fiber for everyday browsing, HD video calls, and essential smart devices.',
+    subscriberCount: 85,
+    features: [
+      '100 Mbps Symmetrical Download & Upload',
+      '100% Unlimited Fiber Data',
+      'Direct Optical Fiber GPON Connection',
+      'Gigabit ONU Equipment Included',
+      'Basic DDoS Mitigation Shield',
+      'Static IP Available (Add-on)',
+    ],
+    unlimitedData: true,
+    symmetricalSpeed: true,
+    fiberConnection: true,
+    ipv6Support: false,
+    gamingOptimized: false,
+    streaming4k8k: false,
+    staticIp: 'Add-on',
+    prioritySupport: false,
+    dedicatedBandwidth: '—',
+    businessSla: '—',
+    support24_7: false,
+    lowLatencyRouting: false,
+    directCloudPeering: false,
+    hardwareReady: 'Gigabit ONU',
+    ddosProtection: 'Basic',
+    bgpFailover: '—',
+    cirGuarantee: '—',
+  },
+  {
+    id: 'PKG-002',
+    name: 'Standard',
+    downloadSpeed: 200,
+    uploadSpeed: 200,
+    price: 29.99,
+    duration: 30,
+    category: 'Home Internet',
+    targetCustomer: 'Regular Home Users',
+    popular: false,
+    badge: 'Popular Everyday',
+    speedLabel: '200 Mbps',
+    description: 'Robust 200 Mbps symmetrical fiber with Wi-Fi 6 ONU equipment for smooth multi-device households.',
+    subscriberCount: 142,
+    features: [
+      '200 Mbps Symmetrical Download & Upload',
+      '100% Unlimited Fiber Data',
+      'Direct Optical Fiber GPON Connection',
+      'Wi-Fi 6 ONU Equipment Included',
+      'Basic DDoS Mitigation Shield',
+      'Static IP Available (Add-on)',
+    ],
+    unlimitedData: true,
+    symmetricalSpeed: true,
+    fiberConnection: true,
+    ipv6Support: false,
+    gamingOptimized: false,
+    streaming4k8k: false,
+    staticIp: 'Add-on',
+    prioritySupport: false,
+    dedicatedBandwidth: '—',
+    businessSla: '—',
+    support24_7: false,
+    lowLatencyRouting: false,
+    directCloudPeering: false,
+    hardwareReady: 'Wi-Fi 6 ONU',
+    ddosProtection: 'Basic',
+    bgpFailover: '—',
+    cirGuarantee: '—',
+  },
+  {
+    id: 'PKG-003',
+    name: 'Advanced',
+    downloadSpeed: 300,
+    uploadSpeed: 300,
+    price: 39.99,
+    duration: 30,
+    category: 'Home Internet',
+    targetCustomer: 'Family / Remote Workers',
+    popular: false,
+    badge: 'Remote Work Ready',
+    speedLabel: '300 Mbps',
+    description: 'High-capacity 300 Mbps symmetrical pipeline with full IPv6 support for remote professionals, video conferences, and seamless cloud syncing.',
+    subscriberCount: 93,
+    features: [
+      '300 Mbps Symmetrical Download & Upload',
+      '100% Unlimited Fiber Data',
+      'Full IPv6 Dual-Stack Support',
+      'Wi-Fi 6 ONU Equipment Included',
+      'Basic DDoS Mitigation Shield',
+      'Static IP Available (Add-on)',
+    ],
+    unlimitedData: true,
+    symmetricalSpeed: true,
+    fiberConnection: true,
+    ipv6Support: true,
+    gamingOptimized: false,
+    streaming4k8k: false,
+    staticIp: 'Add-on',
+    prioritySupport: false,
+    dedicatedBandwidth: '—',
+    businessSla: '—',
+    support24_7: false,
+    lowLatencyRouting: false,
+    directCloudPeering: false,
+    hardwareReady: 'Wi-Fi 6 ONU',
+    ddosProtection: 'Basic',
+    bgpFailover: '—',
+    cirGuarantee: '—',
+  },
+  {
+    id: 'PKG-004',
+    name: 'Premium',
+    downloadSpeed: 500,
+    uploadSpeed: 500,
+    price: 49.99,
+    duration: 30,
+    category: 'Home Internet',
+    targetCustomer: 'Heavy Users / Content Creators',
+    popular: true,
+    badge: 'MOST POPULAR',
+    speedLabel: '500 Mbps',
+    description: 'Blazing 500 Mbps symmetrical pipe with gaming optimization, Sub-5ms low latency, Wi-Fi 6 Mesh, and 24/7 dedicated support.',
+    subscriberCount: 215,
+    features: [
+      '500 Mbps Symmetrical Download & Upload',
+      'Gaming Optimized FastPath Engine',
+      'Sub-5ms Low Latency / FastPath Routing',
+      'Wi-Fi 6 Mesh Equipment Included',
+      '24/7 Dedicated Support',
+      'Medium DDoS Mitigation Shield',
+      'Full IPv6 Dual-Stack Support',
+      'Static IP Available (Add-on)',
+    ],
+    unlimitedData: true,
+    symmetricalSpeed: true,
+    fiberConnection: true,
+    ipv6Support: true,
+    gamingOptimized: true,
+    streaming4k8k: false,
+    staticIp: 'Add-on',
+    prioritySupport: false,
+    dedicatedBandwidth: '—',
+    businessSla: '—',
+    support24_7: true,
+    lowLatencyRouting: true,
+    directCloudPeering: false,
+    hardwareReady: 'Wi-Fi 6 Mesh',
+    ddosProtection: 'Medium',
+    bgpFailover: '—',
+    cirGuarantee: '—',
+  },
+  {
+    id: 'PKG-005',
+    name: 'Ultra',
+    downloadSpeed: 750,
+    uploadSpeed: 750,
+    price: 69.99,
+    duration: 30,
+    category: 'Advanced Internet',
+    targetCustomer: 'Gaming / Streaming Enthusiasts',
+    popular: false,
+    badge: 'Esports Choice',
+    speedLabel: '750 Mbps',
+    description: 'Ultra-low sub-millisecond ping and 750 Mbps symmetrical throughput engineered for competitive gaming tournaments and 8K HDR broadcasting.',
+    subscriberCount: 68,
+    features: [
+      '750 Mbps Symmetrical Download & Upload',
+      'Gaming Optimized & Esports FastPath',
+      'Unrestricted 4K / 8K Multistreaming',
+      'Direct Tier-1 CDN Peering (AWS/Google/Steam)',
+      'Sub-5ms Low Latency / FastPath Routing',
+      'Esports Router Equipment Included',
+      '24/7 Dedicated Support',
+      'Medium DDoS Mitigation Shield',
+      'Static IP Available (Add-on)',
+    ],
+    unlimitedData: true,
+    symmetricalSpeed: true,
+    fiberConnection: true,
+    ipv6Support: true,
+    gamingOptimized: true,
+    streaming4k8k: true,
+    staticIp: 'Add-on',
+    prioritySupport: false,
+    dedicatedBandwidth: '—',
+    businessSla: '—',
+    support24_7: true,
+    lowLatencyRouting: true,
+    directCloudPeering: true,
+    hardwareReady: 'Esports Router',
+    ddosProtection: 'Medium',
+    bgpFailover: '—',
+    cirGuarantee: '—',
+  },
+  {
+    id: 'PKG-006',
+    name: 'Gigabit',
+    downloadSpeed: 1000,
+    uploadSpeed: 1000,
+    price: 89.99,
+    duration: 30,
+    category: 'Home Internet',
+    targetCustomer: 'Power Users / Smart Homes',
+    popular: false,
+    badge: '1 Gbps True Symmetrical',
+    speedLabel: '1 Gbps',
+    description: 'Full 1 Gbps (1000 Mbps) symmetrical optical pipe powering whole-home multi-gig networks, 50+ smart devices, and zero-buffer 8K streaming.',
+    subscriberCount: 47,
+    features: [
+      '1 Gbps (1000 Mbps) True Symmetrical Optical Fiber',
+      'Wi-Fi 6E Tri-Band Equipment Included',
+      'Bufferless 4K / 8K Multistreaming',
+      'Direct Tier-1 CDN Peering (AWS/Google/Steam)',
+      'Sub-5ms Low Latency / FastPath Routing',
+      'Priority Support & 24/7 Helpdesk',
+      'Medium DDoS Mitigation Shield',
+      'IPv6 Dual-Stack & Static IP (Add-on)',
+    ],
+    unlimitedData: true,
+    symmetricalSpeed: true,
+    fiberConnection: true,
+    ipv6Support: true,
+    gamingOptimized: true,
+    streaming4k8k: true,
+    staticIp: 'Add-on',
+    prioritySupport: true,
+    dedicatedBandwidth: '—',
+    businessSla: '—',
+    support24_7: true,
+    lowLatencyRouting: true,
+    directCloudPeering: true,
+    hardwareReady: 'Wi-Fi 6E Tri-Band',
+    ddosProtection: 'Medium',
+    bgpFailover: '—',
+    cirGuarantee: '—',
+  },
+  {
+    id: 'PKG-007',
+    name: 'Multi-Gig',
+    downloadSpeed: 2000,
+    uploadSpeed: 2000,
+    price: 149.99,
+    duration: 30,
+    category: 'Advanced Internet',
+    targetCustomer: 'Studios / Professional Users',
+    popular: false,
+    badge: '2 Gbps Multi-Gigabit',
+    speedLabel: '2 Gbps',
+    description: 'Next-generation 2 Gbps (2000 Mbps) symmetrical fiber with dedicated static IP included for production studios, heavy creators, and multi-gig labs.',
+    subscriberCount: 24,
+    features: [
+      '2 Gbps (2000 Mbps) Extreme Symmetrical Fiber',
+      '2.5G Port Optical ONU Included',
+      'Dedicated Static Public IP Included',
+      'Direct Tier-1 CDN Peering (AWS/Google/Steam)',
+      'Priority Support & 24/7 Escalated NOC',
+      'Advanced DDoS Shield (✓ Clean Pipe)',
+      'Dedicated Bandwidth Option (Add-on)',
+      'Business SLA & BGP Failover (Add-on)',
+      '1:1 Dedicated CIR Bandwidth Ratio (Add-on)',
+    ],
+    unlimitedData: true,
+    symmetricalSpeed: true,
+    fiberConnection: true,
+    ipv6Support: true,
+    gamingOptimized: true,
+    streaming4k8k: true,
+    staticIp: 'Included',
+    prioritySupport: true,
+    dedicatedBandwidth: 'Add-on',
+    businessSla: 'Add-on',
+    support24_7: true,
+    lowLatencyRouting: true,
+    directCloudPeering: true,
+    hardwareReady: '2.5G Port ONU',
+    ddosProtection: '✓ (Clean Pipe)',
+    bgpFailover: 'Add-on',
+    cirGuarantee: 'Add-on',
+  },
+  {
+    id: 'PKG-008',
+    name: 'Business Pro',
+    downloadSpeed: 5000,
+    uploadSpeed: 5000,
+    price: 299.99,
+    duration: 30,
+    category: 'Business Internet',
+    targetCustomer: 'Enterprise / Corporate',
+    popular: false,
+    badge: '5 Gbps Enterprise Grade',
+    speedLabel: '5 Gbps',
+    description: 'Carrier-grade 5 Gbps dedicated symmetrical pipe with 99.99% Business SLA, static IP, 1:1 CIR, and 10G SFP+ optical enterprise hardware.',
+    subscriberCount: 12,
+    features: [
+      '5 Gbps (5000 Mbps) Carrier-Grade Dedicated Fiber',
+      '10G SFP+ Enterprise ONU Included',
+      '1:1 Dedicated CIR Bandwidth Ratio (100% CIR)',
+      'BGP Multi-Carrier Failover Core (99.99% SLA)',
+      'Enterprise Business SLA Included',
+      'Dedicated Bandwidth Option Included',
+      'Dedicated Static Public /29 Subnet Included',
+      'Advanced Multi-Tbps DDoS Mitigation Shield',
+      'Direct Tier-1 CDN Peering (AWS/Google/Steam)',
+      '24/7 Dedicated Priority Enterprise NOC Team',
+    ],
+    unlimitedData: true,
+    symmetricalSpeed: true,
+    fiberConnection: true,
+    ipv6Support: true,
+    gamingOptimized: true,
+    streaming4k8k: true,
+    staticIp: 'Included',
+    prioritySupport: true,
+    dedicatedBandwidth: '✓',
+    businessSla: '✓',
+    support24_7: true,
+    lowLatencyRouting: true,
+    directCloudPeering: true,
+    hardwareReady: '10G SFP+ ONU',
+    ddosProtection: '✓ (Multi-Tbps)',
+    bgpFailover: 'Included (99.99%)',
+    cirGuarantee: 'Included (100% CIR)',
+  },
 ];
 
 // ─── Subscribers (Worldwide Metro Zones) ─────────────────────────────────────
 export const mockSubscribers: Subscriber[] = [
-  { id: 'SUB-001', name: 'Alexander Wright', phone: '+1 (212) 555-0143', email: 'alex.wright@example.com', address: '450 Lexington Ave, Ste 1200', zone: 'New York Metro', packageId: 'PKG-003', packageName: 'Ultra Gigabit 500', status: 'active', dueDate: '2024-02-05', joinDate: '2022-06-15', connectionType: 'Fiber', ipAddress: '198.51.100.12', macAddress: 'AA:BB:CC:DD:EE:01', balance: -79, totalPaid: 948 },
-  { id: 'SUB-002', name: 'Elena Rostova', phone: '+44 20 7946 0912', email: 'elena.rostova@example.co.uk', address: '12 Bishopsgate, Flat 4B', zone: 'London Central', packageId: 'PKG-003', packageName: 'Ultra Gigabit 500', status: 'active', dueDate: '2024-02-10', joinDate: '2021-03-22', connectionType: 'Fiber', ipAddress: '198.51.100.15', macAddress: 'AA:BB:CC:DD:EE:02', balance: 0, totalPaid: 2844 },
-  { id: 'SUB-003', name: 'Lucas Müller', phone: '+49 69 1234 5678', email: 'lucas.mueller@example.de', address: 'Taunusanlage 8', zone: 'Frankfurt & Rhine', packageId: 'PKG-002', packageName: 'Turbo 150', status: 'suspended', dueDate: '2024-01-15', joinDate: '2023-01-10', connectionType: 'Fiber', ipAddress: '198.51.100.22', macAddress: 'AA:BB:CC:DD:EE:03', balance: -98, totalPaid: 588 },
-  { id: 'SUB-004', name: 'Kenji Sato', phone: '+81 3 5555 0198', email: 'kenji.sato@example.jp', address: 'Roppongi Hills 6-10-1', zone: 'Tokyo & Kanto', packageId: 'PKG-004', packageName: 'Gigabit Extreme 1000', status: 'active', dueDate: '2024-02-20', joinDate: '2020-11-05', connectionType: 'Fiber', ipAddress: '198.51.100.30', macAddress: 'AA:BB:CC:DD:EE:04', balance: 109, totalPaid: 3924 },
-  { id: 'SUB-005', name: 'Chloe Dupont', phone: '+1 (415) 555-0182', email: 'chloe.dupont@example.com', address: '100 Market St, Suite 500', zone: 'Silicon Valley', packageId: 'PKG-002', packageName: 'Turbo 150', status: 'active', dueDate: '2024-02-08', joinDate: '2022-08-18', connectionType: 'Fiber', ipAddress: '198.51.100.41', macAddress: 'AA:BB:CC:DD:EE:05', balance: 0, totalPaid: 1176 },
-  { id: 'SUB-006', name: 'Marcus Vance', phone: '+65 6789 0123', email: 'marcus.vance@example.sg', address: '1 Raffles Place, #28-01', zone: 'Singapore CBD', packageId: 'PKG-005', packageName: 'Enterprise Cloud 2500', status: 'active', dueDate: '2024-02-15', joinDate: '2019-07-30', connectionType: 'Fiber', ipAddress: '198.51.100.55', macAddress: 'AA:BB:CC:DD:EE:06', balance: 199, totalPaid: 11940 },
-  { id: 'SUB-007', name: 'Liam O\'Connor', phone: '+61 2 9876 5432', email: 'liam.oc@example.com.au', address: '200 George St', zone: 'Sydney Metro', packageId: 'PKG-001', packageName: 'Starter Fiber 50', status: 'pending', dueDate: '2024-02-01', joinDate: '2023-12-01', connectionType: 'Fiber', ipAddress: '198.51.100.62', macAddress: 'AA:BB:CC:DD:EE:07', balance: -29, totalPaid: 58 },
-  { id: 'SUB-008', name: 'Sophia Martinez', phone: '+1 (305) 555-0147', email: 'sophia.m@example.com', address: '801 Brickell Ave, Penthouse 3', zone: 'New York Metro', packageId: 'PKG-003', packageName: 'Ultra Gigabit 500', status: 'active', dueDate: '2024-02-12', joinDate: '2021-09-14', connectionType: 'Fiber', ipAddress: '198.51.100.77', macAddress: 'AA:BB:CC:DD:EE:08', balance: 79, totalPaid: 2291 },
-  { id: 'SUB-009', name: 'David Chen', phone: '+1 (408) 555-0199', email: 'david.chen@example.com', address: '500 Castro St', zone: 'Silicon Valley', packageId: 'PKG-002', packageName: 'Turbo 150', status: 'active', dueDate: '2024-02-18', joinDate: '2022-04-20', connectionType: 'Fiber', ipAddress: '198.51.100.88', macAddress: 'AA:BB:CC:DD:EE:09', balance: 0, totalPaid: 1078 },
-  { id: 'SUB-010', name: 'Isabella Rossi', phone: '+39 02 1234 5678', email: 'isabella.rossi@example.it', address: 'Corso Vittorio Emanuele 14', zone: 'London Central', packageId: 'PKG-001', packageName: 'Starter Fiber 50', status: 'inactive', dueDate: '2023-12-01', joinDate: '2021-05-05', connectionType: 'Fiber', ipAddress: '198.51.100.99', macAddress: 'AA:BB:CC:DD:EE:10', balance: -58, totalPaid: 696 },
-  { id: 'SUB-011', name: 'Julian Becker', phone: '+49 30 9876 5432', email: 'julian.becker@example.de', address: 'Friedrichstraße 45', zone: 'Frankfurt & Rhine', packageId: 'PKG-003', packageName: 'Ultra Gigabit 500', status: 'active', dueDate: '2024-02-25', joinDate: '2020-02-10', connectionType: 'Fiber', ipAddress: '198.51.100.111', macAddress: 'AA:BB:CC:DD:EE:11', balance: 158, totalPaid: 3792 },
+  { id: 'SUB-001', name: 'Alexander Wright', username: 'alexwright', phone: '+1 (212) 555-0143', email: 'alex.wright@example.com', password: 'AlexPassword@2026', address: '450 Lexington Ave, Ste 1200', zone: 'New York Metro', packageId: 'PKG-003', packageName: 'Ultra Gigabit 500', status: 'active', dueDate: '2024-02-05', joinDate: '2022-06-15', connectionType: 'Fiber', ipAddress: '198.51.100.12', macAddress: 'AA:BB:CC:DD:EE:01', balance: -79, totalPaid: 948, isVpn: false, isSpam: false, isScam: false, riskScore: 'low', riskReason: 'Clean Residential Verified IP' },
+  { id: 'SUB-002', name: 'Elena Rostova', username: 'elena_r', phone: '+44 20 7946 0912', email: 'elena.rostova@example.co.uk', password: 'ElenaSecure#99', address: '12 Bishopsgate, Flat 4B', zone: 'London Central', packageId: 'PKG-003', packageName: 'Ultra Gigabit 500', status: 'active', dueDate: '2024-02-10', joinDate: '2021-03-22', connectionType: 'Fiber', ipAddress: '198.51.100.15', macAddress: 'AA:BB:CC:DD:EE:02', balance: 0, totalPaid: 2844, isVpn: true, vpnProvider: 'NordVPN Node #412 (London)', isSpam: false, isScam: false, riskScore: 'medium', riskReason: 'Datacenter VPN Proxy detected' },
+  { id: 'SUB-003', name: 'Lucas Müller', username: 'lucasm', phone: '+49 69 1234 5678', email: 'lucas.mueller@example.de', password: 'LucasPass!2024', address: 'Taunusanlage 8', zone: 'Frankfurt & Rhine', packageId: 'PKG-002', packageName: 'Turbo 150', status: 'suspended', dueDate: '2024-01-15', joinDate: '2023-01-10', connectionType: 'Fiber', ipAddress: '198.51.100.22', macAddress: 'AA:BB:CC:DD:EE:03', balance: -98, totalPaid: 588, isVpn: false, isSpam: false, isScam: false, riskScore: 'low', riskReason: 'Clean Verified' },
+  { id: 'SUB-004', name: 'Kenji Sato', username: 'kenjisato', phone: '+81 3 5555 0198', email: 'kenji.sato@example.jp', password: 'KenjiTokyo!88', address: 'Roppongi Hills 6-10-1', zone: 'Tokyo & Kanto', packageId: 'PKG-004', packageName: 'Gigabit Extreme 1000', status: 'active', dueDate: '2024-02-20', joinDate: '2020-11-05', connectionType: 'Fiber', ipAddress: '198.51.100.30', macAddress: 'AA:BB:CC:DD:EE:04', balance: 109, totalPaid: 3924, isVpn: false, isSpam: false, isScam: false, riskScore: 'low', riskReason: 'Residential verified' },
+  { id: 'SUB-005', name: 'Chloe Dupont', username: 'chloedupont', phone: '+1 (415) 555-0182', email: 'chloe.temp@tempmail.com', password: 'ChloePass#2026', address: '100 Market St, Suite 500', zone: 'Silicon Valley', packageId: 'PKG-002', packageName: 'Turbo 150', status: 'active', dueDate: '2024-02-08', joinDate: '2022-08-18', connectionType: 'Fiber', ipAddress: '198.51.100.41', macAddress: 'AA:BB:CC:DD:EE:05', balance: 0, totalPaid: 1176, isVpn: false, isSpam: true, isScam: false, riskScore: 'medium', riskReason: 'Disposable temporary email domain flagged' },
+  { id: 'SUB-006', name: 'Marcus Vance', username: 'marcus_v', phone: '+65 6789 0123', email: 'marcus.vance@example.sg', password: 'MarcusSG!Cloud', address: '1 Raffles Place, #28-01', zone: 'Singapore CBD', packageId: 'PKG-005', packageName: 'Enterprise Cloud 2500', status: 'active', dueDate: '2024-02-15', joinDate: '2019-07-30', connectionType: 'Fiber', ipAddress: '198.51.100.55', macAddress: 'AA:BB:CC:DD:EE:06', balance: 199, totalPaid: 11940, isVpn: false, isSpam: false, isScam: false, riskScore: 'low', riskReason: 'Enterprise dedicated line' },
+  { id: 'SUB-007', name: 'Cyber Phish Bot', username: 'scammer_bot99', phone: '01999999999', email: 'bot_carder@fake.com', password: 'HackedPass#999', address: 'Unknown Proxy Node', zone: 'Sydney Metro', packageId: 'PKG-001', packageName: 'Starter Fiber 50', status: 'blocked', dueDate: '2024-02-01', joinDate: '2023-12-01', connectionType: 'Fiber', ipAddress: '185.220.101.5', macAddress: 'AA:BB:CC:DD:EE:07', balance: -29, totalPaid: 58, isVpn: true, vpnProvider: 'Tor Exit Node / Datacenter Relay', isSpam: true, isScam: true, riskScore: 'high', riskReason: 'Threat Telemetry: Carding scam bot with Tor exit node signature' },
+  { id: 'SUB-008', name: 'Sophia Martinez', username: 'sophia_m', phone: '+1 (305) 555-0147', email: 'sophia.m@example.com', password: 'SophiaPass@2026', address: '801 Brickell Ave, Penthouse 3', zone: 'New York Metro', packageId: 'PKG-003', packageName: 'Ultra Gigabit 500', status: 'active', dueDate: '2024-02-12', joinDate: '2021-09-14', connectionType: 'Fiber', ipAddress: '198.51.100.77', macAddress: 'AA:BB:CC:DD:EE:08', balance: 79, totalPaid: 2291, isVpn: false, isSpam: false, isScam: false, riskScore: 'low', riskReason: 'Clean Verified' },
+  { id: 'SUB-009', name: 'David Chen', username: 'davidchen', phone: '+1 (408) 555-0199', email: 'david.chen@example.com', password: 'DavidChen@123', address: '500 Castro St', zone: 'Silicon Valley', packageId: 'PKG-002', packageName: 'Turbo 150', status: 'active', dueDate: '2024-02-18', joinDate: '2022-04-20', connectionType: 'Fiber', ipAddress: '198.51.100.88', macAddress: 'AA:BB:CC:DD:EE:09', balance: 0, totalPaid: 1078, isVpn: true, vpnProvider: 'Cloudflare WARP Gateway', isSpam: false, isScam: false, riskScore: 'medium', riskReason: 'Proxy / WARP DNS detected' },
+  { id: 'SUB-010', name: 'Isabella Rossi', username: 'isabella_r', phone: '+39 02 1234 5678', email: 'isabella.rossi@example.it', password: 'IsabellaPass!44', address: 'Corso Vittorio Emanuele 14', zone: 'London Central', packageId: 'PKG-001', packageName: 'Starter Fiber 50', status: 'blocked', dueDate: '2023-12-01', joinDate: '2021-05-05', connectionType: 'Fiber', ipAddress: '198.51.100.99', macAddress: 'AA:BB:CC:DD:EE:10', balance: -58, totalPaid: 696, isVpn: false, isSpam: false, isScam: false, riskScore: 'low', riskReason: 'Account barred due to non-payment' },
+  { id: 'SUB-011', name: 'Julian Becker', username: 'julianb', phone: '+49 30 9876 5432', email: 'julian.becker@example.de', password: 'JulianBerlin!77', address: 'Friedrichstraße 45', zone: 'Frankfurt & Rhine', packageId: 'PKG-003', packageName: 'Ultra Gigabit 500', status: 'active', dueDate: '2024-02-25', joinDate: '2020-02-10', connectionType: 'Fiber', ipAddress: '198.51.100.111', macAddress: 'AA:BB:CC:DD:EE:11', balance: 158, totalPaid: 3792, isVpn: false, isSpam: false, isScam: false, riskScore: 'low', riskReason: 'Clean Verified' },
   { id: 'SUB-012', name: 'Camille Laurent', phone: '+33 1 4268 5500', email: 'camille.l@example.fr', address: '25 Boulevard Haussmann', zone: 'London Central', packageId: 'PKG-002', packageName: 'Turbo 150', status: 'active', dueDate: '2024-02-14', joinDate: '2023-03-07', connectionType: 'Fiber', ipAddress: '198.51.100.112', macAddress: 'AA:BB:CC:DD:EE:12', balance: 0, totalPaid: 588 },
   { id: 'SUB-013', name: 'Mateo Fernandez', phone: '+34 91 555 4321', email: 'mateo.f@example.es', address: 'Paseo de la Castellana 89', zone: 'Frankfurt & Rhine', packageId: 'PKG-001', packageName: 'Starter Fiber 50', status: 'suspended', dueDate: '2024-01-20', joinDate: '2022-11-15', connectionType: 'Fiber', ipAddress: '198.51.100.113', macAddress: 'AA:BB:CC:DD:EE:13', balance: -58, totalPaid: 348 },
   { id: 'SUB-014', name: 'Emily Watson', phone: '+1 (617) 555-0177', email: 'emily.w@example.com', address: '75 State Street, 19th Floor', zone: 'New York Metro', packageId: 'PKG-004', packageName: 'Gigabit Extreme 1000', status: 'active', dueDate: '2024-02-22', joinDate: '2021-01-28', connectionType: 'Fiber', ipAddress: '198.51.100.114', macAddress: 'AA:BB:CC:DD:EE:14', balance: 109, totalPaid: 3924 },

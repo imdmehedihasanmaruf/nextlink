@@ -364,6 +364,14 @@ export default function CMSPage() {
                   />
                 </div>
                 <div>
+                  <Label>Web Logo URL (260x70 px)</Label>
+                  <Input
+                    placeholder="/logo.svg or image URL"
+                    value={data.brand?.logoUrl || ''}
+                    onChange={(e) => setData({ ...data, brand: { ...data.brand, logoUrl: e.target.value } })}
+                  />
+                </div>
+                <div>
                   <Label>Brand Tagline</Label>
                   <Input
                     value={data.brand?.tagline || ''}

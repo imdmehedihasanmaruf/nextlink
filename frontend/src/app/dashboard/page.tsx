@@ -1,6 +1,7 @@
 'use client'
 
 import React, { useState, useEffect } from 'react'
+import { createPortal } from 'react-dom'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { 
@@ -27,7 +28,12 @@ import {
   Printer,
   X,
   ShieldCheck,
-  Globe
+  Globe,
+  FileText,
+  Smartphone,
+  Globe2,
+  Mail,
+  Clock
 } from 'lucide-react'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
@@ -54,6 +60,7 @@ export default function DashboardPage() {
   const { user, isAuthenticated, hasHydrated } = useAuthStore()
   const { t } = useTranslation()
   const { 
+    packages,
     mediaHubs, 
     referralRewards, 
     boostBandwidth, 
@@ -67,6 +74,78 @@ export default function DashboardPage() {
     fetchContent()
   }, [fetchContent])
 
+  // Mounted state for SSR Portal safety
+  const [mounted, setMounted] = useState(false)
+  useEffect(() => {
+    setMounted(true)
+  }, [])
+
+  // Month names lookup
+  const MONTH_NAMES = [
+    'January', 'February', 'March', 'April', 'May', 'June',
+    'July', 'August', 'September', 'October', 'November', 'December'
+  ]
+
+  // Due Billing Cycle State (starts at November 2026: month 10, year 2026)
+  const [dueBillingCycle, setDueBillingCycle] = useState<{ month: number; year: number }>({
+    month: 10, // November (0-indexed: 10 = November)
+    year: 2026
+  })
+
+  // Date Simulation for Testing Billing Window (5th-10th Open, 1st-4th & 11th-31st Restricted)
+  const [simulatedDay, setSimulatedDay] = useState<number | null>(null)
+  const today = new Date()
+  const actualDay = today.getDate()
+  const currentDay = simulatedDay !== null ? simulatedDay : actualDay
+  const isPaymentWindowOpen = currentDay >= 5 && currentDay <= 10
+
+  // Warning state if user attempts to pay outside 5-10
+  const [windowWarning, setWindowWarning] = useState<string | null>(null)
+
+  // Derived month names and due date string (Requirement 4)
+  const dueMonthName = MONTH_NAMES[dueBillingCycle.month]
+  const dueMonthNumStr = String(dueBillingCycle.month + 1).padStart(2, '0')
+  const dueYearStr = String(dueBillingCycle.year)
+  const nextDueDateRangeFormatted = `05/${dueMonthNumStr}/${dueYearStr} - 10/${dueMonthNumStr}/${dueYearStr} of Every Month`
+
+  // Persistent loading from localStorage on mount
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      const savedCycle = localStorage.getItem('nextlink_due_billing_cycle')
+      if (savedCycle) {
+        try {
+          const parsed = JSON.parse(savedCycle)
+          if (typeof parsed.month === 'number' && typeof parsed.year === 'number') {
+            setDueBillingCycle(parsed)
+          }
+        } catch (e) {}
+      }
+
+      const savedHistory = localStorage.getItem('nextlink_payment_history')
+      if (savedHistory) {
+        try {
+          const parsedHistory = JSON.parse(savedHistory)
+          if (Array.isArray(parsedHistory) && parsedHistory.length > 0) {
+            setPaymentHistory(parsedHistory)
+          }
+        } catch (e) {}
+      } else {
+        const defaultAmt = `$${monthlyBillAmount.toFixed(2)}`
+        setPaymentHistory([
+          {
+            id: 'INV-2026-042',
+            month: 'October 2026',
+            date: '08 Oct 2026',
+            amount: defaultAmt,
+            method: 'Credit / Debit Card',
+            trxId: 'TRX-OCT9482',
+            status: 'Paid'
+          }
+        ])
+      }
+    }
+  }, [])
+
   // Retention States
   const [turboActive, setTurboActive] = useState(false)
   const [turboHoursLeft, setTurboHoursLeft] = useState(6)
@@ -77,9 +156,11 @@ export default function DashboardPage() {
   // Payable balance state
   const [balance, setBalance] = useState(0.00)
 
-  // Payment Modal & Receipt States (Requirement 22)
+  // Payment Modal & Gateway States (Step 5 Style)
   const [payModalOpen, setPayModalOpen] = useState(false)
-  const [paymentMethod, setPaymentMethod] = useState<'card' | 'paypal' | 'applepay' | 'wire'>('card')
+  type PaymentGateway = 'card' | 'payoneer' | 'applepay' | 'bkash' | 'upi'
+  const [paymentMethod, setPaymentMethod] = useState<PaymentGateway>('card')
+  const [mobileWalletNumber, setMobileWalletNumber] = useState('')
   const [isProcessingPay, setIsProcessingPay] = useState(false)
   const [receiptModalOpen, setReceiptModalOpen] = useState(false)
   const [latestReceipt, setLatestReceipt] = useState<{
@@ -88,16 +169,35 @@ export default function DashboardPage() {
     date: string;
     amount: string;
     method: string;
+    month?: string;
   } | null>(null)
 
   // Payment History State
   const [paymentHistory, setPaymentHistory] = useState<PaymentRecord[]>([])
 
   // Card form state
-  const [cardHolder, setCardHolder] = useState('')
-  const [cardNumber, setCardNumber] = useState('')
-  const [cardExpiry, setCardExpiry] = useState('')
-  const [cardCvc, setCardCvc] = useState('')
+  const [cardHolder, setCardHolder] = useState('Alexander Wright')
+  const [cardNumber, setCardNumber] = useState('4242 •••• •••• 4242')
+  const [cardExpiry, setCardExpiry] = useState('12/28')
+  const [cardCvc, setCardCvc] = useState('888')
+
+  // Resolve current active package and monthly subscription price
+  const activePackage = React.useMemo(() => {
+    if (!packages || packages.length === 0) return null
+    const userPkgName = (user?.packageName || user?.package || '').toLowerCase().trim()
+    const userPkgId = (user?.packageId || '').toLowerCase().trim()
+    return (
+      packages.find(p => p.id?.toLowerCase() === userPkgId) ||
+      packages.find(p => p.name?.toLowerCase() === userPkgName) ||
+      packages.find(p => userPkgName && p.name?.toLowerCase().includes(userPkgName)) ||
+      packages.find(p => userPkgName && userPkgName.includes(p.name?.toLowerCase())) ||
+      packages[0]
+    )
+  }, [packages, user])
+
+  const monthlyBillAmount = typeof activePackage?.price === 'number' 
+    ? activePackage.price 
+    : (activePackage?.price ? Number(activePackage.price) : 0)
 
   useEffect(() => {
     if (hasHydrated && !isAuthenticated) {
@@ -106,31 +206,51 @@ export default function DashboardPage() {
   }, [hasHydrated, isAuthenticated, router])
 
   const handleOpenPayModal = () => {
+    if (user?.name) {
+      setCardHolder(user.name)
+    }
+    if (!isPaymentWindowOpen) {
+      setWindowWarning(
+        `Warning: Monthly bill payment is only accepted between the 5th and 10th of each month. Today is day ${currentDay} of the month (1st–4th & 11th–31st are restricted). Payments cannot be authorized today.`
+      )
+    } else {
+      setWindowWarning(null)
+    }
     setPayModalOpen(true)
   }
 
   const handleProcessPayment = () => {
+    // Requirement 2: Strict restriction check
+    if (!isPaymentWindowOpen) {
+      setWindowWarning(
+        `Payment Warning: Monthly bill payment can only be cleared between the 5th and 10th of each month. Today is day ${currentDay}. Payments outside 5th–10th cannot be processed.`
+      )
+      return
+    }
+
     setIsProcessingPay(true)
     setTimeout(() => {
       const generatedTrx = 'TRX-' + Math.random().toString(36).substring(2, 9).toUpperCase()
       const receiptNo = 'REC-' + Date.now().toString().slice(-6)
       const now = new Date()
       const dateStr = now.toLocaleDateString('en-US', { day: '2-digit', month: 'short', year: 'numeric' })
-      const monthStr = now.toLocaleDateString('en-US', { month: 'long', year: 'numeric' })
-      const invId = `INV-${now.getFullYear()}-${String(paymentHistory.length + 1).padStart(3, '0')}`
+      const paidMonthName = dueMonthName
+      const paidYear = dueBillingCycle.year
+      const invId = `INV-${paidYear}-${String(paymentHistory.length + 1).padStart(3, '0')}`
 
-      const methodNames = {
-        card: 'Credit Card (Stripe Global)',
-        paypal: 'PayPal Express',
+      const methodNames: Record<PaymentGateway, string> = {
+        card: 'Credit / Debit Card',
+        payoneer: 'Payoneer Wallet',
         applepay: 'Apple / Google Pay',
-        wire: 'International Wire / SWIFT'
+        bkash: 'bKash Merchant',
+        upi: 'UPI / Regional'
       }
 
-      const record: PaymentRecord = {
+      const paidRecord: PaymentRecord = {
         id: invId,
-        month: monthStr,
+        month: `${paidMonthName} ${paidYear}`,
         date: dateStr,
-        amount: `$${balance.toFixed(2)}`,
+        amount: `$${monthlyBillAmount.toFixed(2)}`,
         method: methodNames[paymentMethod],
         trxId: generatedTrx,
         status: 'Paid'
@@ -140,16 +260,35 @@ export default function DashboardPage() {
         receiptNo,
         trxId: generatedTrx,
         date: `${dateStr} ${now.toLocaleTimeString()}`,
-        amount: `$${balance.toFixed(2)}`,
-        method: methodNames[paymentMethod]
+        amount: `$${monthlyBillAmount.toFixed(2)}`,
+        method: methodNames[paymentMethod],
+        month: `${paidMonthName} ${paidYear}`
       })
 
-      setPaymentHistory([record, ...paymentHistory])
+      // Requirement 3: Roll over to NEXT month continuously (Nov -> Dec -> Jan -> Feb ...)
+      let nextMonth = dueBillingCycle.month + 1
+      let nextYear = dueBillingCycle.year
+      if (nextMonth > 11) {
+        nextMonth = 0
+        nextYear += 1
+      }
+      const nextCycle = { month: nextMonth, year: nextYear }
+      setDueBillingCycle(nextCycle)
+      if (typeof window !== 'undefined') {
+        localStorage.setItem('nextlink_due_billing_cycle', JSON.stringify(nextCycle))
+      }
+
+      const updatedHistory = [paidRecord, ...paymentHistory]
+      setPaymentHistory(updatedHistory)
+      if (typeof window !== 'undefined') {
+        localStorage.setItem('nextlink_payment_history', JSON.stringify(updatedHistory))
+      }
+
       setBalance(0.00)
       setIsProcessingPay(false)
       setPayModalOpen(false)
       setReceiptModalOpen(true)
-    }, 1500)
+    }, 1200)
   }
 
   const handleTurboBoost = () => {
@@ -201,7 +340,7 @@ export default function DashboardPage() {
                 <span className="h-2 w-2 rounded-full bg-emerald-400 animate-pulse"></span>
                 {t('connectionActive')}
               </div>
-              <Badge className="bg-amber-400 text-slate-900 font-bold border-none">
+              <Badge className="bg-amber-500 text-white font-bold border-none">
                 ⭐ Platinum Tier Member
               </Badge>
             </div>
@@ -210,29 +349,31 @@ export default function DashboardPage() {
             </h1>
           </div>
 
-          <div className="flex flex-wrap gap-3">
+          <div className="flex flex-wrap items-center gap-2.5">
+            {!isPaymentWindowOpen ? (
+              <Badge className="bg-amber-400 text-amber-950 font-bold border-none text-xs py-1 px-3 shadow-xs">
+                ⚠️ Window: 5th–10th Only
+              </Badge>
+            ) : (
+              <Badge className="bg-emerald-500 text-white font-bold border-none text-xs py-1 px-3 shadow-xs">
+                ✓ Window Open: Pay {dueMonthName}
+              </Badge>
+            )}
             {/* Requirement 22: Interactive Pay Current Bill */}
             <Button 
               onClick={handleOpenPayModal}
-              className="bg-white text-slate-900 hover:bg-slate-100 shadow font-bold"
+              className="bg-white text-primary hover:bg-white/90 shadow font-bold"
             >
               <CreditCard className="mr-2 h-4 w-4 text-primary" />
               {t('payCurrentBill')}
             </Button>
-
-            <Link href="/tickets">
-              <Button variant="outline" className="bg-white/10 border-white text-white hover:bg-white/20 font-semibold">
-                <HelpCircle className="mr-2 h-4 w-4" />
-                {t('openTicket')}
-              </Button>
-            </Link>
           </div>
         </div>
       </div>
 
       {/* KPI Stats */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-        <Card className="border shadow-sm">
+        <Card className="border shadow-sm flex flex-col justify-between">
           <CardContent className="p-6">
             <div className="flex items-center justify-between">
               <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">
@@ -241,8 +382,18 @@ export default function DashboardPage() {
               <Wifi className="h-5 w-5 text-primary" />
             </div>
             <div className="mt-3">
-              <h3 className="text-2xl font-bold">{turboActive ? 'Turbo 1000 Mbps' : 'Ultra Gigabit 500'}</h3>
+              <h3 className="text-2xl font-bold">
+                {turboActive ? 'Turbo 1000 Mbps' : (user?.packageName || user?.package || 'Ultra Gigabit 500')}
+              </h3>
               <p className="text-xs text-muted-foreground mt-1">Symmetrical 100% Optical Fiber</p>
+            </div>
+            <div className="pt-3 mt-3 border-t">
+              <Link href="/dashboard/purchase">
+                <Button size="sm" variant="outline" className="w-full text-xs font-bold gap-1.5 h-8">
+                  <ArrowUpRight className="h-3.5 w-3.5" />
+                  <span>Upgrade Fiber Plan</span>
+                </Button>
+              </Link>
             </div>
           </CardContent>
         </Card>
@@ -256,8 +407,12 @@ export default function DashboardPage() {
               <Calendar className="h-5 w-5 text-amber-500" />
             </div>
             <div className="mt-3">
-              <h3 className="text-2xl font-bold">15 Feb 2026</h3>
-              <p className="text-xs text-emerald-600 font-semibold mt-1">Auto-Renewal Active</p>
+              <h3 className="text-base sm:text-lg lg:text-xl font-bold font-mono tracking-tight text-foreground">
+                {nextDueDateRangeFormatted}
+              </h3>
+              <p className="text-xs text-amber-600 dark:text-amber-400 font-semibold mt-1">
+                Payment window: 5th–10th of every month
+              </p>
             </div>
           </CardContent>
         </Card>
@@ -266,16 +421,16 @@ export default function DashboardPage() {
           <CardContent className="p-6">
             <div className="flex items-center justify-between">
               <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">
-                {t('payableAmount')}
+                {dueMonthName} Bill Due
               </p>
               <DollarSign className="h-5 w-5 text-primary" />
             </div>
             <div className="mt-3">
-              <h3 className={`text-2xl font-bold ${balance === 0 ? 'text-emerald-600' : 'text-primary'}`}>
-                ${balance.toFixed(2)}
+              <h3 className="text-2xl font-bold text-primary font-mono">
+                ${monthlyBillAmount.toFixed(2)}
               </h3>
               <p className="text-xs text-muted-foreground mt-1">
-                {balance === 0 ? 'All bills cleared & paid' : 'Due via Card, PayPal, or Wire'}
+                Active: {activePackage?.name || user?.packageName || user?.package || 'Essential'} ({activePackage?.speed || 100} Mbps)
               </p>
             </div>
           </CardContent>
@@ -555,7 +710,7 @@ export default function DashboardPage() {
 
             <div className="p-4 rounded-xl bg-muted/40 text-center">
               <p className="text-xs text-muted-foreground">Worldwide NOC (24/7 Helpline)</p>
-              <p className="text-lg font-bold text-primary mt-1">+1 (800) 550-LINK</p>
+              <p className="text-lg font-bold text-primary mt-1">+880 1575 XXXXXX</p>
             </div>
           </CardContent>
         </Card>
@@ -619,178 +774,317 @@ export default function DashboardPage() {
         </CardContent>
       </Card>
 
-      {/* ================= PAYMENT MODAL (Requirement 22) ================= */}
-      {payModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4 animate-in fade-in">
-          <Card className="w-full max-w-lg shadow-2xl border-2 animate-in zoom-in-95">
-            <CardHeader className="relative pb-4 border-b">
+      {/* ================= STEP 5 PAYMENT MODAL: SELECT PAYMENT METHOD & AUTHORIZE ================= */}
+      {mounted && payModalOpen && createPortal(
+        <div 
+          className="fixed inset-0 z-[99999] flex items-center justify-center bg-black/80 p-3 sm:p-4 animate-in fade-in"
+          onClick={() => setPayModalOpen(false)}
+        >
+          <Card 
+            className="w-full max-w-lg max-h-[85vh] flex flex-col shadow-2xl border-2 animate-in zoom-in-95 overflow-hidden"
+            onClick={(e) => e.stopPropagation()}
+          >
+            {/* Modal Header */}
+            <CardHeader className="relative py-3 px-5 border-b shrink-0 bg-background/95">
               <button 
                 onClick={() => setPayModalOpen(false)}
-                className="absolute right-4 top-4 p-1.5 rounded-full hover:bg-muted text-muted-foreground"
+                className="absolute right-4 top-3 p-1.5 rounded-full hover:bg-muted text-muted-foreground transition-colors"
+                aria-label="Close"
               >
                 <X size={18} />
               </button>
-              <div className="flex items-center gap-2">
-                <CreditCard className="h-6 w-6 text-primary" />
-                <div>
-                  <CardTitle className="text-xl">{t('payModalTitle')}</CardTitle>
-                  <CardDescription className="text-xs">{t('payModalDesc')}</CardDescription>
+              <div className="space-y-0.5 pr-8">
+                <div className="flex items-center gap-2">
+                  <CreditCard className="h-4 w-4 text-primary" />
+                  <CardTitle className="text-base sm:text-lg font-bold">Step 5: Select Payment Method &amp; Authorize</CardTitle>
                 </div>
+                <CardDescription className="text-[11px] text-muted-foreground leading-tight">
+                  All transactions are encrypted with 256-bit SSL and processed directly through verified carrier payment gateways.
+                </CardDescription>
               </div>
             </CardHeader>
-            <CardContent className="space-y-5 pt-5">
-              {/* Invoice Summary */}
-              <div className="rounded-xl bg-muted/50 p-4 border flex items-center justify-between">
+
+            {/* Scrollable Modal Body */}
+            <div className="overflow-y-auto px-5 py-3 space-y-3 flex-1">
+              {/* Date Window Warning or Status (Requirement 2) */}
+              {!isPaymentWindowOpen ? (
+                <div className="p-3 rounded-xl bg-amber-500/15 border-2 border-amber-500/40 text-xs flex items-start gap-2.5 text-amber-900 dark:text-amber-200">
+                  <AlertCircle className="h-5 w-5 text-amber-600 dark:text-amber-400 shrink-0 mt-0.5" />
+                  <div className="space-y-1">
+                    <p className="font-bold text-sm text-amber-800 dark:text-amber-300">
+                      Payment Window Warning: Only 5th–10th Allowed
+                    </p>
+                    <p className="text-xs leading-relaxed text-muted-foreground">
+                      Monthly bill payments can only be paid between the <strong className="text-foreground">5th and 10th of each month</strong>. Today is <strong className="text-foreground">{today.toLocaleDateString('en-US', { day: '2-digit', month: 'short', year: 'numeric' })} (Day {currentDay})</strong>. Payments attempted on <strong className="text-foreground">1st–4th</strong> or <strong className="text-foreground">11th–31st</strong> cannot be authorized.
+                    </p>
+                  </div>
+                </div>
+              ) : (
+                <div className="p-2.5 rounded-xl bg-emerald-500/10 border border-emerald-500/30 text-[11px] flex items-start gap-2 text-emerald-800 dark:text-emerald-300">
+                  <CheckCircle2 className="h-3.5 w-3.5 text-emerald-600 dark:text-emerald-400 shrink-0 mt-0.5" />
+                  <div className="space-y-0.5 leading-tight">
+                    <p className="font-bold">
+                      Billing Window Open (5th–10th Active)
+                    </p>
+                    <p className="text-muted-foreground">
+                      Clearing invoice for <strong className="text-foreground">{dueMonthName} {dueYearStr}</strong>. Bills must be cleared by the 10th.
+                    </p>
+                  </div>
+                </div>
+              )}
+
+              {/* Date Simulation Tool for Instant Review of 5-10 Window vs 1-4/11-31 Warnings */}
+              <div className="p-2 rounded-lg bg-muted/30 border flex flex-wrap items-center justify-between gap-1.5 text-[11px]">
+                <span className="text-muted-foreground font-medium flex items-center gap-1">
+                  <Clock className="h-3 w-3" /> Billing Window Tester:
+                </span>
+                <div className="flex flex-wrap gap-1">
+                  <button
+                    type="button"
+                    onClick={() => setSimulatedDay(null)}
+                    className={`px-2 py-0.5 rounded text-[10px] font-bold transition-all ${
+                      simulatedDay === null
+                        ? 'bg-primary text-primary-foreground shadow-xs'
+                        : 'bg-muted hover:bg-muted/80 text-foreground'
+                    }`}
+                  >
+                    Today (Day {actualDay}) {actualDay >= 5 && actualDay <= 10 ? '✓ Open' : '✕ Restricted'}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setSimulatedDay(8)}
+                    className={`px-2 py-0.5 rounded text-[10px] font-bold transition-all ${
+                      simulatedDay === 8
+                        ? 'bg-emerald-600 text-white shadow-xs'
+                        : 'bg-muted hover:bg-muted/80 text-foreground'
+                    }`}
+                  >
+                    Day 8 (Allowed)
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setSimulatedDay(3)}
+                    className={`px-2 py-0.5 rounded text-[10px] font-bold transition-all ${
+                      simulatedDay === 3
+                        ? 'bg-amber-600 text-white shadow-xs'
+                        : 'bg-muted hover:bg-muted/80 text-foreground'
+                    }`}
+                  >
+                    Day 3 (Warning 1-4)
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setSimulatedDay(15)}
+                    className={`px-2 py-0.5 rounded text-[10px] font-bold transition-all ${
+                      simulatedDay === 15
+                        ? 'bg-amber-600 text-white shadow-xs'
+                        : 'bg-muted hover:bg-muted/80 text-foreground'
+                    }`}
+                  >
+                    Day 15 (Warning 11-31)
+                  </button>
+                </div>
+              </div>
+
+              {/* Active Package Bill Summary (Requirement 1 & Requirement 3) */}
+              <div className="rounded-xl bg-muted/50 p-2.5 sm:p-3 border flex items-center justify-between text-xs">
                 <div>
-                  <p className="text-xs text-muted-foreground">Current Outstanding Invoice</p>
-                  <p className="font-bold text-sm">Ultra Gigabit 500 Mbps (Feb 2024)</p>
+                  <span className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider block">
+                    Active Subscription · {dueMonthName} {dueYearStr} Bill
+                  </span>
+                  <p className="font-bold text-sm text-foreground mt-0.5">
+                    {activePackage?.name || user?.packageName || user?.package || 'Essential'} ({activePackage?.speed || 100} Mbps)
+                  </p>
+                  <p className="text-[10px] text-muted-foreground">
+                    Purchase Fee: ${monthlyBillAmount.toFixed(2)} USD · 100% Symmetrical Optical Fiber Drop
+                  </p>
                 </div>
                 <div className="text-right">
-                  <p className="text-xs text-muted-foreground">Total Due</p>
-                  <p className="text-2xl font-black text-primary">${balance.toFixed(2)}</p>
+                  <span className="text-[10px] font-semibold text-muted-foreground uppercase block">Amount Due</span>
+                  <p className="text-xl font-black text-primary font-mono">${monthlyBillAmount.toFixed(2)}</p>
+                  <span className="text-[10px] text-muted-foreground font-medium">USD / Month</span>
                 </div>
               </div>
 
-              {/* Payment Method Selector */}
+              {/* Monthly Policy Reminder Alert */}
+              <div className="p-2.5 rounded-xl bg-amber-500/10 border border-amber-500/30 text-[11px] flex items-start gap-2">
+                <Calendar className="h-3.5 w-3.5 text-amber-600 dark:text-amber-400 shrink-0 mt-0.5" />
+                <div className="space-y-0.5 leading-tight">
+                  <p className="font-bold text-amber-800 dark:text-amber-300">
+                    Monthly Policy &amp; Email Reminder Schedule
+                  </p>
+                  <p className="text-muted-foreground">
+                    Bills must be cleared by the <strong className="text-foreground">10th of each month</strong>. Daily reminder emails are sent between the <strong className="text-foreground">5th and 10th</strong> to <span className="font-mono text-foreground font-semibold">{user?.email || 'user@nextlink.global'}</span>.
+                  </p>
+                </div>
+              </div>
+
+              {/* Gateway Options Grid */}
               <div>
-                <Label className="text-xs font-semibold uppercase text-muted-foreground">Select Payment Gateway</Label>
-                <div className="grid grid-cols-2 gap-2 mt-2">
-                  <button
-                    type="button"
-                    onClick={() => setPaymentMethod('card')}
-                    className={`p-3 rounded-xl border-2 text-left font-semibold text-xs flex items-center gap-2 transition-all ${
-                      paymentMethod === 'card' ? 'border-primary bg-primary/10 text-primary' : 'border-border hover:bg-muted'
-                    }`}
-                  >
-                    <CreditCard size={16} />
-                    <span>Credit / Debit Card</span>
-                  </button>
-
-                  <button
-                    type="button"
-                    onClick={() => setPaymentMethod('paypal')}
-                    className={`p-3 rounded-xl border-2 text-left font-semibold text-xs flex items-center gap-2 transition-all ${
-                      paymentMethod === 'paypal' ? 'border-primary bg-primary/10 text-primary' : 'border-border hover:bg-muted'
-                    }`}
-                  >
-                    <Globe size={16} />
-                    <span>PayPal Express</span>
-                  </button>
-
-                  <button
-                    type="button"
-                    onClick={() => setPaymentMethod('applepay')}
-                    className={`p-3 rounded-xl border-2 text-left font-semibold text-xs flex items-center gap-2 transition-all ${
-                      paymentMethod === 'applepay' ? 'border-primary bg-primary/10 text-primary' : 'border-border hover:bg-muted'
-                    }`}
-                  >
-                    <Zap size={16} />
-                    <span>Apple / Google Pay</span>
-                  </button>
-
-                  <button
-                    type="button"
-                    onClick={() => setPaymentMethod('wire')}
-                    className={`p-3 rounded-xl border-2 text-left font-semibold text-xs flex items-center gap-2 transition-all ${
-                      paymentMethod === 'wire' ? 'border-primary bg-primary/10 text-primary' : 'border-border hover:bg-muted'
-                    }`}
-                  >
-                    <ShieldCheck size={16} />
-                    <span>Bank Wire / SWIFT</span>
-                  </button>
+                <Label className="text-[11px] font-semibold uppercase text-muted-foreground block mb-1.5">
+                  Payment Method
+                </Label>
+                <div className="grid grid-cols-2 sm:grid-cols-3 gap-1.5">
+                  {[
+                    { id: 'card', label: 'Credit / Debit Card', icon: CreditCard },
+                    { id: 'payoneer', label: 'Payoneer Wallet', icon: Globe2 },
+                    { id: 'applepay', label: 'Apple / Google Pay', icon: Smartphone },
+                    { id: 'bkash', label: 'bKash Merchant', icon: Smartphone },
+                    { id: 'upi', label: 'UPI / Regional', icon: RefreshCw },
+                  ].map((gw) => {
+                    const Icon = gw.icon
+                    const isSelected = paymentMethod === gw.id
+                    return (
+                      <button
+                        key={gw.id}
+                        type="button"
+                        onClick={() => setPaymentMethod(gw.id as PaymentGateway)}
+                        className={`p-2 rounded-lg border-2 text-left transition-all flex items-center gap-1.5 ${
+                          isSelected
+                            ? 'border-primary bg-primary/10 text-primary font-bold shadow-xs'
+                            : 'border-border hover:bg-muted/40 text-foreground'
+                        }`}
+                      >
+                        <Icon className="h-3.5 w-3.5 shrink-0" />
+                        <span className="text-[11px] leading-tight truncate">{gw.label}</span>
+                      </button>
+                    )
+                  })}
                 </div>
               </div>
 
-              {/* Method Details */}
-              {paymentMethod === 'card' && (
-                <div className="space-y-3 pt-1">
-                  <div>
-                    <Label className="text-xs">Cardholder Name</Label>
-                    <Input 
-                      value={cardHolder} 
-                      onChange={(e) => setCardHolder(e.target.value)} 
-                      className="mt-1"
-                      placeholder="Name on card"
-                    />
-                  </div>
-                  <div>
-                    <Label className="text-xs">Card Number</Label>
-                    <Input 
-                      value={cardNumber} 
-                      onChange={(e) => setCardNumber(e.target.value)} 
-                      className="mt-1 font-mono"
-                      placeholder="4000 1234 5678 9010"
-                    />
-                  </div>
-                  <div className="grid grid-cols-2 gap-3">
-                    <div>
-                      <Label className="text-xs">Expiry Date</Label>
-                      <Input 
-                        value={cardExpiry} 
-                        onChange={(e) => setCardExpiry(e.target.value)} 
-                        className="mt-1 font-mono"
-                        placeholder="MM/YY"
-                      />
+              {/* Form Input Fields */}
+              <div className="border rounded-xl p-3 bg-card shadow-xs space-y-2.5">
+                {paymentMethod === 'card' && (
+                  <div className="space-y-2">
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                      <div>
+                        <Label className="text-[11px]">Cardholder Full Name</Label>
+                        <Input
+                          placeholder="e.g. Alexander Wright"
+                          value={cardHolder}
+                          onChange={(e) => setCardHolder(e.target.value)}
+                          className="mt-1 h-8 text-xs"
+                        />
+                      </div>
+                      <div>
+                        <Label className="text-[11px]">Card Number</Label>
+                        <Input
+                          placeholder="4242 •••• •••• 4242"
+                          value={cardNumber}
+                          onChange={(e) => setCardNumber(e.target.value)}
+                          className="mt-1 h-8 text-xs font-mono"
+                        />
+                      </div>
                     </div>
-                    <div>
-                      <Label className="text-xs">CVC / CVV</Label>
-                      <Input 
-                        value={cardCvc} 
-                        onChange={(e) => setCardCvc(e.target.value)} 
-                        className="mt-1 font-mono"
-                        placeholder="123"
-                      />
+                    <div className="grid grid-cols-2 gap-2">
+                      <div>
+                        <Label className="text-[11px]">Expiration Date</Label>
+                        <Input
+                          placeholder="12/28"
+                          value={cardExpiry}
+                          onChange={(e) => setCardExpiry(e.target.value)}
+                          className="mt-1 h-8 text-xs font-mono"
+                        />
+                      </div>
+                      <div>
+                        <Label className="text-[11px]">Security CVV</Label>
+                        <Input
+                          placeholder="•••"
+                          type="password"
+                          value={cardCvc}
+                          onChange={(e) => setCardCvc(e.target.value)}
+                          className="mt-1 h-8 text-xs font-mono"
+                        />
+                      </div>
                     </div>
                   </div>
-                </div>
-              )}
+                )}
 
-              {paymentMethod === 'paypal' && (
-                <div className="rounded-xl border p-4 bg-muted/30 text-center space-y-2">
-                  <p className="text-sm font-semibold">PayPal One-Click Checkout</p>
-                  <p className="text-xs text-muted-foreground">You will be securely authenticated via PayPal Global Checkout to clear ${balance.toFixed(2)}.</p>
-                </div>
-              )}
+                {(paymentMethod === 'bkash' || paymentMethod === 'upi' || paymentMethod === 'payoneer') && (
+                  <div className="space-y-1.5">
+                    <Label className="text-[11px]">
+                      {paymentMethod === 'bkash' ? 'bKash Mobile Account Number' : paymentMethod === 'upi' ? 'UPI Virtual Payment Address (VPA)' : 'Payoneer Linked Email / ID'}
+                    </Label>
+                    <Input
+                      placeholder={paymentMethod === 'bkash' ? '+880 1700 000000' : paymentMethod === 'upi' ? 'subscriber@okaxis' : 'billing@company.com'}
+                      value={mobileWalletNumber}
+                      onChange={(e) => setMobileWalletNumber(e.target.value)}
+                      className="h-8 text-xs font-mono"
+                    />
+                    <p className="text-[10px] text-muted-foreground">
+                      Secure instant carrier authorization will challenge your registered mobile gateway.
+                    </p>
+                  </div>
+                )}
 
-              {paymentMethod === 'applepay' && (
-                <div className="rounded-xl border p-4 bg-muted/30 text-center space-y-2">
-                  <p className="text-sm font-semibold">Biometric Touch / Face ID</p>
-                  <p className="text-xs text-muted-foreground">Authorize with your linked Apple Pay / Google Wallet card instantly.</p>
-                </div>
-              )}
+                {paymentMethod === 'applepay' && (
+                  <div className="text-center py-3 space-y-1">
+                    <Smartphone className="h-6 w-6 text-primary mx-auto" />
+                    <p className="font-bold text-xs">One-Touch Device Authentication</p>
+                    <p className="text-[10px] text-muted-foreground max-w-xs mx-auto">
+                      Clicking confirm will trigger biometric Apple Pay / Google Wallet authentication sheet.
+                    </p>
+                  </div>
+                )}
 
-              {paymentMethod === 'wire' && (
-                <div className="rounded-xl border p-4 bg-muted/30 space-y-1.5 text-xs font-mono">
-                  <p className="font-sans font-semibold text-foreground">Global SWIFT Wire Routing</p>
-                  <p>Bank: JPMorgan Chase Bank, N.A., New York</p>
-                  <p>Account: 9482-1102-4981 (USD)</p>
-                  <p>SWIFT / BIC: CHASUS33XXX</p>
+                {/* Final Charged Amount Line */}
+                <div className="pt-2 border-t flex justify-between items-center text-xs">
+                  <span className="font-semibold text-muted-foreground">Final Charged Amount:</span>
+                  <span className="font-mono font-black text-base text-primary">
+                    ${monthlyBillAmount.toFixed(2)} USD
+                  </span>
                 </div>
-              )}
+              </div>
+            </div>
 
+            {/* Modal Fixed Footer Button */}
+            <div className="p-3 border-t bg-muted/20 shrink-0 space-y-1.5">
               <Button 
                 onClick={handleProcessPayment} 
-                className="w-full font-bold shadow-lg h-11"
-                disabled={isProcessingPay || balance <= 0}
+                className={`w-full font-bold shadow-md h-10 text-xs gap-2 ${
+                  !isPaymentWindowOpen ? 'bg-amber-600 hover:bg-amber-600/90 text-white cursor-not-allowed opacity-90' : ''
+                }`}
+                disabled={isProcessingPay || !isPaymentWindowOpen}
               >
-                {isProcessingPay ? (
-                  <span className="flex items-center gap-2">
+                {!isPaymentWindowOpen ? (
+                  <>
+                    <AlertCircle className="h-3.5 w-3.5" />
+                    <span>Payment Window Closed (Allowed 5th–10th Only)</span>
+                  </>
+                ) : isProcessingPay ? (
+                  <>
                     <RefreshCw className="h-4 w-4 animate-spin" />
-                    Processing Payment...
-                  </span>
+                    <span>Processing &amp; Authorizing Payment...</span>
+                  </>
                 ) : (
-                  <span>Confirm & Pay ${balance.toFixed(2)}</span>
+                  <>
+                    <Lock className="h-3.5 w-3.5" />
+                    <span>Confirm &amp; Pay ${monthlyBillAmount.toFixed(2)} USD</span>
+                  </>
                 )}
               </Button>
-            </CardContent>
+              {!isPaymentWindowOpen && (
+                <p className="text-[10px] text-center text-amber-700 dark:text-amber-400 font-medium">
+                  * Warning: Bill payments can only be processed from the 5th to the 10th of the month.
+                </p>
+              )}
+            </div>
           </Card>
-        </div>
+        </div>,
+        document.body
       )}
 
       {/* ================= PAYMENT RECEIPT MODAL (Requirement 22) ================= */}
-      {receiptModalOpen && latestReceipt && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4 animate-in fade-in">
-          <Card className="w-full max-w-md shadow-2xl border-2 animate-in zoom-in-95">
+      {mounted && receiptModalOpen && latestReceipt && createPortal(
+        <div 
+          className="fixed inset-0 z-[99999] flex items-center justify-center bg-black/80 p-4 animate-in fade-in"
+          onClick={() => setReceiptModalOpen(false)}
+        >
+          <Card 
+            className="w-full max-w-md shadow-2xl border-2 animate-in zoom-in-95"
+            onClick={(e) => e.stopPropagation()}
+          >
             <CardHeader className="text-center pb-2 border-b bg-muted/20">
               <div className="h-14 w-14 rounded-full bg-emerald-100 dark:bg-emerald-900/30 text-emerald-600 flex items-center justify-center mx-auto mb-2">
                 <CheckCircle2 size={32} />
@@ -803,6 +1097,10 @@ export default function DashboardPage() {
                 <div className="flex justify-between">
                   <span className="text-muted-foreground">Receipt Number:</span>
                   <span className="font-bold text-foreground">{latestReceipt.receiptNo}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-muted-foreground">Billing Period:</span>
+                  <span className="font-bold text-primary">{latestReceipt.month || `${dueMonthName} ${dueYearStr}`}</span>
                 </div>
                 <div className="flex justify-between">
                   <span className="text-muted-foreground">{t('transactionId')}:</span>
@@ -844,7 +1142,8 @@ export default function DashboardPage() {
               </div>
             </CardContent>
           </Card>
-        </div>
+        </div>,
+        document.body
       )}
     </div>
   )

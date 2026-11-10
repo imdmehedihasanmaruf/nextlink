@@ -1,6 +1,7 @@
 'use client'
 
 import React, { useState, useEffect } from 'react'
+import { useRouter } from 'next/navigation'
 import { PlusCircle, MessageSquare, AlertCircle, CheckCircle, Clock, Send } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -10,6 +11,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Badge } from '@/components/ui/badge'
 import { Select } from '@/components/ui/select'
 import { useTranslation, useSettingsStore } from '@/store/settingsStore'
+import { useAuthStore } from '@/store/authStore'
 
 interface Ticket {
   id: string
@@ -25,6 +27,8 @@ interface Ticket {
 const initialTickets: Ticket[] = []
 
 export default function TicketsPage() {
+  const router = useRouter()
+  const { isAuthenticated } = useAuthStore()
   const { t, language } = useTranslation()
   const autoSave = useSettingsStore((s) => s.autoSave)
 
@@ -61,6 +65,11 @@ export default function TicketsPage() {
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault()
+    // If user is not authenticated, redirect to login page before submitting ticket
+    if (!isAuthenticated) {
+      router.push('/login?redirect=tickets')
+      return
+    }
     if (!subject.trim() || !description.trim()) return
 
     const newTicket: Ticket = {
@@ -123,7 +132,13 @@ export default function TicketsPage() {
               : 'Direct CRM ticket routing to regional field technicians with SLA tracking.'}
           </p>
         </div>
-        <Button onClick={() => setShowForm(!showForm)} className="gap-2">
+        <Button onClick={() => {
+          if (!isAuthenticated) {
+            router.push('/login?redirect=tickets')
+            return
+          }
+          setShowForm(!showForm)
+        }} className="gap-2">
           <PlusCircle className="h-4 w-4" />
           {showForm 
             ? (language === 'bn' ? 'ফর্ম বন্ধ করুন' : 'Cancel') 

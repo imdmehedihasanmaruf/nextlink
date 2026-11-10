@@ -1,7 +1,8 @@
 'use client'
 
-import React, { useEffect } from 'react'
+import React, { useEffect, useState } from 'react'
 import Link from 'next/link'
+import { useRouter } from 'next/navigation'
 import { 
   Zap, 
   ShieldCheck, 
@@ -18,40 +19,60 @@ import {
   Star, 
   MapPin, 
   PhoneCall,
-  Clock,
-  Sparkles
+  CreditCard,
+  Headphones,
+  Gauge,
+  Radio,
+  Server,
+  Sparkles,
+  Search,
+  ExternalLink,
+  ChevronRight
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
+import { Input } from '@/components/ui/input'
 import { useTranslation } from '@/store/settingsStore'
 import { useContentStore } from '@/store/contentStore'
+import { useAuthStore } from '@/store/authStore'
 
 export default function HomePage() {
+  const router = useRouter()
   const { t } = useTranslation()
+  const { isAuthenticated } = useAuthStore()
   const { 
     brand, 
     hero,
-    packagesSection,
-    packages, 
     mediaHubs, 
     coverageSection,
     coverageAreas, 
-    retention,
     ctaBanner,
+    liveLatency,
+    interfaceTraffic,
+    boostBandwidth,
+    referralRewards,
+    peeringHubs,
     fetchContent 
   } = useContentStore()
+
+  // Form states for interactive options before login
+  const [billSubId, setBillSubId] = useState('')
+  const [ticketIssue, setTicketIssue] = useState('')
 
   useEffect(() => {
     fetchContent()
   }, [fetchContent])
 
-  const stats = [
-    { value: '100%', label: 'Pure Optical Fiber' },
-    { value: '< 4 ms', label: 'Global Cloud Latency' },
-    { value: '99.99%', label: 'Network Uptime SLA' },
-    { value: '24/7/365', label: 'Dedicated Global NOC' },
-  ]
+  // Redirect to login page if user is not authenticated when clicking/submitting any option
+  const handleProtectedAction = (e?: React.FormEvent, targetPath: string = '/login') => {
+    if (e) e.preventDefault()
+    if (!isAuthenticated) {
+      router.push('/login')
+    } else {
+      router.push(targetPath)
+    }
+  }
 
   return (
     <div className="space-y-16 pb-16">
@@ -78,16 +99,10 @@ export default function HomePage() {
                 {t('heroSubtitle')}
               </p>
 
-              {/* Action Buttons */}
+              {/* Action Button: Check Availability */}
               <div className="flex flex-wrap gap-3.5">
-                <Link href="/apply">
-                  <Button size="lg" className="bg-white text-slate-900 hover:bg-slate-100 font-extrabold gap-2 shadow-xl hover:scale-105 transition-all h-11 px-6">
-                    <span>{t('getStarted')}</span>
-                    <ArrowRight size={18} />
-                  </Button>
-                </Link>
                 <Link href="/coverage">
-                  <Button size="lg" variant="outline" className="border-white/80 text-white bg-white/10 backdrop-blur-md hover:bg-white/20 font-bold gap-2 h-11 px-6">
+                  <Button size="lg" className="bg-white text-primary hover:bg-white/90 font-extrabold gap-2 shadow-xl hover:scale-105 transition-all h-11 px-7">
                     <span>{t('checkCoverage')}</span>
                     <MapPin size={18} />
                   </Button>
@@ -117,11 +132,11 @@ export default function HomePage() {
                       <span className="relative inline-flex rounded-full h-3 w-3 bg-emerald-500"></span>
                     </span>
                     <div>
-                      <h4 className="font-bold text-sm tracking-wide">NextLink Optical Core</h4>
-                      <p className="text-[10px] text-white/70">Connected to 10G Tier-1 Gateway</p>
+                      <h4 className="font-bold text-sm tracking-wide text-white">NextLink Optical Core</h4>
+                      <p className="text-[10px] text-white/80">Connected to 10G Tier-1 Gateway</p>
                     </div>
                   </div>
-                  <span className="text-[10px] font-mono font-bold bg-white/20 px-2.5 py-1 rounded-full border border-white/20">
+                  <span className="text-[10px] font-mono font-bold text-white bg-white/20 px-2.5 py-1 rounded-full border border-white/20">
                     SLA 99.99%
                   </span>
                 </div>
@@ -133,16 +148,16 @@ export default function HomePage() {
                       <Download size={14} />
                       <span>Download</span>
                     </div>
-                    <p className="text-2xl font-black">948.5</p>
-                    <span className="text-[10px] text-white/70 font-medium">Mbps Throughput</span>
+                    <p className="text-2xl font-black text-white">948.5</p>
+                    <span className="text-[10px] text-white/80 font-medium">Mbps Throughput</span>
                   </div>
                   <div className="rounded-2xl bg-black/20 p-4 border border-white/10">
                     <div className="flex items-center gap-1.5 text-xs text-sky-300 font-semibold mb-1">
                       <Upload size={14} />
                       <span>Upload</span>
                     </div>
-                    <p className="text-2xl font-black">941.2</p>
-                    <span className="text-[10px] text-white/70 font-medium">Mbps Symmetrical</span>
+                    <p className="text-2xl font-black text-white">941.2</p>
+                    <span className="text-[10px] text-white/80 font-medium">Mbps Symmetrical</span>
                   </div>
                 </div>
 
@@ -164,8 +179,8 @@ export default function HomePage() {
 
                 {/* Quick Link Button */}
                 <Link href="/apply" className="block w-full">
-                  <Button className="w-full bg-white text-slate-900 hover:bg-slate-100 font-bold gap-2 shadow-md">
-                    <span>Connect Optical Fiber</span>
+                  <Button className="w-full bg-white text-primary hover:bg-white/90 font-bold gap-2 shadow-md">
+                    <span>Explore Optical Fiber Service</span>
                     <ArrowRight size={14} />
                   </Button>
                 </Link>
@@ -179,146 +194,279 @@ export default function HomePage() {
         <div className="absolute right-40 bottom-5 h-64 w-64 rounded-full bg-white/10 blur-2xl" />
       </section>
 
-      {/* ===================== PACKAGES SECTION ===================== */}
-      {packages && packages.length > 0 && (
-        <section id="packages" className="container mx-auto px-4 max-w-6xl scroll-mt-20">
-          <div className="text-center max-w-2xl mx-auto mb-12">
-            <Badge variant="outline" className="mb-3 px-3 py-1 font-semibold text-primary border-primary/30">
-              {packagesSection?.badgeEn || 'International Gigabit Plans'}
-            </Badge>
-            <h2 className="text-3xl md:text-4xl font-extrabold tracking-tight">
-              {packagesSection?.titleEn || t('ourPackages')}
-            </h2>
-            <p className="text-muted-foreground mt-2 text-sm md:text-base">
-              {packagesSection?.subtitleEn || t('packagesSubtitle')}
-            </p>
-          </div>
+      {/* ===================== 7 IMPORTANT BACKEND OPTIONS / FEATURES ===================== */}
+      <section className="container mx-auto px-4 max-w-6xl space-y-8">
+        <div className="text-center max-w-2xl mx-auto space-y-2">
+          <Badge variant="outline" className="px-3.5 py-1 text-xs font-semibold text-primary border-primary/30">
+            ISP Core Subscriber Features & Services
+          </Badge>
+          <h2 className="text-2xl sm:text-3xl md:text-4xl font-extrabold tracking-tight">
+            Manage Everything From Your Subscriber Portal
+          </h2>
+          <p className="text-muted-foreground text-sm sm:text-base">
+            Access our integrated optical network management tools, instant bill payments, latency diagnostics, and on-demand bandwidth controls.
+          </p>
+        </div>
 
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-            {packages.map((pkg) => (
-              <Card 
-                key={pkg.id} 
-                className={`relative flex flex-col justify-between border-2 transition-all duration-300 hover:shadow-2xl hover:-translate-y-1.5 ${
-                  pkg.popular 
-                    ? 'border-primary ring-2 ring-primary/20 shadow-xl bg-primary/[0.02]' 
-                    : 'border-border hover:border-primary/50'
-                }`}
+        {/* 7 Feature Cards Grid */}
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+
+          {/* 1. Quick Bill Payment & Invoices */}
+          <Card className="border-2 border-border/80 hover:border-primary/60 transition-all duration-300 hover:shadow-xl flex flex-col justify-between">
+            <CardHeader className="pb-3">
+              <div className="flex items-center justify-between">
+                <div className="h-10 w-10 rounded-xl bg-emerald-500/10 text-emerald-600 flex items-center justify-center">
+                  <CreditCard size={20} />
+                </div>
+                <Badge variant="secondary" className="font-mono text-[11px] text-emerald-600 bg-emerald-500/10">
+                  Instant Pay
+                </Badge>
+              </div>
+              <CardTitle className="text-xl font-bold mt-3">Quick Bill Pay & Invoicing</CardTitle>
+              <CardDescription className="text-xs">
+                Pay your monthly fiber internet bills instantly using bKash, Nagad, Cards, or Bank Transfer with immediate receipt generation.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <form onSubmit={(e) => handleProtectedAction(e, '/dashboard')} className="space-y-2.5">
+                <Input 
+                  placeholder="Enter Subscriber ID (e.g. SUB-1024)"
+                  value={billSubId}
+                  onChange={(e) => setBillSubId(e.target.value)}
+                  className="h-9 text-xs"
+                />
+                <Button 
+                  type="submit" 
+                  className="w-full h-9 text-xs font-bold gap-1.5 bg-emerald-600 hover:bg-emerald-700 text-white shadow-sm"
+                >
+                  <Search size={14} />
+                  <span>Search Bill & Pay Now</span>
+                </Button>
+              </form>
+            </CardContent>
+          </Card>
+
+          {/* 2. 24/7 Technical Support & Ticket Helpdesk */}
+          <Card className="border-2 border-border/80 hover:border-primary/60 transition-all duration-300 hover:shadow-xl flex flex-col justify-between">
+            <CardHeader className="pb-3">
+              <div className="flex items-center justify-between">
+                <div className="h-10 w-10 rounded-xl bg-blue-500/10 text-blue-600 flex items-center justify-center">
+                  <Headphones size={20} />
+                </div>
+                <Badge variant="secondary" className="font-mono text-[11px] text-blue-600 bg-blue-500/10">
+                  24/7 NOC Active
+                </Badge>
+              </div>
+              <CardTitle className="text-xl font-bold mt-3">Priority Support & Ticket CRM</CardTitle>
+              <CardDescription className="text-xs">
+                Facing line drop, optical loss, or Wi-Fi router issues? Submit an immediate priority trouble ticket for technician dispatch.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <form onSubmit={(e) => handleProtectedAction(e, '/tickets')} className="space-y-2.5">
+                <Input 
+                  placeholder="Describe your issue or line fault..."
+                  value={ticketIssue}
+                  onChange={(e) => setTicketIssue(e.target.value)}
+                  className="h-9 text-xs"
+                />
+                <Button 
+                  type="submit" 
+                  className="w-full h-9 text-xs font-bold gap-1.5 shadow-sm"
+                >
+                  <span>Submit Support Ticket</span>
+                  <ArrowRight size={14} />
+                </Button>
+              </form>
+            </CardContent>
+          </Card>
+
+          {/* 3. 1-Click Bandwidth Turbo Boost */}
+          <Card className="border-2 border-border/80 hover:border-primary/60 transition-all duration-300 hover:shadow-xl flex flex-col justify-between">
+            <CardHeader className="pb-3">
+              <div className="flex items-center justify-between">
+                <div className="h-10 w-10 rounded-xl bg-amber-500/10 text-amber-600 flex items-center justify-center">
+                  <Zap size={20} />
+                </div>
+                <Badge className="bg-amber-500 text-white font-mono text-[11px]">
+                  {boostBandwidth?.boostSpeed || 1000} Mbps Turbo
+                </Badge>
+              </div>
+              <CardTitle className="text-xl font-bold mt-3">1-Click Bandwidth Boost</CardTitle>
+              <CardDescription className="text-xs">
+                Instantly burst your line speed up to 1 Gbps for large cloud uploads, high-bitrate video editing, or steam downloads.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-3">
+              <div className="flex items-center justify-between p-2.5 rounded-lg bg-muted/60 text-xs font-medium border">
+                <span>Burst Duration</span>
+                <span className="font-bold text-amber-600 dark:text-amber-400">
+                  {boostBandwidth?.durationHours || 6} Hours Free Quota
+                </span>
+              </div>
+              <Button 
+                onClick={() => handleProtectedAction(undefined, '/dashboard')}
+                className="w-full h-9 text-xs font-bold gap-1.5 bg-amber-600 hover:bg-amber-700 text-white shadow-sm"
               >
-                {pkg.popular && (
-                  <div className="absolute -top-3.5 left-1/2 -translate-x-1/2">
-                    <Badge className="bg-primary text-primary-foreground font-bold px-3 py-1 shadow-md">
-                      {packagesSection?.popularBadgeEn || t('popular')}
-                    </Badge>
-                  </div>
-                )}
+                <Zap size={14} />
+                <span>Activate 1-Click Turbo Boost</span>
+              </Button>
+            </CardContent>
+          </Card>
 
-                <CardHeader className="pb-4">
-                  <div className="flex items-center justify-between">
-                    <span className="font-mono text-xs font-semibold text-muted-foreground">{pkg.id}</span>
-                    <Badge variant="secondary" className="font-semibold text-xs">
-                      Cloud Peering {pkg.bdixSpeed || pkg.speed * 2}M
-                    </Badge>
-                  </div>
-                  <CardTitle className="text-2xl mt-2 font-bold">{pkg.name}</CardTitle>
-                  <div className="mt-4 flex items-baseline">
-                    <span className="text-4xl font-black text-primary">$ {pkg.price}</span>
-                    <span className="text-xs text-muted-foreground ml-1.5 font-medium">{t('perMonth')}</span>
-                  </div>
-                </CardHeader>
-
-                <CardContent className="space-y-4">
-                  {/* Speed indicator */}
-                  <div className="rounded-xl bg-muted/50 p-3 flex items-center justify-between text-sm border border-border/50">
-                    <div className="flex items-center gap-2">
-                      <Download className="h-4 w-4 text-emerald-500" />
-                      <span className="font-semibold">{pkg.speed} {t('mbps')}</span>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <Upload className="h-4 w-4 text-blue-500" />
-                      <span className="font-semibold">{pkg.uploadSpeed || pkg.speed} {t('mbps')}</span>
-                    </div>
-                  </div>
-
-                  {/* Features list */}
-                  <ul className="space-y-2.5 text-sm py-2">
-                    {pkg.features?.map((feat, i) => (
-                      <li key={i} className="flex items-center gap-2.5 text-foreground/90">
-                        <CheckCircle className="h-4 w-4 text-emerald-500 flex-shrink-0" />
-                        <span className="text-xs sm:text-sm">{feat}</span>
-                      </li>
-                    ))}
-                  </ul>
-
-                  <div className="pt-2">
-                    <Link href={`/apply?package=${pkg.id}`} className="w-full">
-                      <Button 
-                        className="w-full font-bold shadow-sm" 
-                        variant={pkg.popular ? 'default' : 'outline'}
-                      >
-                        {packagesSection?.chooseBtnEn || t('selectPlan')}
-                      </Button>
-                    </Link>
-                  </div>
-                </CardContent>
-              </Card>
-            ))}
-          </div>
-        </section>
-      )}
-
-      {/* ===================== USER RETENTION / INCENTIVES ===================== */}
-      {retention && (retention.referralTitleEn || retention.turboTitleEn || retention.vipTitleEn) && (
-        <section className="container mx-auto px-4 max-w-6xl">
-          <div className="rounded-3xl border border-primary/20 bg-gradient-to-br from-primary/5 via-card to-primary/10 p-6 sm:p-8 shadow-sm">
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-              {retention.referralTitleEn && (
-                <div className="p-5 rounded-2xl bg-card/80 border border-border/60 hover:-translate-y-1 transition-transform duration-200 shadow-sm space-y-2.5">
-                  <div className="inline-flex items-center gap-2 rounded-lg bg-emerald-500/10 text-emerald-600 px-3 py-1 text-xs font-bold">
-                    <Gift className="h-4 w-4" />
-                    {t('referAndEarn')}
-                  </div>
-                  <h3 className="text-lg font-bold">
-                    {retention.referralTitleEn}
-                  </h3>
-                  <p className="text-xs sm:text-sm text-muted-foreground leading-relaxed">
-                    {retention.referralDescEn}
-                  </p>
+          {/* 4. Realtime Ping & Latency Diagnostics */}
+          <Card className="border-2 border-border/80 hover:border-primary/60 transition-all duration-300 hover:shadow-xl flex flex-col justify-between">
+            <CardHeader className="pb-3">
+              <div className="flex items-center justify-between">
+                <div className="h-10 w-10 rounded-xl bg-purple-500/10 text-purple-600 flex items-center justify-center">
+                  <Radio size={20} />
                 </div>
-              )}
-
-              {retention.turboTitleEn && (
-                <div className="p-5 rounded-2xl bg-card/80 border border-border/60 hover:-translate-y-1 transition-transform duration-200 shadow-sm space-y-2.5">
-                  <div className="inline-flex items-center gap-2 rounded-lg bg-amber-500/10 text-amber-600 px-3 py-1 text-xs font-bold">
-                    <Zap className="h-4 w-4" />
-                    {t('instantBoost')}
+                <Badge variant="secondary" className="font-mono text-[11px] text-purple-600 bg-purple-500/10">
+                  Live Edge POP
+                </Badge>
+              </div>
+              <CardTitle className="text-xl font-bold mt-3">Live Latency & Ping Monitor</CardTitle>
+              <CardDescription className="text-xs">
+                Real-time round-trip latency to Tier-1 international backbones, Cloudflare Anycast, and Google Cloud DNS.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-3">
+              <div className="space-y-1.5">
+                {(liveLatency?.targets?.slice(0, 2) || [
+                  { name: 'Direct POP Peering', ping: '1.4 ms' },
+                  { name: 'Cloudflare Edge (1.1.1.1)', ping: '2.3 ms' },
+                ]).map((t, idx) => (
+                  <div key={idx} className="flex justify-between items-center text-xs p-1.5 rounded bg-muted/40">
+                    <span className="truncate max-w-[170px]">{t.name}</span>
+                    <span className="font-mono font-bold text-emerald-600 dark:text-emerald-400">{t.ping}</span>
                   </div>
-                  <h3 className="text-lg font-bold">
-                    {retention.turboTitleEn}
-                  </h3>
-                  <p className="text-xs sm:text-sm text-muted-foreground leading-relaxed">
-                    {retention.turboDescEn}
-                  </p>
-                </div>
-              )}
+                ))}
+              </div>
+              <Button 
+                onClick={() => handleProtectedAction(undefined, '/dashboard')}
+                variant="outline"
+                className="w-full h-9 text-xs font-bold gap-1.5 border-purple-500/30 text-purple-600 hover:bg-purple-500/10"
+              >
+                <Activity size={14} />
+                <span>Run Full Ping Diagnostics</span>
+              </Button>
+            </CardContent>
+          </Card>
 
-              {retention.vipTitleEn && (
-                <div className="p-5 rounded-2xl bg-card/80 border border-border/60 hover:-translate-y-1 transition-transform duration-200 shadow-sm space-y-2.5">
-                  <div className="inline-flex items-center gap-2 rounded-lg bg-purple-500/10 text-purple-600 px-3 py-1 text-xs font-bold">
-                    <Star className="h-4 w-4" />
-                    VIP Loyalty Status
-                  </div>
-                  <h3 className="text-lg font-bold">
-                    {retention.vipTitleEn}
-                  </h3>
-                  <p className="text-xs sm:text-sm text-muted-foreground leading-relaxed">
-                    {retention.vipDescEn}
-                  </p>
+          {/* 5. Bandwidth Consumption & Interface Traffic Meter */}
+          <Card className="border-2 border-border/80 hover:border-primary/60 transition-all duration-300 hover:shadow-xl flex flex-col justify-between">
+            <CardHeader className="pb-3">
+              <div className="flex items-center justify-between">
+                <div className="h-10 w-10 rounded-xl bg-cyan-500/10 text-cyan-600 flex items-center justify-center">
+                  <Gauge size={20} />
                 </div>
-              )}
+                <Badge variant="secondary" className="font-mono text-[11px] text-cyan-600 bg-cyan-500/10">
+                  GPON OLT Live
+                </Badge>
+              </div>
+              <CardTitle className="text-xl font-bold mt-3">Bandwidth Consumption Meter</CardTitle>
+              <CardDescription className="text-xs">
+                Inspect real-time optical link throughput, uplink SFP+ port rate, and monthly symmetrical traffic consumption.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-3">
+              <div className="grid grid-cols-2 gap-2 text-center">
+                <div className="p-2 rounded bg-muted/50 border">
+                  <span className="text-[10px] text-muted-foreground block">Download Rate</span>
+                  <span className="text-sm font-bold text-emerald-600">
+                    {interfaceTraffic?.downloadRateMbps || 498.2} Mbps
+                  </span>
+                </div>
+                <div className="p-2 rounded bg-muted/50 border">
+                  <span className="text-[10px] text-muted-foreground block">Upload Rate</span>
+                  <span className="text-sm font-bold text-blue-600">
+                    {interfaceTraffic?.uploadRateMbps || 494.7} Mbps
+                  </span>
+                </div>
+              </div>
+              <Button 
+                onClick={() => handleProtectedAction(undefined, '/dashboard')}
+                variant="outline"
+                className="w-full h-9 text-xs font-bold gap-1.5 border-cyan-500/30 text-cyan-600 hover:bg-cyan-500/10"
+              >
+                <Gauge size={14} />
+                <span>View Traffic Graphs</span>
+              </Button>
+            </CardContent>
+          </Card>
+
+          {/* 6. Cloud Peering & Direct Media Hubs */}
+          <Card className="border-2 border-border/80 hover:border-primary/60 transition-all duration-300 hover:shadow-xl flex flex-col justify-between">
+            <CardHeader className="pb-3">
+              <div className="flex items-center justify-between">
+                <div className="h-10 w-10 rounded-xl bg-rose-500/10 text-rose-600 flex items-center justify-center">
+                  <Server size={20} />
+                </div>
+                <Badge variant="secondary" className="font-mono text-[11px] text-rose-600 bg-rose-500/10">
+                  Gigabit Peering
+                </Badge>
+              </div>
+              <CardTitle className="text-xl font-bold mt-3">Cloud Peering & Media Hubs</CardTitle>
+              <CardDescription className="text-xs">
+                Zero-buffering BDIX & CDN access to Ultra HD streaming, local high-speed file storage, and Tier-1 diagnostic tools.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-3">
+              <div className="flex flex-wrap gap-1.5">
+                {(peeringHubs || [
+                  { name: 'Speedtest Diagnostic', badge: 'Tier-1' },
+                  { name: 'Global Storage CDN', badge: 'Gigabit' },
+                  { name: 'Ultra HD Streaming', badge: '4K HDR' },
+                ]).slice(0, 3).map((h, idx) => (
+                  <span key={idx} className="text-[10px] font-semibold px-2 py-0.5 rounded bg-muted border">
+                    {h.name}
+                  </span>
+                ))}
+              </div>
+              <Button 
+                onClick={() => handleProtectedAction(undefined, '/dashboard')}
+                variant="outline"
+                className="w-full h-9 text-xs font-bold gap-1.5 border-rose-500/30 text-rose-600 hover:bg-rose-500/10"
+              >
+                <Globe size={14} />
+                <span>Access Peering Network</span>
+              </Button>
+            </CardContent>
+          </Card>
+
+          {/* 7. Referral Rewards & Cash Credits */}
+          <Card className="border-2 border-border/80 hover:border-primary/60 transition-all duration-300 hover:shadow-xl md:col-span-2 lg:col-span-3 flex flex-col md:flex-row items-center justify-between p-6 gap-6 bg-gradient-to-r from-primary/5 via-card to-emerald-500/5">
+            <div className="flex items-start gap-4">
+              <div className="h-12 w-12 rounded-2xl bg-primary/10 text-primary flex items-center justify-center shrink-0">
+                <Gift size={26} />
+              </div>
+              <div className="space-y-1">
+                <div className="flex items-center gap-2">
+                  <Badge className="bg-emerald-600 text-white font-bold text-xs">
+                    Earn ${referralRewards?.bonusAmount || 25} Credit
+                  </Badge>
+                  <span className="text-xs font-mono text-muted-foreground">Code: NL-GLOBAL-REF</span>
+                </div>
+                <h3 className="text-xl font-extrabold">Referral Rewards & Invoice Discounts</h3>
+                <p className="text-xs sm:text-sm text-muted-foreground max-w-2xl">
+                  Invite your friends, colleagues, or neighbors to NextLink Optical Fiber. Both you and your friend receive ${referralRewards?.bonusAmount || 25} billing discount credits upon account activation!
+                </p>
+              </div>
             </div>
-          </div>
-        </section>
-      )}
+            <div className="shrink-0 w-full md:w-auto">
+              <Button 
+                onClick={() => handleProtectedAction(undefined, '/dashboard')}
+                className="w-full md:w-auto font-bold h-11 px-6 gap-2 shadow-md hover:scale-105 transition-all"
+              >
+                <Gift size={16} />
+                <span>Claim My Referral Reward</span>
+                <ArrowRight size={15} />
+              </Button>
+            </div>
+          </Card>
+
+        </div>
+      </section>
 
       {/* ===================== ENTERTAINMENT & CDN PEERING ===================== */}
       {mediaHubs && (mediaHubs.ftpUrl || mediaHubs.liveTvUrl || mediaHubs.speedtestUrl) && (
@@ -443,27 +591,35 @@ export default function HomePage() {
           <div className="rounded-3xl bg-gradient-to-r from-primary via-primary/95 to-primary/80 text-primary-foreground p-8 md:p-12 shadow-2xl flex flex-col md:flex-row md:items-center justify-between gap-6 relative overflow-hidden">
             <div className="absolute right-0 top-0 h-64 w-64 bg-white/10 rounded-full blur-2xl pointer-events-none" />
             <div className="max-w-xl relative z-10">
-              <h2 className="text-2xl md:text-3xl font-black mb-2 tracking-tight">
+              <h2 className="text-2xl md:text-3xl font-black mb-2 tracking-tight text-white drop-shadow-sm">
                 {ctaBanner.titleEn}
               </h2>
-              <p className="text-primary-foreground/90 text-sm leading-relaxed">
-                Contact our 24/7 Global NOC or submit an online provisioning order to get connected today.
+              <p className="text-white/90 text-sm leading-relaxed">
+                Contact our 24/7 Global NOC or explore our optical fiber plans to get connected today.
               </p>
             </div>
-            <div className="flex flex-wrap gap-3.5 relative z-10">
-              <Link href="/apply">
-                <Button size="lg" className="bg-white text-slate-900 hover:bg-slate-100 font-extrabold shadow-lg hover:scale-105 transition-all">
-                  {ctaBanner.btnApplyEn || t('apply')}
+            <div className="flex flex-wrap gap-3.5 relative z-10 items-center">
+              <Link href="/packages">
+                <Button size="lg" className="bg-white text-primary hover:bg-white/90 font-extrabold shadow-lg hover:scale-105 transition-all h-11 px-6">
+                  Explore Plans
                 </Button>
               </Link>
-              {brand?.phone && (
-                <a href={`tel:${brand.phone}`}>
-                  <Button size="lg" variant="outline" className="border-white/80 text-white hover:bg-white/20 font-bold gap-2">
-                    <PhoneCall size={16} />
-                    <span>{ctaBanner.btnCallEn || brand.phone}</span>
-                  </Button>
-                </a>
-              )}
+
+              {/* Call Support: redirects to login if unauthenticated */}
+              <button
+                type="button"
+                onClick={() => {
+                  if (!isAuthenticated) {
+                    router.push('/login')
+                  } else {
+                    window.location.href = `tel:${brand?.phone?.replace(/\s+/g, '') || '+8801575XXXXXX'}`
+                  }
+                }}
+                className="inline-flex items-center justify-center h-11 px-6 rounded-md font-extrabold gap-2 border-2 border-white bg-white/10 hover:bg-white hover:text-primary text-white backdrop-blur-sm transition-all shadow-md cursor-pointer"
+              >
+                <PhoneCall size={18} className="shrink-0" />
+                <span className="tracking-wide">{ctaBanner?.btnCallEn || 'Call Support'}</span>
+              </button>
             </div>
           </div>
         </section>

@@ -5,7 +5,7 @@ import { usePathname } from 'next/navigation';
 import {
   LayoutDashboard, Users, Package, Receipt, Ticket, Wrench, BarChart3,
   Settings, Wifi, ChevronLeft, ChevronRight, X, LogOut, Shield, Globe, User,
-  Gift, Zap, Radio, Activity, Network,
+  Gift, Zap, Radio, Activity, Network, PackageCheck,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useAuthStore } from '@/store/authStore';
@@ -23,8 +23,9 @@ interface NavItem {
 const navItems: NavItem[] = [
   { label: 'Dashboard', key: 'dashboard', href: '/dashboard', icon: <LayoutDashboard className="h-5 w-5" />, roles: ['super_admin', 'billing', 'support', 'technician'] },
   { label: 'Frontend CMS', key: 'cms', href: '/cms', icon: <Globe className="h-5 w-5" />, roles: ['super_admin', 'billing', 'support'] },
-  { label: 'Subscribers', key: 'subscribers', href: '/subscribers', icon: <Users className="h-5 w-5" />, roles: ['super_admin', 'billing', 'support'] },
+  { label: 'User Details', key: 'subscribers', href: '/users', icon: <Users className="h-5 w-5" />, roles: ['super_admin', 'billing', 'support'] },
   { label: 'Packages', key: 'packages', href: '/packages', icon: <Package className="h-5 w-5" />, roles: ['super_admin'] },
+  { label: 'Package Orders', key: 'orders', href: '/orders', icon: <PackageCheck className="h-5 w-5" />, roles: ['super_admin', 'billing', 'support'] },
   { label: 'Billing', key: 'billing', href: '/billing', icon: <Receipt className="h-5 w-5" />, roles: ['super_admin', 'billing'] },
   { label: 'Tickets', key: 'tickets', href: '/tickets', icon: <Ticket className="h-5 w-5" />, roles: ['super_admin', 'support', 'technician'] },
   { label: 'Technicians', key: 'technicians', href: '/technicians', icon: <Wrench className="h-5 w-5" />, roles: ['super_admin', 'support'] },

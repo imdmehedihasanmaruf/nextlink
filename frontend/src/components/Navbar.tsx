@@ -17,7 +17,7 @@ export function Navbar() {
   const { t } = useTranslation()
   const { theme, setTheme } = useSettingsStore()
   const { user, isAuthenticated, logout } = useAuthStore()
-  const { brand, notice, packages, fetchContent } = useContentStore()
+  const { brand, notice, fetchContent } = useContentStore()
 
   useEffect(() => {
     fetchContent()
@@ -42,15 +42,15 @@ export function Navbar() {
 
   const homeHref = isAuthenticated ? '/dashboard' : '/'
 
-  const baseLinks = [
+  // Navigation links: Home, Packages, My Orders (if auth), Coverage, Settings (next to Coverage), Tickets
+  const navLinks = [
     { href: homeHref, label: isAuthenticated ? t('dashboard') : t('home'), isHome: true },
-    ...(packages && packages.length > 0 ? [{ href: '/#packages', label: 'Packages' }] : []),
+    { href: '/packages', label: 'Packages' },
+    ...(isAuthenticated ? [{ href: '/dashboard/orders', label: 'My Orders', isHome: false }] : []),
     { href: '/coverage', label: t('coverage') },
-    ...(!isAuthenticated ? [{ href: '/apply', label: t('apply') }] : []),
-    { href: '/tickets', label: t('tickets') },
+    { href: '/settings', label: t('settings') },
+    { href: '/tickets', label: 'Tickets' },
   ]
-
-  const navLinks = baseLinks
 
   return (
     <header className="sticky top-0 z-40 w-full border-b border-border bg-background/95 backdrop-blur-md">
@@ -64,20 +64,34 @@ export function Navbar() {
         </div>
       )}
 
-      <div className="container mx-auto flex h-16 items-center justify-between px-4 max-w-6xl">
-        {/* Brand Logo */}
-        <Link href={homeHref} onClick={handleHomeClick} className="flex items-center gap-2.5 font-bold text-xl group">
-          <div className="flex items-center justify-center h-10 w-10 rounded-xl bg-primary text-primary-foreground shadow-md transition-transform group-hover:scale-105">
-            <Wifi size={20} className="stroke-[2.5]" />
-          </div>
-          <div className="flex flex-col">
-            <span className="text-foreground font-extrabold tracking-tight text-xl leading-none">
-              {brand?.name || 'NextLink Global'}
-            </span>
-            <span className="text-[10px] text-muted-foreground font-semibold tracking-wider uppercase mt-0.5">
-              {brand?.logoSubtitle || 'GLOBAL FIBER NETWORK'}
-            </span>
-          </div>
+      <div className="container mx-auto flex min-h-[76px] items-center justify-between px-4 max-w-6xl py-1">
+        {/* Brand Logo (Supports 260x70 size web logo) */}
+        <Link href={homeHref} onClick={handleHomeClick} className="flex items-center gap-2.5 font-bold group">
+          {brand?.logoUrl ? (
+            <div className="flex items-center justify-center">
+              <img
+                src={brand.logoUrl}
+                alt={brand?.name || 'NextLink Global'}
+                width={260}
+                height={70}
+                className="w-[260px] h-[70px] max-w-[260px] max-h-[70px] object-contain transition-transform group-hover:scale-[1.02]"
+              />
+            </div>
+          ) : (
+            <>
+              <div className="flex items-center justify-center h-10 w-10 rounded-xl bg-primary text-primary-foreground shadow-md transition-transform group-hover:scale-105">
+                <Wifi size={20} className="stroke-[2.5]" />
+              </div>
+              <div className="flex flex-col">
+                <span className="text-foreground font-extrabold tracking-tight text-xl leading-none">
+                  {brand?.name || 'NextLink Global'}
+                </span>
+                <span className="text-[10px] text-muted-foreground font-semibold tracking-wider uppercase mt-0.5">
+                  {brand?.logoSubtitle || 'GLOBAL FIBER NETWORK'}
+                </span>
+              </div>
+            </>
+          )}
         </Link>
 
         {/* Desktop Navigation Links */}
@@ -144,14 +158,9 @@ export function Navbar() {
           ) : (
             <div className="flex items-center gap-2">
               <Link href="/login">
-                <Button variant="ghost" size="sm" className="font-semibold text-foreground h-9 hover:bg-muted/80">
-                  {t('login')}
-                </Button>
-              </Link>
-              <Link href="/apply">
                 <Button size="sm" className="font-semibold gap-1.5 shadow-md h-9 hover:opacity-95 transition-all">
-                  <span>{t('apply')}</span>
-                  <ArrowRight size={14} />
+                  <User size={14} />
+                  <span>{t('login')}</span>
                 </Button>
               </Link>
             </div>
@@ -173,73 +182,68 @@ export function Navbar() {
         <div className="md:hidden border-t border-border bg-background p-4 space-y-3 animate-in slide-in-from-top-2">
           <div className="container mx-auto max-w-6xl">
             <div className="flex flex-col gap-1">
-            {navLinks.map(({ href, label, isHome }) => (
-              <Link
-                key={href}
-                href={href}
-                onClick={(e) => {
-                  setMobileOpen(false);
-                  if (isHome) handleHomeClick(e);
-                }}
-                className={cn(
-                  'px-3 py-2 rounded-lg text-sm font-semibold transition-colors',
-                  pathname === href ? 'bg-primary text-primary-foreground' : 'text-foreground hover:bg-muted'
-                )}
+              {navLinks.map(({ href, label, isHome }) => (
+                <Link
+                  key={href}
+                  href={href}
+                  onClick={(e) => {
+                    setMobileOpen(false);
+                    if (isHome) handleHomeClick(e);
+                  }}
+                  className={cn(
+                    'px-3 py-2 rounded-lg text-sm font-semibold transition-colors',
+                    pathname === href ? 'bg-primary text-primary-foreground' : 'text-foreground hover:bg-muted'
+                  )}
+                >
+                  {label}
+                </Link>
+              ))}
+            </div>
+
+            <div className="pt-3 border-t border-border space-y-2">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}
+                className="w-full justify-center gap-2"
               >
-                {label}
-              </Link>
-            ))}
-          </div>
+                {theme === 'dark' ? (
+                  <>
+                    <Sun size={16} className="text-amber-400" />
+                    <span>Light Mode</span>
+                  </>
+                ) : (
+                  <>
+                    <Moon size={16} className="text-slate-700" />
+                    <span>Dark Mode</span>
+                  </>
+                )}
+              </Button>
 
-          <div className="pt-3 border-t border-border space-y-2">
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}
-              className="w-full justify-center gap-2"
-            >
-              {theme === 'dark' ? (
-                <>
-                  <Sun size={16} className="text-amber-400" />
-                  <span>Light Mode</span>
-                </>
+              {isAuthenticated ? (
+                <div className="flex flex-col gap-2">
+                  <Link href="/profile" onClick={() => setMobileOpen(false)}>
+                    <Button variant="secondary" className="w-full justify-start gap-2">
+                      <User size={16} />
+                      <span>{t('profile')}</span>
+                    </Button>
+                  </Link>
+                  <Button onClick={handleLogout} variant="destructive" className="w-full justify-start gap-2">
+                    <LogOut size={16} />
+                    <span>{t('logout')}</span>
+                  </Button>
+                </div>
               ) : (
-                <>
-                  <Moon size={16} className="text-slate-700" />
-                  <span>Dark Mode</span>
-                </>
+                <div className="flex flex-col gap-2">
+                  <Link href="/login" onClick={() => setMobileOpen(false)}>
+                    <Button className="w-full justify-center gap-2">
+                      <User size={16} />
+                      <span>{t('login')}</span>
+                    </Button>
+                  </Link>
+                </div>
               )}
-            </Button>
-
-            {isAuthenticated ? (
-              <div className="flex flex-col gap-2">
-                <Link href="/profile" onClick={() => setMobileOpen(false)}>
-                  <Button variant="secondary" className="w-full justify-start gap-2">
-                    <User size={16} />
-                    <span>{t('profile')}</span>
-                  </Button>
-                </Link>
-                <Button onClick={handleLogout} variant="destructive" className="w-full justify-start gap-2">
-                  <LogOut size={16} />
-                  <span>{t('logout')}</span>
-                </Button>
-              </div>
-            ) : (
-              <div className="flex flex-col gap-2">
-                <Link href="/login" onClick={() => setMobileOpen(false)}>
-                  <Button variant="outline" className="w-full justify-center">
-                    {t('login')}
-                  </Button>
-                </Link>
-                <Link href="/apply" onClick={() => setMobileOpen(false)}>
-                  <Button className="w-full justify-center gap-2">
-                    <span>{t('apply')}</span>
-                    <ArrowRight size={16} />
-                  </Button>
-                </Link>
-              </div>
-            )}
-          </div>
+            </div>
           </div>
         </div>
       )}

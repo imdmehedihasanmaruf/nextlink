@@ -51,9 +51,51 @@ export default function RegisterPage() {
   })
 
   const onSubmit = async (data: FormData) => {
-    await new Promise((r) => setTimeout(r, 800))
-    
-    // Create new subscriber session
+    try {
+      const backendUrl = process.env.NEXT_PUBLIC_API_URL 
+        ? process.env.NEXT_PUBLIC_API_URL.replace(/\/api$/, '') 
+        : 'http://localhost:8000';
+      
+      const res = await fetch(`${backendUrl}/api/auth/register`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          fullName: data.fullName,
+          username: data.username,
+          phone: data.phone,
+          email: data.email,
+          password: data.password,
+          package: data.package,
+          address: data.address,
+        }),
+      });
+
+      if (res.ok) {
+        const result = await res.json();
+        if (result.user) {
+          login({
+            id: result.user.id,
+            name: result.user.name,
+            username: result.user.username,
+            phone: result.user.phone,
+            package: result.user.packageName || data.package,
+            address: result.user.address,
+            joinDate: result.user.joinDate || new Date().toISOString().slice(0, 10),
+          });
+          setSuccess(true);
+          setTimeout(() => {
+            router.push('/dashboard');
+          }, 1200);
+          return;
+        }
+      }
+    } catch (err) {
+      console.warn('Backend register sync fallback:', err);
+    }
+
+    // Fallback if backend offline
     login({
       id: `NL-2026-${Math.floor(1000 + Math.random() * 9000)}`,
       name: data.fullName,
@@ -62,13 +104,13 @@ export default function RegisterPage() {
       package: data.package,
       address: data.address,
       joinDate: new Date().toISOString().slice(0, 10),
-    })
+    });
 
-    setSuccess(true)
+    setSuccess(true);
     setTimeout(() => {
-      router.push('/dashboard')
-    }, 1200)
-  }
+      router.push('/dashboard');
+    }, 1200);
+  };
 
   return (
     <div className="min-h-screen w-full flex items-center justify-center p-4 py-8 bg-gradient-to-br from-background via-muted/30 to-background">
