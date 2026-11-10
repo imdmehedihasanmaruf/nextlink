@@ -84,6 +84,53 @@ runs without credentials or hardware.
 
 To go live, only `.env` changes — no code changes are required.
 
+### Switching to live
+
+1. Copy `.env.production.example` to `.env` on the server and fill in the
+   values marked `[REQUIRED FOR LIVE]`.
+2. Set the matching `*_MODE` variable to `live`.
+3. Run the diagnostics to confirm every integration answers:
+
+```bash
+npm run diagnose:live
+```
+
+The diagnostics report what is missing, what is reachable and what actually
+responds — for example:
+
+```
+MikroTik RouterOS
+  ✓ credentials present — admin@192.168.88.1:8728
+  ✓ router API port open
+  ✓ router responded — NextLink-Core — 7.14.3 (stable) — 4ms
+
+Payment gateways
+  ✓ bKash configured — https://tokenized.pay.bka.sh/v1.2.0-beta
+  ✓ bKash endpoint reachable
+```
+
+### Verifying the live code path without real credentials
+
+The live code paths are covered by `npm run test:live`. It starts two servers
+that speak the *real* contracts:
+
+* `mock-routeros-server.js` — the RouterOS API protocol over TCP (length
+  prefixed words, `/login`, `/ppp/secret/print`, `/ppp/secret/set`, …)
+* `mock-gateway-server.js` — the bKash tokenized checkout, Nagad, SSLCommerz
+  and Rocket request/response shapes plus an SMS endpoint
+
+The API is then started with `MIKROTIK_MODE=live`, `PAYMENT_MODE=live` and
+`SMS_MODE=live` pointed at those servers, and the whole pipeline is driven:
+read the router, suspend a subscriber, verify the PPPoE secret really changed,
+run a payment through every gateway, settle the callback and check that the
+service was restored.
+
+```bash
+npm run test:live
+```
+
+This is how the live path stays verified without a merchant account.
+
 ---
 
 ## API reference
@@ -197,12 +244,20 @@ the migration is safe to re-run and never touches the legacy tables:
 With the API running on port 3001:
 
 ```bash
-node scripts/test-e2e.js          # 40 assertions
-node scripts/test-portal.js       # 15 assertions
-node scripts/test-automation.js   # 21 assertions
+npm test            # 148 assertions across the five suites
+npm run test:live   # 38 assertions against the real protocol contracts
 ```
 
-All three are repeatable — they clean up after themselves.
+| Script | Covers |
+|---|---|
+| `test-e2e.js` | Auth, billing cycle, PDF invoice, gateways, MikroTik, SMS, RBAC |
+| `test-portal.js` | Subscriber isolation — own invoices only, cross-subscriber payment refused |
+| `test-automation.js` | Overdue → auto-disconnect → payment → auto-reconnect, duplicate-safe |
+| `test-phase12.js` | Connection requests, coverage finder, ticket CRM, system settings |
+| `test-credentials.js` | Password hashing, legacy migration, reset and change flows |
+| `test-live-mode.js` | The live code paths against real protocol servers |
+
+All of them are repeatable — they clean up after themselves.
 
 ---
 

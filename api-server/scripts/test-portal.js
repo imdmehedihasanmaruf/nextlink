@@ -55,11 +55,7 @@ async function run() {
   const uniqueSubscribers = [...new Set(invoices.body.invoices.map((i) => i.subscriber_id))];
   assert(uniqueSubscribers.length >= 2, 'at least two subscribers have invoices', uniqueSubscribers.length);
 
-  const subscriberA = uniqueSubscribers[0];
-  const subscriberB = uniqueSubscribers[1];
-
-  const invoiceA = invoices.body.invoices.find((i) => i.subscriber_id === subscriberA);
-  const invoiceB = invoices.body.invoices.find((i) => i.subscriber_id === subscriberB);
+  const staffToken = token;
 
   // Subscriber credentials: seeded demo accounts.
   const demoLogin = await api('/api/auth/subscriber-login', {
@@ -95,7 +91,27 @@ async function run() {
   );
 
   // Cross-subscriber isolation: paying another subscriber's invoice must fail.
-  const otherInvoice = invoiceB && invoiceB.subscriber_id !== demoLogin.body.subscriber.id ? invoiceB : null;
+  // A fresh invoice is created for another subscriber so the check always
+  // has something to work with.
+  const otherSubscriberId = uniqueSubscribers.find((id) => id !== demoLogin.body.subscriber.id);
+  let otherInvoice = null;
+  if (otherSubscriberId) {
+    const period = '2016-11';
+    const listForCleanup = await api('/api/billing/invoices?limit=200', { token: staffToken });
+    for (const leftover of listForCleanup.body.invoices.filter((i) => i.raw_data?.period === period)) {
+      await api(`/api/billing/invoices/${leftover.id}`, { method: 'DELETE', token: staffToken });
+    }
+    await api('/api/billing/cycle/run', {
+      method: 'POST',
+      token: staffToken,
+      body: { period },
+    });
+    const list = await api('/api/billing/invoices?limit=200', { token: staffToken });
+    otherInvoice = list.body.invoices.find(
+      (i) => i.raw_data?.period === period && i.subscriber_id !== demoLogin.body.subscriber.id,
+    );
+  }
+
   if (otherInvoice) {
     const crossPay = await api('/api/portal/pay', {
       method: 'POST',

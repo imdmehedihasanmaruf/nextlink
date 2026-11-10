@@ -312,13 +312,25 @@ async function autoSuspendOverdue() {
   const invoices = await findSuspendableInvoices();
   const results = [];
 
+  // A subscriber can have several overdue invoices. The service is cut once
+  // and the customer is notified once, so the work is grouped per subscriber.
+  const bySubscriber = new Map();
   for (const invoice of invoices) {
-    const subscriberRow = await db.queryOne('SELECT * FROM subscribers WHERE id = $1', [invoice.subscriber_id]);
+    if (!bySubscriber.has(invoice.subscriber_id)) {
+      bySubscriber.set(invoice.subscriber_id, []);
+    }
+    bySubscriber.get(invoice.subscriber_id).push(invoice);
+  }
+
+  for (const [subscriberId, subscriberInvoices] of bySubscriber.entries()) {
+    const subscriberRow = await db.queryOne('SELECT * FROM subscribers WHERE id = $1', [subscriberId]);
     if (!subscriberRow) continue;
     const subscriber = readSubscriber(subscriberRow);
 
     if (subscriber.status === 'suspended' || subscriber.status === 'disconnected') {
-      results.push({ subscriberId: subscriber.id, invoiceId: invoice.id, status: 'already_suspended' });
+      for (const invoice of subscriberInvoices) {
+        results.push({ subscriberId, invoiceId: invoice.id, status: 'already_suspended' });
+      }
       continue;
     }
 
@@ -334,30 +346,44 @@ async function autoSuspendOverdue() {
         `UPDATE subscriber_billing SET status = 'suspended', updated_at = NOW() WHERE subscriber_id = $1`,
         [subscriber.id],
       );
-      await db.query(
-        `INSERT INTO billing_events (subscriber_id, invoice_id, event, amount, message)
-         VALUES ($1, $2, 'auto_suspended', $3, $4)`,
-        [subscriber.id, invoice.id, Number(invoice.amount), 'Service auto-suspended for unpaid invoice'],
-      );
+
+      // The oldest invoice represents the account; the rest are listed too.
+      const totalAmount = subscriberInvoices.reduce((sum, invoice) => sum + Number(invoice.amount || 0), 0);
+      const invoiceIds = subscriberInvoices.map((invoice) => invoice.id).join(', ');
+
+      for (const invoice of subscriberInvoices) {
+        await db.query(
+          `INSERT INTO billing_events (subscriber_id, invoice_id, event, amount, message)
+           VALUES ($1, $2, 'auto_suspended', $3, $4)`,
+          [
+            subscriber.id,
+            invoice.id,
+            Number(invoice.amount),
+            `Service auto-suspended for unpaid invoice (outstanding: ${invoiceIds})`,
+          ],
+        );
+      }
 
       await sms.sendTemplate(
         'service_suspended',
         {
           name: subscriber.name || 'Customer',
           phone: subscriber.phone,
-          amount: utils.formatAmount(invoice.amount),
-          invoiceId: invoice.id,
+          amount: utils.formatAmount(totalAmount),
+          invoiceId: invoiceIds,
         },
         { subscriberId: subscriber.id },
       );
     }
 
-    results.push({
-      subscriberId: subscriber.id,
-      invoiceId: invoice.id,
-      status: routerResult.success ? 'suspended' : 'router_error',
-      error: routerResult.error,
-    });
+    for (const invoice of subscriberInvoices) {
+      results.push({
+        subscriberId: subscriber.id,
+        invoiceId: invoice.id,
+        status: routerResult.success ? 'suspended' : 'router_error',
+        error: routerResult.error,
+      });
+    }
   }
 
   return { processed: results.length, results };

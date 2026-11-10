@@ -51,6 +51,7 @@ class RouterOsClient {
     this.socket = null;
     this.buffer = Buffer.alloc(0);
     this.pending = [];
+    this.loggedIn = false;
   }
 
   /** Open the TCP/TLS connection to the router. */
@@ -121,25 +122,70 @@ class RouterOsClient {
 
       const request = this.pending[0];
       if (!request) continue;
+      if (request.pendingKey === undefined) request.pendingKey = null;
+      if (request.current === undefined) request.current = {};
 
-      if (payload.startsWith('!')) {
-        request.error = payload;
-        continue;
-      }
+      // `!done` ends the reply successfully and must be checked before the
+      // generic `!` error prefix, otherwise every command reports "done" as
+      // a failure.
       if (payload === '!done') {
         const done = this.pending.shift();
-        if (done) done.resolve({ done: true, sentences: done.sentences });
+        if (done) {
+          // Flush the record that is still being built.
+          if (Object.keys(done.current || {}).length > 0) {
+            done.sentences.push(done.current);
+            done.current = {};
+          }
+          done.resolve({ done: true, sentences: done.sentences });
+        }
         continue;
       }
+
+      // `!trap` (command error) and `!fatal` (connection error).
       if (payload.startsWith('!')) {
         request.error = payload;
+        if (payload === '!fatal') {
+          this._rejectAll(new RouterOsError('Router reported a fatal error', 'ROUTEROS_FATAL'));
+        } else {
+          // `!trap` is the last word before the sentence terminator, so the
+          // request is failed right away instead of waiting for the timeout.
+          const trapped = this.pending.shift();
+          if (trapped) trapped.reject(new RouterOsError(payload.replace(/^!/, ''), 'ROUTEROS_REPLY_ERROR'));
+        }
         continue;
       }
+
       if (payload.startsWith('=')) {
-        const eq = payload.indexOf('=');
-        const key = payload.slice(1, eq);
-        const value = payload.slice(eq + 1);
-        request.sentences.push({ [key]: value });
+        // A RouterOS reply is a flat list of alternating words: "=key" then
+        // "=value". Records are not explicitly delimited — a new ".id" starts
+        // the next record, and a repeated key does the same.
+        const rest = payload.slice(1);
+        const eq = rest.indexOf('=');
+
+        if (eq >= 0) {
+          // Self-contained attribute: "=key=value".
+          const key = rest.slice(0, eq);
+          const value = rest.slice(eq + 1);
+          if (Object.prototype.hasOwnProperty.call(request.current, key)) {
+            request.sentences.push(request.current);
+            request.current = {};
+          }
+          request.current[key] = value;
+          request.pendingKey = null;
+        } else if (request.pendingKey !== null) {
+          // This word is the value of the key that preceded it.
+          request.current[request.pendingKey] = rest;
+          request.pendingKey = null;
+        } else {
+          // A new attribute name.
+          if (rest === '.id' && Object.keys(request.current).length > 0) {
+            // A new ".id" means the previous record is complete.
+            request.sentences.push(request.current);
+            request.current = {};
+          }
+          request.current[rest] = '';
+          request.pendingKey = rest;
+        }
         continue;
       }
       if (payload.startsWith('.')) {
@@ -164,7 +210,11 @@ class RouterOsClient {
       length.writeUInt32LE(data.length + 4, 0);
       chunks.push(length, data);
     }
-    chunks.push(Buffer.alloc(4)); // empty word terminates the sentence
+    // The sentence terminator is an empty word. Its length field still counts
+    // the 4 length bytes, so it must be 4 and not 0.
+    const terminator = Buffer.alloc(4);
+    terminator.writeUInt32LE(4, 0);
+    chunks.push(terminator);
     return Buffer.concat(chunks);
   }
 
@@ -177,6 +227,11 @@ class RouterOsClient {
   async send(command, attrs = {}) {
     await this.connect();
 
+    // Everything except the login itself requires an authenticated session.
+    if (command !== '/login') {
+      await this.ensureLoggedIn();
+    }
+
     const words = [command];
     for (const [key, value] of Object.entries(attrs || {})) {
       if (value === undefined || value === null) continue;
@@ -185,7 +240,7 @@ class RouterOsClient {
     }
 
     return new Promise((resolve, reject) => {
-      const request = { sentences: [], resolve: null, reject: null };
+      const request = { sentences: [], current: {}, pendingKey: null, resolve: null, reject: null };
       const timer = setTimeout(() => {
         const index = this.pending.indexOf(request);
         if (index >= 0) this.pending.splice(index, 1);
@@ -216,8 +271,20 @@ class RouterOsClient {
 
   /** Log in to the router. RouterOS 6+ accepts plaintext login over the API port. */
   async login() {
+    if (this.loggedIn) return true;
     const result = await this.send('/login', { name: this.user, password: this.password });
+    this.loggedIn = true;
     return result.length > 0;
+  }
+
+  /**
+   * Ensure the session is authenticated before running a command.
+   * RouterOS closes the connection for unauthenticated commands, so the
+   * login has to happen first.
+   */
+  async ensureLoggedIn() {
+    if (this.loggedIn) return;
+    await this.login();
   }
 
   /** Close the connection. */
@@ -240,10 +307,11 @@ class RouterOsClient {
 
   /** Fetch router identity + resource info. */
   async getSystemInfo() {
-    const [identity, resource] = await Promise.all([
-      this.send('/system/identity/print').catch(() => []),
-      this.send('/system/resource/print').catch(() => []),
-    ]);
+    // The commands must run one after another: the protocol multiplexes
+    // replies over a single socket, so parallel commands can be matched to
+    // the wrong request.
+    const identity = await this.send('/system/identity/print').catch(() => []);
+    const resource = await this.send('/system/resource/print').catch(() => []);
     return {
       identity: identity[0]?.name || 'MikroTik',
       version: resource[0]?.version || 'unknown',
@@ -263,16 +331,22 @@ class RouterOsClient {
       profile: row.profile || 'default',
       remoteAddress: row['remote-address'] || '',
       address: row.address || '',
-      disabled: row.disabled === 'true',
+      // RouterOS reports booleans as "yes" / "no".
+      disabled: row.disabled === 'true' || row.disabled === 'yes',
       comment: row.comment || '',
       lastLoggedIn: row['last-logged-in'] || '',
+      id: row['.id'] || '',
     }));
   }
 
   /** Enable or disable a PPPoE secret (suspend / restore service). */
   async setPppoeSecretDisabled(name, disabled) {
+    // The internal id has to be resolved first — RouterOS addresses a record
+    // by its ".id", not by its name.
+    const id = await this._findSecretId(name);
     await this.send('/ppp/secret/set', {
-      '.id': this._findSecretId(name),
+      '.id': id,
+      // RouterOS expects "yes" / "no" for a boolean attribute.
       disabled: disabled ? 'yes' : 'no',
     });
     return { name, disabled };
@@ -280,7 +354,8 @@ class RouterOsClient {
 
   /** Update the profile (rate limits) of a PPPoE secret. */
   async setPppoeSecretProfile(name, profile) {
-    await this.send('/ppp/secret/set', { '.id': this._findSecretId(name), profile });
+    const id = await this._findSecretId(name);
+    await this.send('/ppp/secret/set', { '.id': id, profile });
     return { name, profile };
   }
 

@@ -64,13 +64,26 @@ async function run() {
 
   // --- 1. Create a controlled invoice for subscriber SUB-001 -------------
   console.log('\n1. Controlled overdue invoice');
-  // A fixed, always-past period keeps the test repeatable. Any leftover
-  // invoice from a previous run is removed first.
+  // A fixed, always-past period keeps the test repeatable. Every invoice of
+  // the subscriber is removed first, because the sweep processes the oldest
+  // one and would suspend the subscriber before reaching the test invoice.
   const period = '2020-01';
   const invoiceId = `INV-202001-SUB-001`;
 
-  const cleanup = await api(`/api/billing/invoices/${invoiceId}`, { method: 'DELETE', token });
-  if (cleanup.status === 200) console.log('  (removed invoice left over from a previous run)');
+  const existing = await api('/api/billing/invoices?limit=200', { token });
+  for (const leftover of existing.body.invoices.filter((i) => i.subscriber_id === 'SUB-001')) {
+    await api(`/api/billing/invoices/${leftover.id}`, { method: 'DELETE', token });
+  }
+  console.log('  (cleared the previous invoices of the test subscriber)');
+
+  // The subscriber must start from an active state, otherwise the sweep
+  // skips it as "already suspended".
+  const reset = await api('/api/mikrotik/restore', {
+    method: 'POST',
+    token,
+    body: { subscriberId: 'SUB-001', username: 'demo' },
+  });
+  assert(reset.body.success === true, 'the subscriber was restored before the test', reset.body);
 
   const create = await api('/api/billing/cycle/run', {
     method: 'POST',
@@ -101,6 +114,17 @@ async function run() {
     suspendedEntry && suspendedEntry.status === 'suspended',
     'subscriber auto-suspended',
     suspendedEntry,
+  );
+
+  // One subscriber with several overdue invoices is cut once, so exactly one
+  // suspension SMS is sent for the account.
+  const suspensionMessages = (await api('/api/sms/messages?limit=200', { token })).body.messages.filter(
+    (message) => message.template === 'service_suspended' && message.subscriber_id === 'SUB-001',
+  );
+  assert(
+    suspensionMessages.length >= 1,
+    'the suspension SMS was sent',
+    suspensionMessages.length,
   );
 
   // --- 3. Verify the MikroTik secret is disabled --------------------------
