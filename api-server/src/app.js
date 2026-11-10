@@ -18,6 +18,10 @@ const authRoutes = require('./routes/auth.routes');
 const smsRoutes = require('./routes/sms.routes');
 const auditRoutes = require('./routes/audit.routes');
 const portalRoutes = require('./routes/portal.routes');
+const applicationRoutes = require('./routes/applications.routes');
+const coverageRoutes = require('./routes/coverage.routes');
+const ticketRoutes = require('./routes/tickets.routes');
+const settingsRoutes = require('./routes/settings.routes');
 
 function createApp() {
   const app = express();
@@ -70,6 +74,10 @@ function createApp() {
   app.use('/api/auth', authRoutes);
   app.use('/api/sms', smsRoutes);
   app.use('/api/audit', auditRoutes);
+  app.use('/api/applications', applicationRoutes);
+  app.use('/api/coverage', coverageRoutes);
+  app.use('/api/tickets', ticketRoutes);
+  app.use('/api/settings', settingsRoutes);
 
   app.use(notFound);
   app.use(errorHandler);

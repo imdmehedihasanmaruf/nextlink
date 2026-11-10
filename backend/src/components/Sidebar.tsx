@@ -5,7 +5,7 @@ import { usePathname } from 'next/navigation';
 import {
   LayoutDashboard, Users, Package, Receipt, Ticket, Wrench, BarChart3,
   Settings, Wifi, ChevronLeft, ChevronRight, X, LogOut, Shield, Globe, User,
-  Gift, Zap, Radio, Activity, Network, PackageCheck, Bot,
+  Gift, Zap, Radio, Activity, Network, PackageCheck, Bot, ClipboardList,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useAuthStore } from '@/store/authStore';
@@ -28,6 +28,7 @@ const navItems: NavItem[] = [
   { label: 'Package Orders', key: 'orders', href: '/orders', icon: <PackageCheck className="h-5 w-5" />, roles: ['super_admin', 'billing', 'support'] },
   { label: 'Billing', key: 'billing', href: '/billing', icon: <Receipt className="h-5 w-5" />, roles: ['super_admin', 'billing'] },
   { label: 'Billing Engine', key: 'billing_engine', href: '/billing-engine', icon: <Bot className="h-5 w-5" />, roles: ['super_admin', 'billing'] },
+  { label: 'Operations', key: 'operations', href: '/operations', icon: <ClipboardList className="h-5 w-5" />, roles: ['super_admin', 'billing', 'support'] },
   { label: 'Tickets', key: 'tickets', href: '/tickets', icon: <Ticket className="h-5 w-5" />, roles: ['super_admin', 'support', 'technician'] },
   { label: 'Technicians', key: 'technicians', href: '/technicians', icon: <Wrench className="h-5 w-5" />, roles: ['super_admin', 'support'] },
   { label: 'Referral Rewards', key: 'referral_rewards', href: '/referrals', icon: <Gift className="h-5 w-5" />, roles: ['super_admin', 'billing', 'support'] },

@@ -157,6 +157,87 @@ CREATE TABLE IF NOT EXISTS api_users (
 );
 
 -- ---------------------------------------------------------------------------
+-- Online connection requests (public website booking form)
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS connection_requests (
+  id                  VARCHAR(64) PRIMARY KEY,
+  full_name           VARCHAR(255) NOT NULL,
+  phone               VARCHAR(60),
+  email               VARCHAR(255),
+  id_number           VARCHAR(120),
+  id_document_path    VARCHAR(500),
+  address             TEXT,
+  package_id          VARCHAR(100),
+  package_name        VARCHAR(255),
+  ont_config          VARCHAR(120),
+  referral            VARCHAR(120),
+  status              VARCHAR(30) NOT NULL DEFAULT 'pending',
+  subscriber_id       VARCHAR(100),
+  raw_data            JSONB,
+  created_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at          TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+-- ---------------------------------------------------------------------------
+-- Coverage areas (public website location checker)
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS coverage_areas (
+  id                  VARCHAR(64) PRIMARY KEY,
+  zone                VARCHAR(120) NOT NULL,
+  district            VARCHAR(120),
+  areas               TEXT[],
+  status              VARCHAR(30) NOT NULL DEFAULT 'available',
+  lat                 NUMERIC(10,7),
+  lng                 NUMERIC(10,7),
+  notes               TEXT,
+  raw_data            JSONB,
+  created_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at          TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+-- ---------------------------------------------------------------------------
+-- Support tickets (CRM) — extends the legacy `tickets` table with the
+-- lifecycle fields the SRS requires (assignment, SLA, resolution).
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS ticket_details (
+  ticket_id           VARCHAR(100) PRIMARY KEY,
+  subscriber_id       VARCHAR(100),
+  category            VARCHAR(60),
+  description         TEXT,
+  assigned_to         VARCHAR(100),
+  assigned_to_name    VARCHAR(160),
+  sla_due_at          TIMESTAMPTZ,
+  first_response_at   TIMESTAMPTZ,
+  resolved_at         TIMESTAMPTZ,
+  closed_at           TIMESTAMPTZ,
+  raw_data            JSONB,
+  created_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at          TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+-- ---------------------------------------------------------------------------
+-- Ticket message thread (subscriber <-> helpdesk conversation)
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS ticket_messages (
+  id                  BIGSERIAL PRIMARY KEY,
+  ticket_id           VARCHAR(100) NOT NULL,
+  author_type         VARCHAR(20) NOT NULL DEFAULT 'subscriber',
+  author_id           VARCHAR(100),
+  author_name         VARCHAR(160),
+  body                TEXT NOT NULL,
+  created_at          TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+-- ---------------------------------------------------------------------------
+-- System settings for the core infrastructure (MikroTik, SMS, gateways)
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS system_settings (
+  key                 VARCHAR(100) PRIMARY KEY,
+  value               JSONB NOT NULL,
+  updated_at          TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+-- ---------------------------------------------------------------------------
 -- Indexes (IF NOT EXISTS keeps re-runs safe)
 -- ---------------------------------------------------------------------------
 CREATE INDEX IF NOT EXISTS idx_subscriber_billing_next_invoice ON subscriber_billing (next_invoice_date);
@@ -180,3 +261,15 @@ CREATE INDEX IF NOT EXISTS idx_sms_messages_status     ON sms_messages (status);
 
 CREATE INDEX IF NOT EXISTS idx_audit_log_actor   ON audit_log (actor_id);
 CREATE INDEX IF NOT EXISTS idx_audit_log_entity  ON audit_log (entity_type, entity_id);
+
+CREATE INDEX IF NOT EXISTS idx_connection_requests_status ON connection_requests (status);
+CREATE INDEX IF NOT EXISTS idx_connection_requests_phone  ON connection_requests (phone);
+
+CREATE INDEX IF NOT EXISTS idx_coverage_areas_zone     ON coverage_areas (zone);
+CREATE INDEX IF NOT EXISTS idx_coverage_areas_district ON coverage_areas (district);
+
+CREATE INDEX IF NOT EXISTS idx_ticket_details_subscriber ON ticket_details (subscriber_id);
+CREATE INDEX IF NOT EXISTS idx_ticket_details_assigned  ON ticket_details (assigned_to);
+CREATE INDEX IF NOT EXISTS idx_ticket_details_sla       ON ticket_details (sla_due_at);
+
+CREATE INDEX IF NOT EXISTS idx_ticket_messages_ticket ON ticket_messages (ticket_id);

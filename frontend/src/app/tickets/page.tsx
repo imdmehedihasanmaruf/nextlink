@@ -12,6 +12,7 @@ import { Badge } from '@/components/ui/badge'
 import { Select } from '@/components/ui/select'
 import { useTranslation, useSettingsStore } from '@/store/settingsStore'
 import { useAuthStore } from '@/store/authStore'
+import { createTicket, fetchMyTickets, type PortalTicket } from '@/lib/portalApi'
 
 interface Ticket {
   id: string
@@ -28,7 +29,7 @@ const initialTickets: Ticket[] = []
 
 export default function TicketsPage() {
   const router = useRouter()
-  const { isAuthenticated } = useAuthStore()
+  const { isAuthenticated, hasHydrated, user } = useAuthStore()
   const { t, language } = useTranslation()
   const autoSave = useSettingsStore((s) => s.autoSave)
 
@@ -39,6 +40,52 @@ export default function TicketsPage() {
   const [priority, setPriority] = useState<'low' | 'medium' | 'high' | 'critical'>('medium')
   const [description, setDescription] = useState('')
   const [submittedMessage, setSubmittedMessage] = useState('')
+  const [submitError, setSubmitError] = useState('')
+  const [isSubmitting, setIsSubmitting] = useState(false)
+  const [loading, setLoading] = useState(false)
+
+  /**
+   * Map a ticket from the API into the shape the page renders.
+   */
+  const toTicket = (row: PortalTicket): Ticket => {
+    const status = (row.status || 'open').toLowerCase()
+    return {
+      id: row.id,
+      subject: row.title || row.subject || 'Support request',
+      category: row.category || 'General',
+      priority: (row.priority || 'medium') as Ticket['priority'],
+      status:
+        status === 'resolved' || status === 'closed'
+          ? 'Resolved'
+          : status === 'in_progress'
+            ? 'In Progress'
+            : 'Open',
+      createdAt: new Date(row.created_at).toLocaleString(),
+      lastUpdate: row.assigned_to_name
+        ? `Assigned to ${row.assigned_to_name}`
+        : 'Awaiting Helpdesk assignment',
+      description: row.description || '',
+    }
+  }
+
+  /**
+   * Load the signed-in subscriber's tickets from the API.
+   */
+  const loadTickets = React.useCallback(async () => {
+    if (!isAuthenticated) return
+    setLoading(true)
+    const result = await fetchMyTickets()
+    setLoading(false)
+    if (result.success && Array.isArray(result.tickets)) {
+      setTickets(result.tickets.map(toTicket))
+    }
+  }, [isAuthenticated])
+
+  useEffect(() => {
+    if (hasHydrated && isAuthenticated) {
+      loadTickets()
+    }
+  }, [hasHydrated, isAuthenticated, loadTickets])
 
   // Auto-save load
   useEffect(() => {
@@ -63,27 +110,39 @@ export default function TicketsPage() {
     }
   }, [subject, category, priority, description, autoSave])
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     // If user is not authenticated, redirect to login page before submitting ticket
     if (!isAuthenticated) {
       router.push('/login?redirect=tickets')
       return
     }
-    if (!subject.trim() || !description.trim()) return
-
-    const newTicket: Ticket = {
-      id: `TICK-${Math.floor(1000 + Math.random() * 9000)}`,
-      subject,
-      category,
-      priority,
-      status: 'Open',
-      createdAt: 'Just now',
-      lastUpdate: 'Awaiting Helpdesk assignment',
-      description
+    if (!subject.trim() || !description.trim()) {
+      setSubmitError(
+        language === 'bn'
+          ? 'বিষয় এবং বিবরণ দুটিই পূরণ করুন।'
+          : 'Please fill in both the subject and the description.'
+      )
+      return
     }
 
-    setTickets([newTicket, ...tickets])
+    setSubmitError('')
+    setIsSubmitting(true)
+
+    const result = await createTicket({
+      subject: subject.trim(),
+      category,
+      priority,
+      description: description.trim(),
+    })
+
+    setIsSubmitting(false)
+
+    if (!result.success) {
+      setSubmitError(result.error || 'We could not submit your ticket. Please try again.')
+      return
+    }
+
     setSubject('')
     setDescription('')
     if (autoSave) {
@@ -92,6 +151,9 @@ export default function TicketsPage() {
     setShowForm(false)
     setSubmittedMessage(language === 'bn' ? 'আপনার টিকিট সফলভাবে জমা হয়েছে!' : 'Your support ticket has been submitted!')
     setTimeout(() => setSubmittedMessage(''), 4000)
+
+    // Reload the list so the ticket appears with its real id and assignment.
+    loadTickets()
   }
 
   const getPriorityBadge = (p: string) => {
@@ -216,13 +278,21 @@ export default function TicketsPage() {
                 />
               </div>
 
+              {submitError && (
+                <div className="rounded-lg border border-destructive/30 bg-destructive/10 p-3 text-sm text-destructive">
+                  {submitError}
+                </div>
+              )}
+
               <div className="flex justify-end gap-3 pt-2">
                 <Button type="button" variant="outline" onClick={() => setShowForm(false)}>
                   {language === 'bn' ? 'বাতিল' : 'Cancel'}
                 </Button>
-                <Button type="submit" className="gap-2">
+                <Button type="submit" className="gap-2" disabled={isSubmitting}>
                   <Send className="h-4 w-4" />
-                  {language === 'bn' ? 'টিকিট দাখিল করুন' : 'Submit Ticket'}
+                  {isSubmitting
+                    ? language === 'bn' ? 'পাঠানো হচ্ছে...' : 'Submitting...'
+                    : language === 'bn' ? 'টিকিট দাখিল করুন' : 'Submit Ticket'}
                 </Button>
               </div>
             </form>

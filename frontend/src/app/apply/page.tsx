@@ -15,6 +15,7 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/com
 import { useTranslation, useSettingsStore } from '@/store/settingsStore'
 import { useContentStore } from '@/store/contentStore'
 import { useAuthStore } from '@/store/authStore'
+import { submitConnectionRequest, API_BASE_URL } from '@/lib/portalApi'
 
 const schema = z.object({
   fullName: z.string().min(3, 'Full name must be at least 3 characters'),
@@ -47,6 +48,9 @@ export default function ApplyPage() {
   const { packages: livePackages, fetchContent } = useContentStore()
   const [submitted, setSubmitted] = useState(false)
   const [idPreview, setIdPreview] = useState<string | null>(null)
+  const [idDocument, setIdDocument] = useState<string | null>(null)
+  const [submitError, setSubmitError] = useState<string | null>(null)
+  const [referenceId, setReferenceId] = useState<string | null>(null)
 
   useEffect(() => {
     fetchContent()
@@ -110,8 +114,32 @@ export default function ApplyPage() {
       router.push('/login?redirect=apply')
       return
     }
-    await new Promise((r) => setTimeout(r, 1200))
+
+    setSubmitError(null)
+
+    const selectedPackage = packageList.find((p) => p.value === data.package)
+    const selectedOnt = ontOptions.find((o) => o.value === data.ontConfig)
+
+    const result = await submitConnectionRequest({
+      fullName: data.fullName,
+      phone: data.phone,
+      email: data.email || null,
+      idNumber: data.idNumber,
+      idDocumentDataUrl: idDocument,
+      address: data.address,
+      packageId: data.package,
+      packageName: selectedPackage?.label || data.package,
+      ontConfig: selectedOnt?.label || data.ontConfig,
+      referral: data.referral || null,
+    })
+
+    if (!result.success) {
+      setSubmitError(result.error || 'We could not submit your request. Please try again.')
+      return
+    }
+
     localStorage.removeItem(AUTO_SAVE_KEY)
+    setReferenceId(result.request?.id || null)
     setSubmitted(true)
   }
 
@@ -119,7 +147,11 @@ export default function ApplyPage() {
     const file = e.target.files?.[0]
     if (file) {
       const reader = new FileReader()
-      reader.onload = (ev) => setIdPreview(ev.target?.result as string)
+      reader.onload = (ev) => {
+        const dataUrl = ev.target?.result as string
+        setIdPreview(dataUrl)
+        setIdDocument(dataUrl)
+      }
       reader.readAsDataURL(file)
     }
   }
@@ -138,9 +170,14 @@ export default function ApplyPage() {
             </p>
             <div className="bg-muted rounded-lg p-4 mb-6 text-left">
               <p className="text-xs text-muted-foreground mb-1">Global Reference Order</p>
-              <p className="font-mono font-bold text-lg text-primary">NLG-{Date.now().toString().slice(-8)}</p>
+              <p className="font-mono font-bold text-lg text-primary">{referenceId || '—'}</p>
             </div>
-            <Button onClick={() => setSubmitted(false)} className="w-full font-bold">Submit Another Order</Button>
+            {submitError && (
+              <div className="mb-6 rounded-lg border border-destructive/30 bg-destructive/10 p-3 text-left text-sm text-destructive">
+                {submitError}
+              </div>
+            )}
+            <Button onClick={() => { setSubmitted(false); setSubmitError(null); setIdDocument(null); setIdPreview(null) }} className="w-full font-bold">Submit Another Order</Button>
           </CardContent>
         </Card>
       </div>

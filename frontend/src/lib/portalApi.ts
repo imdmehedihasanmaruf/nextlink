@@ -89,18 +89,29 @@ export async function subscriberLogin(username: string, password: string): Promi
 
 /**
  * Authenticated request against the Express API.
+ *
+ * @param auth  When false the request is sent without the bearer token, which
+ *              is what the public endpoints (connection requests, coverage
+ *              finder) need.
  */
-export async function portalFetch<T = any>(path: string, options: RequestInit = {}): Promise<ApiResult<T>> {
-  const headers: Record<string, string> = {
+export async function portalFetch<T = any>(
+  path: string,
+  options: RequestInit & { auth?: boolean } = {},
+): Promise<ApiResult<T>> {
+  const { auth = true, headers, ...rest } = options;
+
+  const requestHeaders: Record<string, string> = {
     'Content-Type': 'application/json',
-    ...((options.headers as Record<string, string>) || {}),
+    ...((headers as Record<string, string>) || {}),
   };
 
-  const token = getSubscriberToken();
-  if (token) headers.Authorization = `Bearer ${token}`;
+  if (auth) {
+    const token = getSubscriberToken();
+    if (token) requestHeaders.Authorization = `Bearer ${token}`;
+  }
 
   try {
-    const response = await fetch(`${API_BASE_URL}${path}`, { ...options, headers });
+    const response = await fetch(`${API_BASE_URL}${path}`, { ...rest, headers: requestHeaders });
     const payload = await response.json();
     if (!response.ok && !payload.error) {
       return { success: false, error: `Request failed (${response.status})` };
@@ -136,5 +147,135 @@ export async function payInvoice(invoiceId: string, gateway: string) {
   }>('/api/portal/pay', {
     method: 'POST',
     body: JSON.stringify({ invoiceId, gateway }),
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Public website — connection requests and coverage finder
+// ---------------------------------------------------------------------------
+
+/**
+ * Submit an online connection request (SRS 3.1).
+ * The ID document is sent as a base64 data URL and stored server side.
+ */
+export async function submitConnectionRequest(payload: {
+  fullName: string;
+  phone: string;
+  email?: string | null;
+  idNumber: string;
+  idDocumentDataUrl?: string | null;
+  address: string;
+  packageId?: string | null;
+  packageName?: string | null;
+  ontConfig?: string | null;
+  referral?: string | null;
+}) {
+  return portalFetch<{ request: { id: string; status: string; createdAt: string } }>(
+    '/api/applications',
+    { method: 'POST', body: JSON.stringify(payload), auth: false },
+  );
+}
+
+export interface CoverageArea {
+  id: string;
+  zone: string;
+  district: string | null;
+  areas: string[];
+  status: 'available' | 'unavailable' | 'planned';
+  lat: number | null;
+  lng: number | null;
+  notes: string | null;
+}
+
+/** List the coverage zones available for the location checker. */
+export async function fetchCoverageZones() {
+  return portalFetch<{
+    zones: Array<{ zone: string; area_count: number; available_count: number }>;
+  }>('/api/coverage/zones', { auth: false });
+}
+
+/** List the districts inside a zone. */
+export async function fetchCoverageDistricts(zone: string) {
+  return portalFetch<{
+    zone: string;
+    districts: Array<{ district: string; area_count: number; available_count: number }>;
+  }>(`/api/coverage/districts?zone=${encodeURIComponent(zone)}`, { auth: false });
+}
+
+/** Every coverage area, with coordinates for the map. */
+export async function fetchCoverageAreas() {
+  return portalFetch<{ areas: CoverageArea[] }>('/api/coverage/areas', { auth: false });
+}
+
+/** Check whether a specific location is covered. */
+export async function checkCoverage(zone: string, district?: string, area?: string) {
+  const params = new URLSearchParams({ zone });
+  if (district) params.set('district', district);
+  if (area) params.set('area', area);
+  return portalFetch<{
+    covered: boolean;
+    reason: string;
+    zone: string;
+    district?: string;
+    areas?: string[];
+    lat?: number | null;
+    lng?: number | null;
+  }>(`/api/coverage/check?${params.toString()}`, { auth: false });
+}
+
+// ---------------------------------------------------------------------------
+// Support tickets
+// ---------------------------------------------------------------------------
+
+export interface PortalTicket {
+  id: string;
+  title: string;
+  subject?: string;
+  status: string;
+  priority: string;
+  category?: string;
+  description?: string;
+  assigned_to_name?: string | null;
+  sla_due_at?: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+/** Create a support ticket. */
+export async function createTicket(payload: {
+  subject: string;
+  category: string;
+  priority: 'low' | 'medium' | 'high' | 'critical';
+  description: string;
+}) {
+  return portalFetch<{
+    ticket: {
+      id: string;
+      status: string;
+      priority: string;
+      assignedTo: string | null;
+      slaDueAt: string;
+      createdAt: string;
+    };
+  }>('/api/tickets', { method: 'POST', body: JSON.stringify(payload) });
+}
+
+/** List the signed-in subscriber's tickets. */
+export async function fetchMyTickets() {
+  return portalFetch<{ tickets: PortalTicket[] }>('/api/tickets');
+}
+
+/** Read one ticket with its conversation thread. */
+export async function fetchTicket(ticketId: string) {
+  return portalFetch<{ ticket: PortalTicket & { thread?: any[] } }>(
+    `/api/tickets/${encodeURIComponent(ticketId)}`
+  );
+}
+
+/** Reply to a ticket. */
+export async function replyToTicket(ticketId: string, body: string) {
+  return portalFetch<{ message: any }>(`/api/tickets/${encodeURIComponent(ticketId)}/messages`, {
+    method: 'POST',
+    body: JSON.stringify({ body }),
   });
 }

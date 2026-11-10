@@ -1,8 +1,8 @@
 'use client'
 
-import React, { useState } from 'react'
+import React, { useState, useEffect, useCallback } from 'react'
 import { useRouter } from 'next/navigation'
-import { Search, MapPin, CheckCircle, XCircle, ArrowRight, Globe } from 'lucide-react'
+import { Search, MapPin, CheckCircle, XCircle, ArrowRight, Globe, Loader2, Map as MapIcon } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
 import { Select } from '@/components/ui/select'
@@ -10,9 +10,21 @@ import { Badge } from '@/components/ui/badge'
 import { useTranslation } from '@/store/settingsStore'
 import { useContentStore } from '@/store/contentStore'
 import { useAuthStore } from '@/store/authStore'
+import {
+  fetchCoverageZones,
+  fetchCoverageDistricts,
+  fetchCoverageAreas,
+  checkCoverage,
+  type CoverageArea,
+} from '@/lib/portalApi'
 import Link from 'next/link'
 
-const globalCoverageData: Record<string, Record<string, string[]>> = {
+/**
+ * The coverage data itself now comes from the NextLink API
+ * (`/api/coverage/*`), which the admin panel maintains. These local
+ * fallbacks keep the page usable when the service is unreachable.
+ */
+const fallbackCoverageData: Record<string, Record<string, string[]>> = {
   'North America': {
     'New York Metro': ['Manhattan Financial District', 'Midtown Manhattan', 'Brooklyn DUMBO', 'Queens LIC', 'Jersey City Waterfront'],
     'Silicon Valley': ['San Jose Downtown', 'Palo Alto Stanford Corridor', 'Sunnyvale Tech Campus', 'San Francisco SoMa'],
@@ -33,7 +45,7 @@ const globalCoverageData: Record<string, Record<string, string[]>> = {
   },
 }
 
-const coveredAreas = [
+const fallbackCoveredAreas = [
   'Manhattan Financial District', 'Midtown Manhattan', 'Brooklyn DUMBO', 'San Francisco SoMa', 'San Jose Downtown',
   'City of London', 'Canary Wharf Financial Hub', 'Frankfurt Financial Centre', 'Shinjuku High-Rise District',
   'Marina Bay Financial Centre', 'Sydney CBD Financial Core', 'DIFC (Dubai Financial)'
@@ -50,22 +62,71 @@ export default function CoveragePage() {
   const [result, setResult] = useState<'available' | 'unavailable' | null>(null)
   const [loading, setLoading] = useState(false)
 
-  const regions = Object.keys(globalCoverageData)
-  const metros = region ? Object.keys(globalCoverageData[region] || {}) : []
-  const areas = region && metro ? (globalCoverageData[region]?.[metro] || []) : []
+  // Live coverage data served by the NextLink API.
+  const [zones, setZones] = useState<Array<{ zone: string; area_count: number; available_count: number }>>([])
+  const [districts, setDistricts] = useState<Array<{ district: string; area_count: number; available_count: number }>>([])
+  const [mapAreas, setMapAreas] = useState<CoverageArea[]>([])
+  const [dataOnline, setDataOnline] = useState<boolean | null>(null)
 
-  const handleCheck = () => {
+  const loadZones = useCallback(async () => {
+    const [zonesResult, areasResult] = await Promise.all([
+      fetchCoverageZones(),
+      fetchCoverageAreas(),
+    ])
+    if (zonesResult.success) {
+      setZones(zonesResult.zones || [])
+      setDataOnline(true)
+    } else {
+      setDataOnline(false)
+    }
+    if (areasResult.success) setMapAreas(areasResult.areas || [])
+  }, [])
+
+  useEffect(() => {
+    loadZones()
+  }, [loadZones])
+
+  // Load the districts of the selected zone.
+  useEffect(() => {
+    if (!region) {
+      setDistricts([])
+      return
+    }
+    let cancelled = false
+    fetchCoverageDistricts(region).then((result) => {
+      if (cancelled) return
+      if (result.success) setDistricts(result.districts || [])
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [region])
+
+  const areas = districts.length > 0
+    ? districts.flatMap((district) =>
+        mapAreas
+          .filter((entry) => entry.district === district.district)
+          .flatMap((entry) => entry.areas || [])
+      )
+    : []
+
+  const handleCheck = async () => {
     // If user is not authenticated, redirect to login page before verifying
     if (!isAuthenticated) {
       router.push('/login?redirect=coverage')
       return
     }
     if (!area) return
+
     setLoading(true)
-    setTimeout(() => {
-      setResult(coveredAreas.includes(area) ? 'available' : 'unavailable')
-      setLoading(false)
-    }, 800)
+    const check = await checkCoverage(region, metro || undefined, area)
+    setLoading(false)
+
+    if (!check.success) {
+      setResult('unavailable')
+      return
+    }
+    setResult(check.covered ? 'available' : 'unavailable')
   }
 
   return (
@@ -105,8 +166,8 @@ export default function CoveragePage() {
                   }}
                 >
                   <option value="">Select Region...</option>
-                  {regions.map((d) => (
-                    <option key={d} value={d}>{d}</option>
+                  {zones.map((z) => (
+                    <option key={z.zone} value={z.zone}>{z.zone}</option>
                   ))}
                 </Select>
               </div>
@@ -123,8 +184,8 @@ export default function CoveragePage() {
                   }}
                 >
                   <option value="">Select Metro Market...</option>
-                  {metros.map((th) => (
-                    <option key={th} value={th}>{th}</option>
+                  {districts.map((district) => (
+                    <option key={district.district} value={district.district}>{district.district}</option>
                   ))}
                 </Select>
               </div>
@@ -152,8 +213,18 @@ export default function CoveragePage() {
               disabled={isAuthenticated && (!area || loading)}
               className="w-full font-bold shadow"
             >
-              {loading ? 'Verifying Optical Ring...' : 'Verify Gigabit Fiber Coverage'}
+              {loading ? (
+                <><Loader2 className="mr-2 h-4 w-4 animate-spin" />Verifying Optical Ring...</>
+              ) : (
+                'Verify Gigabit Fiber Coverage'
+              )}
             </Button>
+
+            {dataOnline === false && (
+              <p className="mt-3 text-xs text-center text-muted-foreground">
+                The live coverage service is unreachable — the map below shows the last known network footprint.
+              </p>
+            )}
 
             {/* Result */}
             {result && (
@@ -190,6 +261,63 @@ export default function CoveragePage() {
             )}
           </CardContent>
         </Card>
+
+        {/* Coverage map */}
+        {mapAreas.length > 0 && (
+          <div className="space-y-4 mb-8">
+            <h2 className="text-xl font-bold flex items-center gap-2">
+              <MapIcon size={20} className="text-primary" /> Network Coverage Map
+            </h2>
+            <Card className="border shadow-sm overflow-hidden">
+              <CardContent className="p-0">
+                <div className="relative w-full aspect-[16/9] bg-muted/40">
+                  {/* Simple equirectangular projection of the coverage points */}
+                  <svg viewBox="0 0 360 180" className="w-full h-full" role="img" aria-label="Coverage map">
+                    <defs>
+                      <pattern id="grid" width="20" height="20" patternUnits="userSpaceOnUse">
+                        <path d="M 20 0 L 0 0 0 20" fill="none" stroke="currentColor" strokeWidth="0.3" className="text-muted-foreground/20" />
+                      </pattern>
+                    </defs>
+                    <rect width="360" height="180" fill="url(#grid)" />
+                    {mapAreas.map((entry) => {
+                      if (entry.lat === null || entry.lng === null) return null
+                      const lat = Number(entry.lat)
+                      const lng = Number(entry.lng)
+                      if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null
+                      const x = ((lng + 180) / 360) * 360
+                      const y = ((90 - lat) / 180) * 180
+                      const isAvailable = entry.status === 'available'
+                      return (
+                        <g key={entry.id}>
+                          <circle
+                            cx={x}
+                            cy={y}
+                            r={isAvailable ? 3 : 2}
+                            fill={isAvailable ? '#2563eb' : '#94a3b8'}
+                            opacity={isAvailable ? 0.9 : 0.6}
+                          />
+                          {isAvailable && (
+                            <circle cx={x} cy={y} r={6} fill="#2563eb" opacity={0.15} />
+                          )}
+                        </g>
+                      )
+                    })}
+                  </svg>
+                  <div className="absolute bottom-3 left-3 rounded-lg border bg-background/90 px-3 py-2 text-xs shadow-sm">
+                    <p className="font-semibold flex items-center gap-1.5">
+                      <span className="inline-block h-2 w-2 rounded-full bg-primary" />
+                      Active POP ({mapAreas.filter((a) => a.status === 'available').length})
+                    </p>
+                    <p className="font-semibold flex items-center gap-1.5 mt-0.5">
+                      <span className="inline-block h-2 w-2 rounded-full bg-slate-400" />
+                      Planned / Unavailable ({mapAreas.filter((a) => a.status !== 'available').length})
+                    </p>
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+          </div>
+        )}
 
         {/* Global Hubs Grid */}
         {coverageAreas && coverageAreas.length > 0 && (
