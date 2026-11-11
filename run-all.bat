@@ -4,13 +4,13 @@ chcp 65001 >nul
 rem ===================================================================
 rem  NextLink Global — start everything
 rem  1. Redis            (job queue, port 6379)
-rem  2. Express API      (Backend Engine)  http://localhost:3100 (internal)
-rem  3. Frontend         (Client Portal)   http://localhost:3000 (web + /api proxy)
+rem  2. Express API      (Backend Engine)  http://localhost:3000
+rem  3. Frontend         (Client Portal)   http://localhost:3001 (web + /api proxy)
 rem  4. Admin Panel      (Operations)      http://localhost:8000 (web + /api proxy)
 rem
-rem  Neither Next.js app exposes the Express port directly; /api/* is
-rem  proxied to the internal engine on 3100 by each app.
-rem  Folders: ./frontend  ./backend   (everything else lives inside these two)
+rem  Browsers never reach the Express port directly — /api/* is proxied
+rem  to the API on 3000 by each Next.js app.
+rem  Folders: ./frontend  ./backend     (nothing else lives at the repo root)
 rem ===================================================================
 
 set "ROOT=%~dp0"
@@ -43,16 +43,16 @@ pushd "%API%"
 call node scripts\migrate.js >nul 2>&1
 popd
 
-start "NextLink API (Internal 3100)" cmd /k "cd /d "%API%" && npm run dev"
+start "NextLink API (Port 3000)" cmd /k "cd /d "%API%" && npm run dev"
 timeout /t 2 /nobreak >nul
 
-start "NextLink Frontend (Port 3000)" cmd /k "cd /d "%FRONTEND%" && npm run dev"
+start "NextLink Frontend (Port 3001)" cmd /k "cd /d "%FRONTEND%" && npm run dev"
 start "NextLink Admin (Port 8000)" cmd /k "cd /d "%BACKEND%" && npm run dev"
 
 echo.
 echo  ------------------------------------------------------------
-echo   API          http://localhost:3100  (internal)
-echo   Frontend     http://localhost:3000
+echo   API          http://localhost:3000
+echo   Frontend     http://localhost:3001
 echo   Admin        http://localhost:8000
 echo   Redis        localhost:6379
 echo.

@@ -19,7 +19,7 @@ const corsHeaders = {
 const API_BASE_URL =
   process.env.INTERNAL_API_URL?.replace(/\/api$/, '') ||
   process.env.NEXT_PUBLIC_BILLING_API_URL?.replace(/\/api$/, '') ||
-  'http://localhost:3100';
+  'http://localhost:3000';
 
 export async function OPTIONS() {
   return NextResponse.json({}, { headers: corsHeaders });

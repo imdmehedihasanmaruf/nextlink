@@ -14,7 +14,7 @@
  * Run with:  node scripts/test-credentials.js
  */
 
-const BASE = process.env.API_BASE_URL || 'http://localhost:3100';
+const BASE = process.env.API_BASE_URL || 'http://localhost:3000';
 
 let passed = 0;
 let failed = 0;

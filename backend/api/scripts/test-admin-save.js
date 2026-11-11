@@ -14,7 +14,7 @@
  * Run with:  node scripts/test-admin-save.js
  */
 
-const BASE = process.env.API_BASE_URL || 'http://localhost:3100';
+const BASE = process.env.API_BASE_URL || 'http://localhost:3000';
 const ADMIN = process.env.ADMIN_BASE_URL || 'http://localhost:8000';
 
 let passed = 0;

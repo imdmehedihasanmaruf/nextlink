@@ -27,7 +27,7 @@ const fs = require('fs');
 
 const ROUTEROS_PORT = Number(process.env.DEMO_ROUTEROS_PORT || 18728);
 const GATEWAY_PORT = Number(process.env.DEMO_GATEWAY_PORT || 18729);
-// The demo API runs on its own port so the normal development API on 3100
+// The demo API runs on its own port so the normal development API on 3000
 // stays untouched.
 const API_PORT = Number(process.env.DEMO_API_PORT || 3002);
 

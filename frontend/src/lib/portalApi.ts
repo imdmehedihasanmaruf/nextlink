@@ -4,7 +4,7 @@
  * Client for the Express API (Backend Engine).
  *
  * In this workspace the portal is served by Next.js on port 3000 and Next
- * proxies /api/* to the internal Express service on port 3100. The default
+ * proxies /api/* to the internal Express service on port 3000. The default
  * BASE is therefore same-origin (relative) — in production you may set
  * NEXT_PUBLIC_BILLING_API_URL to an absolute URL instead, e.g. a CDN-fronted
  * domain or a separate API subdomain.

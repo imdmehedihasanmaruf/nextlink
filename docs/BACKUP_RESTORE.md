@@ -55,7 +55,7 @@ A backup that has not been restored into a scratch database is **not** verified.
 5. Re-run the verification suite:
    `cd C:\Users\User\Downloads\nextlink\backend\api; npm test`
 6. Re-start services and verify:
-   - portal login (`http://localhost:3000/login`)
+   - portal login (`http://localhost:3001/login`)
    - admin panel (`http://localhost:8000/login`)
    - `/health` on the API reports `"database":"connected"`
 7. Delete or quarantine the pre-restore dump only after sign-off.

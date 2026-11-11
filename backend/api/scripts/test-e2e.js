@@ -6,10 +6,10 @@
  *   -> settle via mock gateway -> verify service restored + SMS sent.
  *
  * Run with:  node scripts/test-e2e.js
- * The API must be running on http://localhost:3100.
+ * The API must be running on http://localhost:3000.
  */
 
-const BASE = process.env.API_BASE_URL || 'http://localhost:3100';
+const BASE = process.env.API_BASE_URL || 'http://localhost:3000';
 
 let passed = 0;
 let failed = 0;

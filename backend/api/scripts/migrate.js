@@ -3,7 +3,7 @@
 /**
  * Idempotent database migration.
  *
- * Applies api-server/schema.sql (CREATE TABLE IF NOT EXISTS only — no drops,
+ * Applies backend/api/schema.sql (CREATE TABLE IF NOT EXISTS only — no drops,
  * no destructive changes to the legacy tables) and seeds the staff accounts
  * used by the admin panel.
  */

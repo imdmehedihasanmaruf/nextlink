@@ -209,7 +209,7 @@ export default function BillingEnginePage() {
             <p className="font-semibold">API session required</p>
             <p className="text-sm text-muted-foreground max-w-md mx-auto">
               Sign out and sign in again to obtain a session token for the Billing API.
-              The Express service (port 3100, proxied at /api) must be running for this page to work.
+              The Express service (port 3000, proxied at /api) must be running for this page to work.
             </p>
             {apiOnline === false && (
               <p className="text-sm text-destructive">
@@ -259,7 +259,7 @@ export default function BillingEnginePage() {
             <p className="text-lg font-bold mt-2">
               {apiOnline === null ? 'Checking…' : apiOnline ? 'Online' : 'Offline'}
             </p>
-            <p className="text-xs text-muted-foreground mt-1">Internal engine at :3100, proxied at /api</p>
+            <p className="text-xs text-muted-foreground mt-1">Internal engine at :3000, proxied at /api</p>
           </CardContent>
         </Card>
         <Card>

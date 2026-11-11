@@ -12,7 +12,7 @@
 
 // Server-to-server verification target — the internal Express service.
 const API_BASE =
-  process.env.INTERNAL_API_URL?.replace(/\/api$/, '') || 'http://localhost:3100';
+  process.env.INTERNAL_API_URL?.replace(/\/api$/, '') || 'http://localhost:3000';
 
 export interface AdminPrincipal {
   id: string;

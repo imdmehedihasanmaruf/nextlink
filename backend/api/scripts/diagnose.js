@@ -255,7 +255,7 @@ async function run() {
     const tracked = ['.env', '.env.local'].some((name) => {
       try {
         return require('child_process')
-          .execSync(`git ls-files --error-unmatch api-server/${name}`, { cwd: path.join(__dirname, '..', '..'), stdio: 'ignore' })
+          .execSync(`git ls-files --error-unmatch backend/api/${name}`, { cwd: path.join(__dirname, '..', '..'), stdio: 'ignore' })
           .toString()
           .trim();
       } catch {

@@ -15,7 +15,7 @@ import { NextResponse } from 'next/server';
 const BILLING_API =
   process.env.INTERNAL_API_URL?.replace(/\/api$/, '') ||
   process.env.NEXT_PUBLIC_BILLING_API_URL?.replace(/\/api$/, '') ||
-  'http://localhost:3100';
+  'http://localhost:3000';
 
 export interface AuthenticatedSubscriber {
   id: string;

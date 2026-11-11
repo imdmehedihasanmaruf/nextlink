@@ -4,7 +4,7 @@
  * Client for the Express API (Backend Engine).
  *
  * The admin panel is served by Next.js on port 8000 by default, and Next
- * proxies /api/* to the internal Express service on http://localhost:3100.
+ * proxies /api/* to the internal Express service on http://localhost:3000.
  * The default BASE is therefore same-origin (relative). Set
  * NEXT_PUBLIC_BILLING_API_URL to an absolute URL only when the API is served
  * on a separate origin.

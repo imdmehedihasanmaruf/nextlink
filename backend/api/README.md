@@ -12,17 +12,17 @@ the presentation layer and talk to this service over HTTP.
 ## Quick start
 
 ```bash
-cd api-server
+cd backend/api
 npm install
 copy .env.example .env        # then fill in the real values
 npm run migrate               # creates the Phase 3 tables + seeds staff accounts
-npm run dev                   # http://localhost:3001
+npm run dev                   # http://localhost:3000
 ```
 
 Check it is alive:
 
 ```bash
-curl http://localhost:3001/health
+curl http://localhost:3000/health
 ```
 
 Run the whole platform (API + portal + admin) from the repository root with
@@ -33,7 +33,7 @@ Run the whole platform (API + portal + admin) from the repository root with
 ## Architecture
 
 ```
-api-server/
+backend/api/
 ├── src/
 │   ├── server.js                 HTTP entry point + graceful shutdown
 │   ├── app.js                    Express app, middleware, route mounting
@@ -135,7 +135,7 @@ This is how the live path stays verified without a merchant account.
 
 `npm run live:demo` starts the whole stack in live mode — the protocol
 servers plus the API with every `*_MODE` set to `live`. It runs on port 3002
-so the normal development API on 3001 keeps running.
+so the normal development API on 3000 keeps running.
 
 ```bash
 npm run live:demo        # terminal 1
@@ -265,7 +265,7 @@ the migration is safe to re-run and never touches the legacy tables:
 
 ## Tests
 
-With the API running on port 3001:
+With the API running on port 3000:
 
 ```bash
 npm test            # 148 assertions across the five suites

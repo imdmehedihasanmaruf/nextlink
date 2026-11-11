@@ -82,7 +82,7 @@ export async function GET(request: Request) {
       const API_BASE =
         process.env.INTERNAL_API_URL?.replace(/\/api$/, '') ||
         process.env.NEXT_PUBLIC_BILLING_API_URL?.replace(/\/api$/, '') ||
-        'http://localhost:3100';
+        'http://localhost:3000';
       const headerToken = request.headers.get('authorization') || '';
       const staffRes = await fetch(`${API_BASE}/api/settings/staff`, {
         headers: { Authorization: headerToken },
