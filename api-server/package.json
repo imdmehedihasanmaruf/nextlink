@@ -15,7 +15,7 @@
     "live:demo": "node scripts/run-live-demo.js",
     "mock:routeros": "node scripts/mock-routeros-server.js",
     "mock:gateways": "node scripts/mock-gateway-server.js",
-    "test": "node scripts/test-e2e.js && node scripts/test-portal.js && node scripts/test-automation.js && node scripts/test-phase12.js && node scripts/test-credentials.js && node scripts/test-settings.js && node scripts/test-activation.js && node scripts/test-referrals-boost.js",
+    "test": "node scripts/test-e2e.js && node scripts/test-portal.js && node scripts/test-automation.js && node scripts/test-phase12.js && node scripts/test-credentials.js && node scripts/test-settings.js && node scripts/test-activation.js && node scripts/test-referrals-boost.js && node scripts/verify-production-hardening.js",
     "test:admin-save": "node scripts/test-admin-save.js",
     "test:live": "node scripts/test-live-mode.js",
     "restore": "node scripts/restore-from-mirror.js",
