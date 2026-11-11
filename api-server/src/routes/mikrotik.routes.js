@@ -12,6 +12,18 @@ const mikrotik = require('../services/mikrotik');
 const router = express.Router();
 
 /**
+ * The effective router configuration and whether it is the simulator.
+ */
+async function routerState() {
+  const settings = await mikrotik.getSettings();
+  return {
+    settings,
+    simulated: settings.mode !== 'live',
+    label: settings.mode === 'live' ? 'live' : 'simulator',
+  };
+}
+
+/**
  * Resolve the MikroTik username for a subscriber (delegated to the service so
  * the resolution order stays consistent everywhere).
  */
@@ -26,11 +38,12 @@ router.get(
   requireAuth,
   requireRole(ROLES.SUPER_ADMIN, ROLES.BILLING, ROLES.SUPPORT, ROLES.TECHNICIAN),
   asyncHandler(async (req, res) => {
+    const state = await routerState();
     const result = await mikrotik.testConnection();
     res.json({
       success: true,
-      mode: mikrotik.isSimulator() ? 'simulator' : 'live',
-      configuredHost: mikrotik.isSimulator() ? 'simulator' : config.mikrotik.host,
+      mode: state.label,
+      configuredHost: state.simulated ? 'simulator' : state.settings.host,
       ...result,
     });
   }),
@@ -45,17 +58,18 @@ router.get(
   requireAuth,
   requireRole(ROLES.SUPER_ADMIN, ROLES.BILLING, ROLES.SUPPORT, ROLES.TECHNICIAN),
   asyncHandler(async (req, res) => {
-    const client = mikrotik.getClient();
+    const state = await routerState();
+    const client = await mikrotik.getClient();
     try {
       await client.connect();
       const secrets = await client.listPppoeSecrets();
       const sessions = await client.listActiveSessions();
       const queues = await client.listQueues();
-      res.json({ success: true, mode: mikrotik.isSimulator() ? 'simulator' : 'live', secrets, sessions, queues });
+      res.json({ success: true, mode: state.label, secrets, sessions, queues });
     } catch (error) {
       res.status(502).json({ success: false, error: error.message });
     } finally {
-      if (!mikrotik.isSimulator()) await client.close().catch(() => {});
+      if (!state.simulated) await client.close().catch(() => {});
     }
   }),
 );
@@ -69,7 +83,8 @@ router.get(
   requireAuth,
   requireRole(ROLES.SUPER_ADMIN, ROLES.BILLING, ROLES.SUPPORT, ROLES.TECHNICIAN),
   asyncHandler(async (req, res) => {
-    const client = mikrotik.getClient();
+    const state = await routerState();
+    const client = await mikrotik.getClient();
     try {
       await client.connect();
       const sessions = await client.listActiveSessions();
@@ -77,7 +92,7 @@ router.get(
     } catch (error) {
       res.status(502).json({ success: false, error: error.message });
     } finally {
-      if (!mikrotik.isSimulator()) await client.close().catch(() => {});
+      if (!state.simulated) await client.close().catch(() => {});
     }
   }),
 );

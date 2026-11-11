@@ -225,6 +225,60 @@ async function run() {
   assert(staff.status === 200 && staff.body.token, 'staff token obtained');
   const token = staff.body.token;
 
+  // The router, SMS and gateway settings the operator saved in the admin
+  // panel take precedence over the environment, so they are pointed at the
+  // local protocol servers for this test.
+  await api('/api/settings/system/mikrotik', {
+    method: 'PUT',
+    token,
+    body: {
+      mode: 'live',
+      host: '127.0.0.1',
+      apiPort: ROUTEROS_PORT,
+      username: 'admin',
+      password: 'nextlink',
+    },
+  });
+  await api('/api/settings/system/sms', {
+    method: 'PUT',
+    token,
+    body: {
+      mode: 'live',
+      providerUrl: `http://127.0.0.1:${GATEWAY_PORT}/api/sms/send`,
+      apiKey: 'sms-api-key',
+      senderId: 'NextLink',
+    },
+  });
+  await api('/api/settings/system/payments', {
+    method: 'PUT',
+    token,
+    body: {
+      mode: 'live',
+      bkash: {
+        appKey: 'demo-app-key',
+        appSecret: 'demo-app-secret',
+        username: 'bkash-user',
+        password: 'bkash-pass',
+        baseUrl: `http://127.0.0.1:${GATEWAY_PORT}`,
+      },
+      nagad: {
+        merchantId: 'nagad-merchant',
+        apiKey: 'nagad-api-key',
+        baseUrl: `http://127.0.0.1:${GATEWAY_PORT}`,
+      },
+      sslcommerz: {
+        storeId: 'ssl-store',
+        storePassword: 'ssl-pass',
+        baseUrl: `http://127.0.0.1:${GATEWAY_PORT}`,
+      },
+      rocket: {
+        merchantId: 'rocket-merchant',
+        apiKey: 'rocket-api-key',
+        baseUrl: `http://127.0.0.1:${GATEWAY_PORT}`,
+      },
+    },
+  });
+
   const routerStatus = await api('/api/mikrotik/status', { token });
   assert(routerStatus.status === 200, 'router status returns 200', routerStatus.body);
   assert(routerStatus.body.success === true, 'router connection succeeded', routerStatus.body);
@@ -411,6 +465,22 @@ async function run() {
   // -----------------------------------------------------------------------
   // 7. Clean up.
   // -----------------------------------------------------------------------
+  await api('/api/settings/system/mikrotik', {
+    method: 'PUT',
+    token,
+    body: { mode: 'simulator', host: '192.168.88.1', apiPort: 8728, username: 'admin' },
+  });
+  await api('/api/settings/system/sms', {
+    method: 'PUT',
+    token,
+    body: { mode: 'mock', providerUrl: '', apiKey: '', senderId: 'NextLink' },
+  });
+  await api('/api/settings/system/payments', {
+    method: 'PUT',
+    token,
+    body: { mode: 'mock' },
+  });
+
   apiProcess.kill();
   routeros.kill();
   gateway.kill();

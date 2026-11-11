@@ -8,6 +8,7 @@ const utils = require('../lib/utils');
 const { asyncHandler } = require('../middleware/error');
 const { validate } = require('../middleware/validate');
 const { requireAuth, optionalAuth, requireRole, ROLES, audit } = require('../middleware/auth');
+const { paymentLimiter } = require('../middleware/rateLimit');
 const gateways = require('../services/payments/gateways');
 const billing = require('../services/billing/engine');
 
@@ -72,6 +73,7 @@ router.get(
 router.post(
   '/initiate',
   optionalAuth,
+  paymentLimiter,
   validate({
     body: z.object({
       invoiceId: z.string().min(1, 'invoiceId is required'),

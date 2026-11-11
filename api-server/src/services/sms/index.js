@@ -73,15 +73,27 @@ async function send({ phone, body, template = null, subscriberId = null, context
     return { success: false, status: 'failed', error: 'Either body or template is required' };
   }
 
+  // The gateway the operator configured in the admin panel takes precedence
+  // over the environment file. The environment wins when it explicitly asks
+  // for live mode, so a deployment is never downgraded by a stale value.
+  const stored = (await require('../settings').getGroup('sms').catch(() => ({}))) || {};
+  const envIsLive = config.sms.mode === 'live';
+  const settings = {
+    mode: envIsLive ? 'live' : stored.mode || config.sms.mode,
+    providerUrl: stored.providerUrl || config.sms.providerUrl,
+    apiKey: stored.apiKey || config.sms.apiKey,
+    senderId: stored.senderId || config.sms.senderId,
+  };
+
   const inserted = await db.query(
     `INSERT INTO sms_messages (subscriber_id, phone, body, template, status, provider)
      VALUES ($1, $2, $3, $4, 'queued', $5)
      RETURNING id`,
-    [subscriberId, phone, message, template, config.sms.mode],
+    [subscriberId, phone, message, template, settings.mode],
   );
   const messageId = inserted.rows[0].id;
 
-  if (config.sms.mode !== 'live') {
+  if (settings.mode !== 'live') {
     await db.query(
       `UPDATE sms_messages SET status = 'sent', provider_message_id = $2, sent_at = NOW() WHERE id = $1`,
       [messageId, `MOCK-${Date.now()}-${messageId}`],
@@ -91,16 +103,16 @@ async function send({ phone, body, template = null, subscriberId = null, context
   }
 
   try {
-    const response = await fetch(config.sms.providerUrl, {
+    const response = await fetch(settings.providerUrl, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        Authorization: `Bearer ${config.sms.apiKey}`,
+        Authorization: `Bearer ${settings.apiKey}`,
       },
       body: JSON.stringify({
         to: phone,
         message,
-        sender_id: config.sms.senderId,
+        sender_id: settings.senderId,
       }),
     });
 

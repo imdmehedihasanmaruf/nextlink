@@ -6,6 +6,7 @@ const db = require('../lib/db');
 const { asyncHandler } = require('../middleware/error');
 const { validate } = require('../middleware/validate');
 const { requireAuth, optionalAuth, requireRole, requireSelfOrRole, ROLES, audit } = require('../middleware/auth');
+const { ticketLimiter } = require('../middleware/rateLimit');
 const crm = require('../services/crm');
 
 const router = express.Router();
@@ -28,6 +29,7 @@ function resolveSubscriber(req) {
 router.post(
   '/',
   optionalAuth,
+  ticketLimiter,
   validate({
     body: z.object({
       subject: z.string().min(5, 'Please describe the issue in at least 5 characters'),

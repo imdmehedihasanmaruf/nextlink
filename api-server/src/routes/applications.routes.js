@@ -7,6 +7,7 @@ const logger = require('../lib/logger');
 const { asyncHandler } = require('../middleware/error');
 const { validate } = require('../middleware/validate');
 const { requireAuth, requireRole, ROLES, audit } = require('../middleware/auth');
+const { applicationLimiter } = require('../middleware/rateLimit');
 const applications = require('../services/applications');
 
 const router = express.Router();
@@ -21,18 +22,21 @@ const router = express.Router();
  */
 router.post(
   '/',
+  applicationLimiter,
   validate({
     body: z.object({
       fullName: z.string().min(3, 'Full name must be at least 3 characters'),
       phone: z.string().min(7, 'Enter a valid phone number'),
       email: z.string().email('Enter a valid email address').optional().or(z.literal('')),
       idNumber: z.string().min(6, 'Passport or Government ID must be at least 6 characters'),
-      idDocumentDataUrl: z.string().optional().nullable(),
+      // The document is a base64 data URL, so the limit has to allow for the
+      // encoding overhead on top of the file size.
+      idDocumentDataUrl: z.string().max(9 * 1024 * 1024).optional().nullable(),
       address: z.string().min(10, 'Please provide the full installation address'),
-      packageId: z.string().optional().nullable(),
-      packageName: z.string().optional().nullable(),
-      ontConfig: z.string().optional().nullable(),
-      referral: z.string().optional().nullable(),
+      packageId: z.string().max(100).optional().nullable(),
+      packageName: z.string().max(255).optional().nullable(),
+      ontConfig: z.string().max(120).optional().nullable(),
+      referral: z.string().max(120).optional().nullable(),
     }),
   }),
   asyncHandler(async (req, res) => {

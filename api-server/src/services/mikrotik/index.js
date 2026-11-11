@@ -21,22 +21,83 @@ function getSimulator() {
   return simulatorInstance;
 }
 
-function getClient() {
-  if (config.mikrotik.mode === 'live') {
+/**
+ * The effective MikroTik configuration.
+ *
+ * The values the operator saved in the admin panel take precedence over the
+ * environment file, so the router the console shows is the router the
+ * provisioning engine talks to.
+ */
+let cachedSettings = null;
+let cachedAt = 0;
+const SETTINGS_TTL_MS = 15_000;
+
+async function getSettings() {
+  const now = Date.now();
+  if (cachedSettings && now - cachedAt < SETTINGS_TTL_MS) {
+    return cachedSettings;
+  }
+
+  let stored = {};
+  try {
+    // eslint-disable-next-line global-require
+    const settings = require('../settings');
+    // The raw group is read, not the masked one — the router needs the real
+    // password to authenticate.
+    stored = (await settings.getGroup('mikrotik')) || {};
+  } catch (error) {
+    logger.warn('mikrotik: the stored settings could not be read', {
+      message: error.message,
+    });
+  }
+
+  // The mode comes from the environment when it explicitly asks for live
+  // mode, so a deployment is never downgraded by a stale value in the
+  // database. The connection details are the ones the operator saved in the
+  // admin panel, which is where they belong — the environment provides the
+  // defaults for a fresh installation.
+  const envIsLive = config.mikrotik.mode === 'live';
+
+  cachedSettings = {
+    mode: envIsLive ? 'live' : stored.mode || config.mikrotik.mode,
+    host: stored.host || config.mikrotik.host,
+    port: Number(stored.apiPort || stored.port || config.mikrotik.port),
+    user: stored.username || stored.user || config.mikrotik.user,
+    password: stored.password || config.mikrotik.password,
+    timeoutMs: Number(stored.timeoutMs || config.mikrotik.timeoutMs),
+  };
+  cachedAt = now;
+
+  return cachedSettings;
+}
+
+/**
+ * Drop the cached settings so the next call reads them again.
+ */
+function invalidateSettings() {
+  cachedSettings = null;
+  cachedAt = 0;
+}
+
+async function getClient() {
+  const settings = await getSettings();
+
+  if (settings.mode === 'live') {
     return new RouterOsClient({
-      host: config.mikrotik.host,
-      port: config.mikrotik.port,
-      user: config.mikrotik.user,
-      password: config.mikrotik.password,
+      host: settings.host,
+      port: settings.port,
+      user: settings.user,
+      password: settings.password,
       tls: false,
-      timeoutMs: config.mikrotik.timeoutMs,
+      timeoutMs: settings.timeoutMs,
     });
   }
   return getSimulator();
 }
 
-function isSimulator() {
-  return config.mikrotik.mode !== 'live';
+async function isSimulator() {
+  const settings = await getSettings();
+  return settings.mode !== 'live';
 }
 
 /**
@@ -60,7 +121,7 @@ async function resolveUsername(subscriberId, explicitUsername) {
  * provisioned at activation time.
  */
 async function ensureSimulatorSecret(username, subscriberId) {
-  if (!isSimulator()) return;
+  if ((await getSettings()).mode === 'live') return;
   const simulator = getSimulator();
   const result = simulator.ensureSecret(username, { comment: `Subscriber ${subscriberId || ''}`.trim() });
   if (result.created) {
@@ -69,17 +130,29 @@ async function ensureSimulatorSecret(username, subscriberId) {
 }
 
 /**
+ * Close the client when it talks to a real router. The simulator holds no
+ * socket, so there is nothing to close.
+ */
+async function closeIfLive(client) {
+  const settings = await getSettings();
+  if (settings.mode === 'live') {
+    await client.close().catch(() => {});
+  }
+}
+
+/**
  * Log a router operation. Never throws — auditing must not break the flow.
  */
 async function logOperation({ subscriberId, action, status, request, response, error }) {
   try {
+    const settings = await getSettings();
     await db.query(
       `INSERT INTO mikrotik_sync_log
          (subscriber_id, router, action, status, request, response, error)
        VALUES ($1, $2, $3, $4, $5, $6, $7)`,
       [
         subscriberId || null,
-        isSimulator() ? 'simulator' : `${config.mikrotik.host}:${config.mikrotik.port}`,
+        settings.mode === 'live' ? `${settings.host}:${settings.port}` : 'simulator',
         action,
         status,
         request ? JSON.stringify(request) : null,
@@ -97,7 +170,8 @@ async function logOperation({ subscriberId, action, status, request, response, e
  */
 async function testConnection() {
   const startedAt = Date.now();
-  const client = getClient();
+  const settings = await getSettings();
+  const client = await getClient();
   try {
     await client.connect();
     const info = await client.getSystemInfo();
@@ -109,7 +183,7 @@ async function testConnection() {
     });
     return {
       success: true,
-      mode: isSimulator() ? 'simulator' : 'live',
+      mode: settings.mode === 'live' ? 'live' : 'simulator',
       latencyMs,
       router: info,
     };
@@ -117,11 +191,11 @@ async function testConnection() {
     await logOperation({ action: 'test_connection', status: 'failed', error: error.message });
     return {
       success: false,
-      mode: isSimulator() ? 'simulator' : 'live',
+      mode: settings.mode === 'live' ? 'live' : 'simulator',
       error: error.message,
     };
   } finally {
-    if (!isSimulator()) await client.close().catch(() => {});
+    await closeIfLive(client);
   }
 }
 
@@ -130,7 +204,7 @@ async function testConnection() {
  * live session so the line stops immediately.
  */
 async function suspendSubscriber({ subscriberId, username }) {
-  const client = getClient();
+  const client = await getClient();
   const request = { subscriberId, username, action: 'disable' };
   try {
     await client.connect();
@@ -153,7 +227,7 @@ async function suspendSubscriber({ subscriberId, username }) {
     await logOperation({ subscriberId, action: 'suspend', status: 'failed', request, error: error.message });
     return { success: false, error: error.message };
   } finally {
-    if (!isSimulator()) await client.close().catch(() => {});
+    await closeIfLive(client);
   }
 }
 
@@ -162,7 +236,7 @@ async function suspendSubscriber({ subscriberId, username }) {
  * reconnect (auto-reconnection on payment).
  */
 async function restoreSubscriber({ subscriberId, username, profile }) {
-  const client = getClient();
+  const client = await getClient();
   const request = { subscriberId, username, action: 'enable', profile };
   try {
     await client.connect();
@@ -180,7 +254,7 @@ async function restoreSubscriber({ subscriberId, username, profile }) {
     await logOperation({ subscriberId, action: 'restore', status: 'failed', request, error: error.message });
     return { success: false, error: error.message };
   } finally {
-    if (!isSimulator()) await client.close().catch(() => {});
+    await closeIfLive(client);
   }
 }
 
@@ -189,7 +263,7 @@ async function restoreSubscriber({ subscriberId, username, profile }) {
  * feature and by package upgrades.
  */
 async function applyBandwidthProfile({ subscriberId, username, profileName, maxLimit }) {
-  const client = getClient();
+  const client = await getClient();
   const request = { subscriberId, username, profileName, maxLimit };
   try {
     await client.connect();
@@ -204,7 +278,7 @@ async function applyBandwidthProfile({ subscriberId, username, profileName, maxL
     await logOperation({ subscriberId, action: 'apply_profile', status: 'failed', request, error: error.message });
     return { success: false, error: error.message };
   } finally {
-    if (!isSimulator()) await client.close().catch(() => {});
+    await closeIfLive(client);
   }
 }
 
@@ -212,7 +286,7 @@ async function applyBandwidthProfile({ subscriberId, username, profileName, maxL
  * Force-disconnect a live session (bandwidth reset / manual kick).
  */
 async function disconnectSession({ subscriberId, username }) {
-  const client = getClient();
+  const client = await getClient();
   try {
     await client.connect();
     const sessions = await client.listActiveSessions();
@@ -235,7 +309,7 @@ async function disconnectSession({ subscriberId, username }) {
     await logOperation({ subscriberId, action: 'disconnect_session', status: 'failed', error: error.message });
     return { success: false, error: error.message };
   } finally {
-    if (!isSimulator()) await client.close().catch(() => {});
+    await closeIfLive(client);
   }
 }
 
@@ -244,7 +318,7 @@ async function disconnectSession({ subscriberId, username }) {
  * router does not know it yet (new activation).
  */
 async function ensureSecret({ subscriberId, username, password, profile = 'default-10m', remoteAddress, address }) {
-  const client = getClient();
+  const client = await getClient();
   const request = { subscriberId, username, profile, remoteAddress, address };
   try {
     await client.connect();
@@ -276,7 +350,7 @@ async function ensureSecret({ subscriberId, username, password, profile = 'defau
     await logOperation({ subscriberId, action: 'ensure_secret', status: 'failed', request, error: error.message });
     return { success: false, error: error.message };
   } finally {
-    if (!isSimulator()) await client.close().catch(() => {});
+    await closeIfLive(client);
   }
 }
 
@@ -284,6 +358,8 @@ module.exports = {
   RouterOsError,
   isSimulator,
   getClient,
+  getSettings,
+  invalidateSettings,
   resolveUsername,
   testConnection,
   suspendSubscriber,

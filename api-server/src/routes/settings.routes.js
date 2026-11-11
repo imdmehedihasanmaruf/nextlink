@@ -40,7 +40,23 @@ router.put(
       return res.status(400).json({ success: false, error: `Unknown settings group: ${group}` });
     }
 
-    const merged = await settings.setGroup(group, req.validatedBody);
+    // A masked value means the operator did not change the secret. Sending it
+    // back would overwrite the stored credential with the mask.
+    const incoming = { ...req.validatedBody };
+    for (const [key, value] of Object.entries(incoming)) {
+      if (typeof value === 'string' && value.includes('•')) {
+        delete incoming[key];
+      }
+    }
+
+    const merged = await settings.setGroup(group, incoming);
+
+    // The MikroTik client reads the stored configuration, so its cache has to
+    // be dropped when the router settings change.
+    if (group === 'mikrotik') {
+      // eslint-disable-next-line global-require
+      require('../services/mikrotik').invalidateSettings();
+    }
 
     await audit({
       actorId: req.user.id,

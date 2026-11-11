@@ -65,6 +65,42 @@ function merge(target, source) {
 }
 
 /**
+ * The cached settings tree, so the services can read the configuration
+ * without an await.
+ */
+let cache = null;
+let cachedAt = 0;
+const CACHE_TTL_MS = 15_000;
+
+/**
+ * Read a settings group from the cache, refreshing it when it is stale.
+ * Synchronous on purpose: the payment gateway and the SMS engine are called
+ * from synchronous code paths.
+ */
+function getCachedGroup(group) {
+  const now = Date.now();
+  if (!cache || now - cachedAt > CACHE_TTL_MS) {
+    // The cache is refreshed on the next call that can await.
+    getAll()
+      .then((all) => {
+        cache = all;
+        cachedAt = Date.now();
+      })
+      .catch(() => {});
+    return cache ? cache[group] : null;
+  }
+  return cache[group] || null;
+}
+
+/**
+ * Drop the cached settings so the next read loads them again.
+ */
+function invalidateCache() {
+  cache = null;
+  cachedAt = 0;
+}
+
+/**
  * Read the whole settings tree (with defaults applied).
  */
 async function getAll() {
@@ -97,6 +133,10 @@ async function setGroup(group, value) {
      ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()`,
     [group, JSON.stringify(merged)],
   );
+
+  // The cache is refreshed so the services pick the new values right away.
+  cache = { ...(cache || {}), [group]: merged };
+  cachedAt = Date.now();
 
   logger.info('system settings updated', { group });
   return merged;
@@ -150,4 +190,14 @@ async function testMikrotik() {
   return { ...result, configured: { host: settings.host, port: settings.apiPort, mode: settings.mode } };
 }
 
-module.exports = { DEFAULTS, getAll, getGroup, setGroup, getMasked, maskSecrets, testMikrotik };
+module.exports = {
+  DEFAULTS,
+  getAll,
+  getGroup,
+  getCachedGroup,
+  invalidateCache,
+  setGroup,
+  getMasked,
+  maskSecrets,
+  testMikrotik,
+};

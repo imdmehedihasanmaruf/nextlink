@@ -608,6 +608,10 @@ function listGateways() {
 /**
  * Build the gateway used for a request. In mock mode every real gateway is
  * replaced by the mock implementation so the flow works without credentials.
+ *
+ * The credentials the operator saved in the admin panel take precedence over
+ * the environment file, so the console and the billing engine always use the
+ * same merchant account.
  */
 function resolveGateway(name) {
   const config = require('../../config');
@@ -618,10 +622,41 @@ function resolveGateway(name) {
   if (!GATEWAYS[key]) {
     throw new GatewayError(`Unknown payment gateway: ${name}`, 'UNKNOWN_GATEWAY');
   }
-  if (config.payments.mode === 'mock') {
+
+  const stored = loadStoredGatewayConfig();
+  const effective = { ...config, payments: { ...config.payments } };
+
+  const saved = stored[key];
+  if (saved && typeof saved === 'object') {
+    effective.payments[key] = { ...effective.payments[key], ...saved };
+  }
+
+  // The environment file wins when it explicitly asks for live mode: a
+  // deployment that sets PAYMENT_MODE=live must not be downgraded by a stale
+  // value in the database.
+  if (config.payments.mode === 'live') {
+    effective.payments.mode = 'live';
+  } else if (stored.mode) {
+    effective.payments.mode = stored.mode;
+  }
+
+  if (effective.payments.mode === 'mock') {
     return new MockGateway(key);
   }
-  return new GATEWAYS[key](config);
+  return new GATEWAYS[key](effective);
+}
+
+/**
+ * The stored payment gateway configuration.
+ */
+function loadStoredGatewayConfig() {
+  try {
+    // eslint-disable-next-line global-require
+    const settings = require('../settings');
+    return settings.getCachedGroup('payments') || {};
+  } catch {
+    return {};
+  }
 }
 
 module.exports = {

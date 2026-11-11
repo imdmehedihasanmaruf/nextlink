@@ -7,6 +7,7 @@ const db = require('../lib/db');
 const { asyncHandler } = require('../middleware/error');
 const { validate } = require('../middleware/validate');
 const { requireAuth, requireRole, ROLES, signToken, hashPassword, comparePassword, audit } = require('../middleware/auth');
+const { authLimiter, subscriberAuthLimiter, smsLimiter } = require('../middleware/rateLimit');
 const sms = require('../services/sms');
 const credentials = require('../services/credentials');
 
@@ -18,6 +19,7 @@ const router = express.Router();
  */
 router.post(
   '/login',
+  authLimiter,
   validate({
     body: z.object({
       email: z.string().email('A valid email is required'),
@@ -86,6 +88,7 @@ router.post(
  */
 router.post(
   '/subscriber-login',
+  subscriberAuthLimiter,
   validate({
     body: z.object({
       username: z.string().min(2, 'Username or phone is required'),

@@ -6,6 +6,7 @@ const config = require('../config');
 const { asyncHandler } = require('../middleware/error');
 const { validate } = require('../middleware/validate');
 const { requireAuth, requireRole, ROLES, audit } = require('../middleware/auth');
+const { smsLimiter } = require('../middleware/rateLimit');
 const sms = require('../services/sms');
 
 const router = express.Router();
@@ -36,6 +37,7 @@ router.post(
   '/send',
   requireAuth,
   requireRole(ROLES.SUPER_ADMIN, ROLES.BILLING, ROLES.SUPPORT),
+  smsLimiter,
   validate({
     body: z.object({
       phone: z.string().min(6, 'phone is required'),

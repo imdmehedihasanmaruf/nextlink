@@ -100,23 +100,29 @@ export default function SettingsPage() {
 
   /**
    * Persist the MikroTik configuration.
+   *
+   * The masked password that comes back from the API must not be written
+   * again — only a password the operator actually typed is sent.
    */
   const handleSaveMikrotik = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!system) return;
 
     setSaving(true);
+    const payload: Record<string, unknown> = {
+      mode: system.mikrotik.mode,
+      host: system.mikrotik.host,
+      apiPort: Number(system.mikrotik.apiPort) || 8728,
+      username: system.mikrotik.username,
+      timeoutMs: Number(system.mikrotik.timeoutMs) || 8000,
+    };
+    if (mikrotikPassword && !mikrotikPassword.includes('•')) {
+      payload.password = mikrotikPassword;
+    }
+
     const result = await apiFetch('/api/settings/system/mikrotik', {
       method: 'PUT',
-      body: JSON.stringify({
-        mode: system.mikrotik.mode,
-        host: system.mikrotik.host,
-        apiPort: Number(system.mikrotik.apiPort) || 8728,
-        username: system.mikrotik.username,
-        timeoutMs: Number(system.mikrotik.timeoutMs) || 8000,
-        // Only send the secret when it was actually changed.
-        ...(mikrotikPassword && !mikrotikPassword.includes('•') ? { password: mikrotikPassword } : {}),
-      }),
+      body: JSON.stringify(payload),
     });
     setSaving(false);
 
@@ -136,15 +142,19 @@ export default function SettingsPage() {
     if (!system) return;
 
     setSaving(true);
+    const payload: Record<string, unknown> = {
+      mode: system.sms.mode,
+      provider: system.sms.provider,
+      providerUrl: system.sms.providerUrl,
+      senderId: system.sms.senderId,
+    };
+    if (smsApiKey && !smsApiKey.includes('•')) {
+      payload.apiKey = smsApiKey;
+    }
+
     const result = await apiFetch('/api/settings/system/sms', {
       method: 'PUT',
-      body: JSON.stringify({
-        mode: system.sms.mode,
-        provider: system.sms.provider,
-        providerUrl: system.sms.providerUrl,
-        senderId: system.sms.senderId,
-        ...(smsApiKey && !smsApiKey.includes('•') ? { apiKey: smsApiKey } : {}),
-      }),
+      body: JSON.stringify(payload),
     });
     setSaving(false);
 

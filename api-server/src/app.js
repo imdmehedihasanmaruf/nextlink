@@ -10,6 +10,7 @@ const db = require('./lib/db');
 const logger = require('./lib/logger');
 const queue = require('./lib/queue');
 const { notFound, errorHandler } = require('./middleware/error');
+const { globalLimiter } = require('./middleware/rateLimit');
 
 const int = (value, fallback) => {
   const parsed = parseInt(value, 10);
@@ -48,8 +49,11 @@ function createApp() {
       credentials: true,
     }),
   );
-  app.use(express.json({ limit: '2mb' }));
+  app.use(express.json({ limit: '12mb' }));
   app.use(express.urlencoded({ extended: true }));
+  // A general limiter protects every route. The routes that create a side
+  // effect add their own, tighter limit on top of this one.
+  app.use(globalLimiter);
   if (config.env !== 'test') {
     app.use(morgan('tiny'));
   }
