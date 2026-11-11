@@ -120,6 +120,8 @@ router.get(
               status: subscriber.status,
               packageId: subscriber.package_id,
               packageName: (subscriber.raw_data || {}).packageName || '',
+              creditBalance: Number((subscriber.raw_data || {}).credit_balance || 0),
+              referralReward: Number((subscriber.raw_data || {}).referralReward || 0),
             }
           : null,
       },

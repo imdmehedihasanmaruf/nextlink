@@ -64,6 +64,19 @@ async function run() {
   const subscriberToken = subscriberLogin.body?.token;
   assert(subscriberLogin.status === 200 && subscriberToken, 'subscriber token obtained');
 
+  // === 0. Tear down any leftover boost requests so the test starts clean =====
+  const preQueue = await api('/api/admin/turbo-boost', { token: staffToken });
+  for (const row of preQueue.body.requests || []) {
+    if (row.subscriber_id !== 'SUB-001') continue;
+    if (['requested', 'in_progress'].includes(row.status)) {
+      await api(`/api/admin/turbo-boost/${row.id}/complete`, {
+        method: 'POST',
+        body: { note: 'test cleanup' },
+        token: staffToken,
+      });
+    }
+  }
+
   // === 1. Referral code lifecycle ===========================================
   console.log('\n1. The subscriber can read their referral information');
   const codeInfo = await api('/api/customer/referral', { token: subscriberToken });

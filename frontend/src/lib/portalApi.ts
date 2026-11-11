@@ -46,6 +46,8 @@ export interface PortalSummary {
     status: string;
     packageId: string;
     packageName: string;
+    creditBalance: number;
+    referralReward: number;
   } | null;
 }
 

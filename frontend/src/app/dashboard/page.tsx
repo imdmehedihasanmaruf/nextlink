@@ -879,9 +879,11 @@ export default function DashboardPage() {
                 <p className="text-lg font-bold text-emerald-600">{liveSummary.paidCount}</p>
               </div>
               <div className="rounded-lg border p-3">
-                <p className="text-xs text-muted-foreground">Next Due</p>
-                <p className="text-lg font-bold">
-                  {liveSummary.nextInvoice ? liveSummary.nextInvoice.due_date : '—'}
+                <p className="text-xs text-muted-foreground">Referral Credit</p>
+                <p className="text-lg font-bold text-emerald-600">
+                  {(liveSummary.subscriber?.creditBalance ?? 0) > 0
+                    ? `${invoiceCurrency} ${(liveSummary.subscriber!.creditBalance).toFixed(2)}`
+                    : '—'}
                 </p>
               </div>
             </div>
