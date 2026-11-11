@@ -15,6 +15,8 @@ export interface SubscriberUser {
   packageId?: string
   address: string
   joinDate: string
+  subscriptionStartedAt?: string | null
+  subscriptionCancelledAt?: string | null
   status?: string
   balance?: number
   dueDate?: string

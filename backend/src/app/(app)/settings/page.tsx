@@ -469,7 +469,7 @@ export default function SettingsPage() {
                 <Key className="h-10 w-10 mx-auto text-amber-500" />
                 <p className="font-semibold">API session required</p>
                 <p className="text-sm text-muted-foreground max-w-md mx-auto">
-                  Sign out and sign in again to obtain a session token for the NextLink Express API (port 3001).
+                  Sign out and sign in again to obtain a session token for the Billing API (proxied at /api).
                   The MikroTik and SMS credentials are stored there so the billing engine can use them.
                 </p>
                 <Button variant="outline" onClick={() => window.location.reload()} className="mt-2">

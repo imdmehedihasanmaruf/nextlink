@@ -195,6 +195,30 @@ export default function ProfilePage() {
         </CardContent>
       </Card>
 
+      {/* Subscription lifecycle */}
+      {(user.status === 'active' || user.status === 'cancelled') && (
+        <Card className="border shadow-sm">
+          <CardHeader>
+            <CardTitle className="text-lg flex items-center gap-2">
+              <Calendar size={18} className="text-primary" /> Lifecycle
+            </CardTitle>
+            <CardDescription>When you purchased and when the subscription ended.</CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-1.5 text-sm">
+            <div className="flex items-center justify-between">
+              <span className="text-muted-foreground">Subscribed on</span>
+              <span className="font-medium">{user.subscriptionStartedAt ? new Date(user.subscriptionStartedAt).toLocaleDateString() : 'Not yet'}</span>
+            </div>
+            {user.status === 'cancelled' && user.subscriptionCancelledAt && (
+              <div className="flex items-center justify-between">
+                <span className="text-muted-foreground">Cancelled on</span>
+                <span className="font-medium">{new Date(user.subscriptionCancelledAt).toLocaleDateString()}</span>
+              </div>
+            )}
+          </CardContent>
+        </Card>
+      )}
+
       {/* Edit Form */}
       <form onSubmit={handleSaveProfile} className="space-y-6">
         <Card className="border shadow-sm">

@@ -68,6 +68,12 @@ export default function UserDetailsPage() {
   // Filter users based on tabs and search
   const filteredUsers = useMemo(() => {
     return subscribers.filter((user) => {
+      // Only show actual subscribers. Registered-but-not-subscribed users and
+      // cancelled accounts are not in this list — their records are preserved
+      // for history and shown on their profile page.
+      if (user.status === 'registered') return false;
+      if (user.status === 'cancelled') return false;
+
       // Tab filter
       if (activeTab === 'active' && user.status !== 'active') return false;
       if (activeTab === 'vpn' && !user.isVpn) return false;

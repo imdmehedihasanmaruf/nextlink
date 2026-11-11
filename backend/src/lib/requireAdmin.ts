@@ -10,8 +10,9 @@
  * be read or overwritten by an anonymous caller.
  */
 
+// Server-to-server verification target — the internal Express service.
 const API_BASE =
-  process.env.NEXT_PUBLIC_BILLING_API_URL?.replace(/\/api$/, '') || 'http://localhost:3001';
+  process.env.INTERNAL_API_URL?.replace(/\/api$/, '') || 'http://localhost:3100';
 
 export interface AdminPrincipal {
   id: string;

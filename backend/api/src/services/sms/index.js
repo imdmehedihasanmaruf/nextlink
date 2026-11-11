@@ -40,6 +40,8 @@ const TEMPLATES = {
     `Dear ${ctx.name}, your support ticket ${ctx.ticketId} (${ctx.title}) is now ${ctx.status}. Thank you for contacting NextLink.`,
   maintenance_notice: (ctx) =>
     `Dear ${ctx.name}, NextLink will carry out maintenance in your area on ${ctx.date} between ${ctx.start} and ${ctx.end}. Service may be interrupted briefly.`,
+  password_reset: (ctx) =>
+    `Dear ${ctx.name}, your NextLink portal password has been reset. Your temporary password is ${ctx.password}. Sign in now and change it from Settings > Security.`,
 };
 
 /**

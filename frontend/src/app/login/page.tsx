@@ -161,9 +161,9 @@ function LoginForm() {
                   <Label htmlFor="password" className="font-semibold text-sm">
                     {language === 'bn' ? 'পাসওয়ার্ড' : 'Password'}
                   </Label>
-                  <a href="#" className="text-xs text-primary font-medium hover:underline">
+                  <Link href="/forgot-password" className="text-xs text-primary font-medium hover:underline">
                     {language === 'bn' ? 'পাসওয়ার্ড ভুলে গেছেন?' : 'Forgot password?'}
-                  </a>
+                  </Link>
                 </div>
                 <div className="relative">
                   <Input

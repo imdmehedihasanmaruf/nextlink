@@ -8,6 +8,7 @@ const { asyncHandler } = require('../middleware/error');
 const { validate } = require('../middleware/validate');
 const { requireAuth, requireRole, ROLES, signToken, hashPassword, comparePassword, audit } = require('../middleware/auth');
 const { authLimiter, subscriberAuthLimiter, smsLimiter } = require('../middleware/rateLimit');
+const logger = require('../lib/logger');
 const sms = require('../services/sms');
 const credentials = require('../services/credentials');
 
@@ -143,6 +144,143 @@ router.post(
         packageId: subscriber.package_id,
         status: subscriber.status,
       },
+    });
+  }),
+);
+
+/**
+ * POST /api/auth/forgot-password
+ * Self-service password reset for a subscriber. An SMS with a temporary
+ * password is sent to the phone number on file. The response is always the
+ * same so an attacker cannot tell which usernames are registered.
+ */
+router.post(
+  '/forgot-password',
+  subscriberAuthLimiter,
+  validate({
+    body: z.object({
+      username: z.string().min(2, 'Username or phone is required'),
+    }),
+  }),
+  asyncHandler(async (req, res) => {
+    const { username } = req.validatedBody;
+    const needle = String(username || '').trim();
+
+    const subscriber = await db.queryOne(
+      `SELECT id, name, phone FROM subscribers WHERE id = $1 OR phone = $1 OR raw_data->>'username' = $1`,
+      [needle, needle, needle],
+    );
+
+    if (subscriber) {
+      const temporaryPassword = `NL-${Math.random().toString(36).slice(2, 8).toUpperCase()}${Math.floor(Math.random() * 90 + 10)}`;
+      try {
+        await credentials.resetPassword(subscriber.id, temporaryPassword);
+      } catch (error) {
+        logger.error('forgot-password: temp password could not be stored', { error: error.message });
+      }
+      try {
+        await sms.sendTemplate(
+          'password_reset',
+          { name: subscriber.name || 'Customer', password: temporaryPassword },
+          { phone: subscriber.phone, subscriberId: subscriber.id },
+        );
+      } catch (error) {
+        logger.error('forgot-password: temp password SMS could not be sent', { error: error.message });
+      }
+      await audit({
+        actorId: subscriber.id,
+        actorRole: ROLES.SUBSCRIBER,
+        action: 'auth.password_reset_requested',
+        entityType: 'subscriber',
+        entityId: subscriber.id,
+        ip: req.ip,
+      });
+    }
+
+    return res.json({
+      success: true,
+      message: 'If the account exists, a temporary password has been sent to the registered phone number.',
+    });
+  }),
+);
+
+/**
+ * POST /api/auth/register
+ * Self-service account registration.
+ *
+ * The account is created as a registered portal user, NOT as a subscriber. It
+ * cannot access any package until a plan is purchased — that purchase is what
+ * turns the account into a subscriber and provisions the line.
+ */
+router.post(
+  '/register',
+  authLimiter,
+  validate({
+    body: z.object({
+      fullName: z.string().min(2, 'Full name is required'),
+      username: z.string().min(3, 'Username must be at least 3 characters').regex(/^[a-zA-Z0-9_]+$/, 'Username may only contain letters, numbers and underscores'),
+      email: z.string().email('A valid email address is required'),
+      phone: z.string().min(7, 'Phone is required'),
+      password: z.string().min(8, 'Password must be at least 8 characters'),
+      confirmPassword: z.string().min(8, 'Confirm password must be at least 8 characters'),
+    }),
+  }),
+  asyncHandler(async (req, res) => {
+    const { fullName, username, email, phone, password, confirmPassword } = req.validatedBody;
+    if (password !== confirmPassword) {
+      return res.status(400).json({ success: false, error: 'Passwords do not match' });
+    }
+
+    const id = `NL-${new Date().getFullYear()}-${Math.random().toString(36).slice(2, 8).toUpperCase()}`;
+    try {
+      await db.transaction(async (client) => {
+        await client.query(
+          `INSERT INTO subscribers (id, name, email, phone, status, raw_data, created_at, updated_at)
+           VALUES ($1, $2, $3, $4, 'registered', $5, NOW(), NOW())`,
+          [
+            id,
+            fullName,
+            email,
+            phone,
+            JSON.stringify({
+              source: 'self-register',
+              username,
+              address: '',
+              zone: '',
+              status: 'registered',
+              joinDate: new Date().toISOString().slice(0, 10),
+              balance: 0,
+              totalPaid: 0,
+            }),
+          ],
+        );
+        await client.query(
+          `INSERT INTO subscriber_credentials (subscriber_id, username, password_hash, raw_data)
+           VALUES ($1, $2, $3, $4)`,
+          [id, username, await hashPassword(password), JSON.stringify({ source: 'self-register' })],
+        );
+      });
+    } catch (error) {
+      if (String(error?.code) === '23505') {
+        return res.status(409).json({ success: false, error: 'That username or email is already taken.' });
+      }
+      logger.error('register: account could not be created', { error: error.message });
+      return res.status(500).json({ success: false, error: 'The account could not be created. Please try again later.' });
+    }
+
+    await audit({
+      actorId: id,
+      actorRole: 'registered',
+      action: 'auth.register',
+      entityType: 'subscriber',
+      entityId: id,
+      ip: req.ip,
+    });
+
+    return res.status(201).json({
+      success: true,
+      message: 'Account created. Sign in and purchase a package to activate your service.',
+      subscriberId: id,
     });
   }),
 );

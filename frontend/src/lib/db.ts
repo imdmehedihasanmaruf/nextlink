@@ -142,6 +142,8 @@ export async function findSubscriber(identifier: string): Promise<any | null> {
         balance: Number(raw.balance || 0),
         dueDate: raw.dueDate || '2026-02-15',
         joinDate: raw.joinDate || '2024-01-01',
+        subscriptionStartedAt: raw.subscriptionStartedAt || null,
+        subscriptionCancelledAt: raw.subscriptionCancelledAt || null,
         connectionType: raw.connectionType || 'Optical Fiber GPON',
         ipAddress: raw.ipAddress || '198.51.100.12',
         macAddress: raw.macAddress || 'AA:BB:CC:DD:EE:01',

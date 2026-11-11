@@ -80,8 +80,9 @@ export async function GET(request: Request) {
     let staffUsers: any[] | null = null;
     try {
       const API_BASE =
+        process.env.INTERNAL_API_URL?.replace(/\/api$/, '') ||
         process.env.NEXT_PUBLIC_BILLING_API_URL?.replace(/\/api$/, '') ||
-        'http://localhost:3001';
+        'http://localhost:3100';
       const headerToken = request.headers.get('authorization') || '';
       const staffRes = await fetch(`${API_BASE}/api/settings/staff`, {
         headers: { Authorization: headerToken },

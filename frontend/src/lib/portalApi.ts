@@ -1,14 +1,16 @@
 'use client';
 
 /**
- * Client for the NextLink Express API (Backend Engine, port 3001).
+ * Client for the Express API (Backend Engine).
  *
- * Used by the subscriber portal for real bill payment: invoices are read from
- * the API and payments are settled through bKash / Nagad / SSLCommerz / Rocket.
+ * In this workspace the portal is served by Next.js on port 3000 and Next
+ * proxies /api/* to the internal Express service on port 3100. The default
+ * BASE is therefore same-origin (relative) — in production you may set
+ * NEXT_PUBLIC_BILLING_API_URL to an absolute URL instead, e.g. a CDN-fronted
+ * domain or a separate API subdomain.
  */
-
 export const API_BASE_URL =
-  process.env.NEXT_PUBLIC_BILLING_API_URL?.replace(/\/api$/, '') || 'http://localhost:3001';
+  process.env.NEXT_PUBLIC_BILLING_API_URL?.replace(/\/api$/, '') || '';
 
 const TOKEN_KEY = 'nextlink-subscriber-api-token';
 

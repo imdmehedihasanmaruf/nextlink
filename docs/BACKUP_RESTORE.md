@@ -51,9 +51,9 @@ A backup that has not been restored into a scratch database is **not** verified.
    `pg_dump -h localhost -U postgres -d nextlink_db -F c -f C:\Backups\nextlink\pre-restore_$(Get-Date -Format yyyy-MM-dd_HHmm).dump`
 3. Restore:
    `pg_restore --clean --if-exists -h localhost -U postgres -d nextlink_db <backupfile>`
-4. Re-run additive migrations: `node api-server\scripts\migrate.js`
+4. Re-run additive migrations: `node backend\api\scripts\migrate.js`
 5. Re-run the verification suite:
-   `cd C:\Users\User\Downloads\nextlink\api-server; npm test`
+   `cd C:\Users\User\Downloads\nextlink\backend\api; npm test`
 6. Re-start services and verify:
    - portal login (`http://localhost:3000/login`)
    - admin panel (`http://localhost:8000/login`)

@@ -208,12 +208,12 @@ export default function BillingEnginePage() {
             <ShieldAlert className="h-10 w-10 mx-auto text-amber-500" />
             <p className="font-semibold">API session required</p>
             <p className="text-sm text-muted-foreground max-w-md mx-auto">
-              Sign out and sign in again to obtain a session token for the NextLink Express API
-              (port 3001). The API must be running for this page to work.
+              Sign out and sign in again to obtain a session token for the Billing API.
+              The Express service (port 3100, proxied at /api) must be running for this page to work.
             </p>
             {apiOnline === false && (
               <p className="text-sm text-destructive">
-                The API at http://localhost:3001 is not responding.
+                The Billing API behind /api is not responding.
               </p>
             )}
             <Button variant="outline" onClick={() => window.location.reload()} className="mt-2">
@@ -259,7 +259,7 @@ export default function BillingEnginePage() {
             <p className="text-lg font-bold mt-2">
               {apiOnline === null ? 'Checking…' : apiOnline ? 'Online' : 'Offline'}
             </p>
-            <p className="text-xs text-muted-foreground mt-1">Port 3001</p>
+            <p className="text-xs text-muted-foreground mt-1">Internal engine at :3100, proxied at /api</p>
           </CardContent>
         </Card>
         <Card>

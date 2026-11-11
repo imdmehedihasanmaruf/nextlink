@@ -1,17 +1,17 @@
 'use client';
 
 /**
- * Client for the NextLink Express API (Backend Engine, port 3001).
+ * Client for the Express API (Backend Engine).
  *
- * The admin panel keeps its existing local state for backwards compatibility;
- * this client is used for the live Phase 3 features (billing engine,
- * MikroTik provisioning, payment gateways, SMS log).
- *
- * The JWT is obtained from the API at login time and cached in localStorage.
+ * The admin panel is served by Next.js on port 8000 by default, and Next
+ * proxies /api/* to the internal Express service on http://localhost:3100.
+ * The default BASE is therefore same-origin (relative). Set
+ * NEXT_PUBLIC_BILLING_API_URL to an absolute URL only when the API is served
+ * on a separate origin.
  */
 
 export const API_BASE_URL =
-  process.env.NEXT_PUBLIC_BILLING_API_URL?.replace(/\/api$/, '') || 'http://localhost:3001';
+  process.env.NEXT_PUBLIC_BILLING_API_URL?.replace(/\/api$/, '') || '';
 
 const TOKEN_KEY = 'nextlink-api-token';
 

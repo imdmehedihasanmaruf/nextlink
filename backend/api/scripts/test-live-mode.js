@@ -28,7 +28,7 @@ const os = require('os');
 
 const ROUTEROS_PORT = 18728;
 const GATEWAY_PORT = 18729;
-const API_PORT = 13001;
+const API_PORT = 13100;
 const API_BASE = `http://localhost:${API_PORT}`;
 
 let passed = 0;

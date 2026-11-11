@@ -109,6 +109,20 @@ async function validateCustomer(customerId: string) {
       );
     }
 
+    if (status === 'cancelled') {
+      return NextResponse.json(
+        {
+          success: true,
+          eligible: false,
+          status,
+          restrictionCode: 'CANCELLED',
+          message: 'Subscription Cancelled: This account was cancelled. Purchase a new plan to create a new subscription.',
+          subscriber,
+        },
+        { headers: corsHeaders }
+      );
+    }
+
     if (status === 'disconnected') {
       return NextResponse.json(
         {

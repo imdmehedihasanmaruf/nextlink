@@ -1,4 +1,4 @@
-export type SubscriberStatus = 'active' | 'suspended' | 'pending' | 'inactive' | 'blocked' | 'deactivated';
+export type SubscriberStatus = 'active' | 'suspended' | 'pending' | 'inactive' | 'blocked' | 'deactivated' | 'registered' | 'cancelled';
 export type InvoiceStatus = 'paid' | 'unpaid' | 'overdue';
 export type TicketStatus = 'open' | 'in_progress' | 'resolved' | 'closed';
 export type TicketPriority = 'low' | 'medium' | 'high' | 'critical';

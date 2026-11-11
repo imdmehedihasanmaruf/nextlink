@@ -9,8 +9,13 @@ import { NextResponse } from 'next/server';
  * is taken from the token, never from the request body.
  */
 
+// Server-side verification target — the internal Express service. Browsers
+// reach the same logic through the Next.js /api proxy; this constant is used
+// only by the server-side routes.
 const BILLING_API =
-  process.env.NEXT_PUBLIC_BILLING_API_URL?.replace(/\/api$/, '') || 'http://localhost:3001';
+  process.env.INTERNAL_API_URL?.replace(/\/api$/, '') ||
+  process.env.NEXT_PUBLIC_BILLING_API_URL?.replace(/\/api$/, '') ||
+  'http://localhost:3100';
 
 export interface AuthenticatedSubscriber {
   id: string;

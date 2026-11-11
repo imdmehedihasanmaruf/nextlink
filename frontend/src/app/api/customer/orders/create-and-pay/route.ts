@@ -66,7 +66,7 @@ export async function POST(request: Request) {
     }
 
     const status = (subscriber.status || 'active').toLowerCase();
-    if (status !== 'active') {
+    if (status !== 'active' && status !== 'registered') {
       return NextResponse.json(
         { success: false, error: `Customer account status is ${status}. Orders cannot be processed.` },
         { status: 403, headers: corsHeaders }
@@ -207,6 +207,34 @@ export async function POST(request: Request) {
 
     // 7. Persist to PostgreSQL orders & invoices, and update subscriber
     await createOrderRecord(newOrder);
+
+    // 8. A registered (not-yet-subscribed) account becomes a subscriber the
+    // moment their first package purchase completes. The activation timestamp is
+    // kept in raw_data so the profile page can show it. If the user later cancels,
+    // those timestamps are also preserved on the profile.
+    if (status === 'registered') {
+      try {
+        const pool = (await import('@/lib/db')).getDbPool();
+        if (pool) {
+          await pool.query(
+            `UPDATE subscribers
+                SET status = 'active',
+                    raw_data = COALESCE(raw_data, '{}'::jsonb) || jsonb_build_object(
+                      'status', 'active',
+                      'packageId', $2,
+                      'packageName', $3,
+                      'subscriptionStartedAt', NOW()::text,
+                      'joinedAt', NOW()::text
+                    ),
+                    updated_at = NOW()
+              WHERE id = $1`,
+            [subscriber.id, targetPkg.id, targetPkg.name],
+          );
+        }
+      } catch (error) {
+        console.error('Failed to activate account after purchase:', error);
+      }
+    }
 
     return NextResponse.json(
       {

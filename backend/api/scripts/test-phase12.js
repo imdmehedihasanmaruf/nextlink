@@ -13,7 +13,7 @@
  * Run with:  node scripts/test-phase12.js
  */
 
-const BASE = process.env.API_BASE_URL || 'http://localhost:3001';
+const BASE = process.env.API_BASE_URL || 'http://localhost:3100';
 
 let passed = 0;
 let failed = 0;

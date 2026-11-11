@@ -1,53 +1,59 @@
 @echo off
-REM ===================================================================
-REM NextLink ISP - start all services
-REM   1. Redis          (job queue, port 6379)
-REM   2. Express API   (Backend Engine)  http://localhost:3001
-REM   3. Frontend      (Client Portal)   http://localhost:3000
-REM   4. Admin Panel   (Operations)      http://localhost:8000
-REM ===================================================================
 setlocal
+chcp 65001 >nul
+rem ===================================================================
+rem  NextLink Global — start everything
+rem  1. Redis            (job queue, port 6379)
+rem  2. Express API      (Backend Engine)  http://localhost:3100 (internal)
+rem  3. Frontend         (Client Portal)   http://localhost:3000 (web + /api proxy)
+rem  4. Admin Panel      (Operations)      http://localhost:8000 (web + /api proxy)
+rem
+rem  Neither Next.js app exposes the Express port directly; /api/* is
+rem  proxied to the internal engine on 3100 by each app.
+rem  Folders: ./frontend  ./backend   (everything else lives inside these two)
+rem ===================================================================
 
-cd /d "%~dp0"
+set "ROOT=%~dp0"
+set "FRONTEND=%ROOT%frontend"
+set "BACKEND=%ROOT%backend"
+set "API=%BACKEND%\api"
+set "REDIS_EXE=%API%\tools\redis\redis-server.exe"
 
 echo.
-echo  Starting NextLink ISP platform...
+echo  Starting NextLink Global platform...
 echo.
 
-REM --- Redis ---------------------------------------------------------------
-if not exist "api-server\tools\redis\redis-server.exe" (
-  echo  [redis] downloading...
-  call "api-server\scripts\start-redis.bat"
+if not exist "%REDIS_EXE%" (
+  echo  [redis] not found — starting the API without the queue
 ) else (
   echo  [redis] starting...
-  start "NextLink Redis" /min "api-server\tools\redis\redis-server.exe" --port 6379 --save "" --appendonly no
+  start "NextLink Redis" /min "%REDIS_EXE%" --port 6379 --save "" --appendonly no
   timeout /t 2 /nobreak >nul
 )
 
-REM --- Express API ----------------------------------------------------------
-if not exist "api-server\node_modules" (
+if not exist "%API%\node_modules" (
   echo  [api] installing dependencies...
-  pushd api-server
+  pushd "%API%"
   call npm install
   popd
 )
 
 echo  [api] applying database migrations...
-pushd api-server
+pushd "%API%"
 call node scripts\migrate.js >nul 2>&1
 popd
 
-start "NextLink API (Port 3001)" cmd /k "cd /d "%~dp0api-server" && npm run dev"
+start "NextLink API (Internal 3100)" cmd /k "cd /d "%API%" && npm run dev"
 timeout /t 2 /nobreak >nul
 
-start "NextLink Frontend (Port 3000)" cmd /k "cd /d "%~dp0frontend" && npm run dev"
-start "NextLink Admin Panel (Port 8000)" cmd /k "cd /d "%~dp0backend" && npm run dev"
+start "NextLink Frontend (Port 3000)" cmd /k "cd /d "%FRONTEND%" && npm run dev"
+start "NextLink Admin (Port 8000)" cmd /k "cd /d "%BACKEND%" && npm run dev"
 
 echo.
 echo  ------------------------------------------------------------
-echo   API          http://localhost:3001
+echo   API          http://localhost:3100  (internal)
 echo   Frontend     http://localhost:3000
-echo   Admin Panel  http://localhost:8000
+echo   Admin        http://localhost:8000
 echo   Redis        localhost:6379
 echo.
 echo   Admin logins:
@@ -58,3 +64,4 @@ echo     field@nextlink.com   / field123    (Field Technician)
 echo  ------------------------------------------------------------
 echo.
 endlocal
+pause

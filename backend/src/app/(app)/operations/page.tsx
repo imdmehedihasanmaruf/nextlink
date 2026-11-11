@@ -150,7 +150,7 @@ export default function OperationsPage() {
     }
     try {
       const response = await fetch(
-        `${process.env.NEXT_PUBLIC_BILLING_API_URL || 'http://localhost:3001'}/api/applications/${id}/document`,
+        `/api/applications/${id}/document`,
         { headers: { Authorization: `Bearer ${token}` } },
       );
       if (!response.ok) {
@@ -265,7 +265,7 @@ export default function OperationsPage() {
             <AlertTriangle className="h-10 w-10 mx-auto text-amber-500" />
             <p className="font-semibold">API session required</p>
             <p className="text-sm text-muted-foreground max-w-md mx-auto">
-              Sign out and sign in again to obtain a session token for the NextLink Express API (port 3001).
+              Sign out and sign in again to obtain a session token for the Billing API (proxied at /api).
             </p>
             <Button variant="outline" onClick={() => window.location.reload()} className="mt-2">
               <RefreshCw className="h-4 w-4 mr-2" />

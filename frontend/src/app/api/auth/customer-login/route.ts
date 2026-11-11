@@ -15,8 +15,11 @@ const corsHeaders = {
  * The API owns password verification (bcrypt) and the plain-text to hash
  * migration, so the portal and the API can never disagree on credentials.
  */
+// Server-side route — this calls the internal Express service directly.
 const API_BASE_URL =
-  process.env.NEXT_PUBLIC_BILLING_API_URL?.replace(/\/api$/, '') || 'http://localhost:3001';
+  process.env.INTERNAL_API_URL?.replace(/\/api$/, '') ||
+  process.env.NEXT_PUBLIC_BILLING_API_URL?.replace(/\/api$/, '') ||
+  'http://localhost:3100';
 
 export async function OPTIONS() {
   return NextResponse.json({}, { headers: corsHeaders });
@@ -100,6 +103,8 @@ export async function POST(request: Request) {
       packageId: subscriber.packageId,
       address: subscriber.address,
       joinDate: subscriber.joinDate,
+      subscriptionStartedAt: subscriber.subscriptionStartedAt,
+      subscriptionCancelledAt: subscriber.subscriptionCancelledAt,
       status: subscriber.status,
       balance: subscriber.balance,
       dueDate: subscriber.dueDate,

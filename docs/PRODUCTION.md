@@ -33,7 +33,7 @@ starting a silently-fake billing system.
 Use `.env.production` as the starting point:
 
 ```powershell
-cd api-server
+cd backend\api
 Copy-Item .env.production.example .env
 # edit .env — fill in real credentials
 npm start   # runs scripts/start-production.js which pins NODE_ENV=production
@@ -57,7 +57,7 @@ npm start   # runs scripts/start-production.js which pins NODE_ENV=production
 
 ## 4. First-run checklist
 
-1. Apply the additive schema: `node api-server/scripts/migrate.js`
+1. Apply the additive schema: `node backend\api\scripts\migrate.js`
 2. Seed the staff accounts: included in `migrate.js`. **Rotate the seeded passwords before going live.**
 3. Verify the live MikroTik connection from the admin: **Settings → MikroTik → Test Router Connection**. It must return `Online` before saving live mode.
 4. Send a **single** live test SMS from the admin to a real phone. Confirm delivery on the handset before releasing billing.
