@@ -57,6 +57,7 @@ interface Overview {
     unpaid_amount: string;
     paid_count: string;
     paid_amount: string;
+    total_amount: string;
     total_count: string;
   };
   overdueCount: number;
@@ -302,7 +303,7 @@ export default function BillingEnginePage() {
         <Card>
           <CardContent className="p-5">
             <p className="text-xs font-medium text-muted-foreground">Total Invoiced</p>
-            <p className="text-2xl font-bold mt-2">{money(overview?.totals?.unpaid_amount)}</p>
+            <p className="text-2xl font-bold mt-2">{money(overview?.totals?.total_amount)}</p>
             <p className="text-xs text-muted-foreground mt-1">{overview?.totals?.total_count || 0} invoices</p>
           </CardContent>
         </Card>

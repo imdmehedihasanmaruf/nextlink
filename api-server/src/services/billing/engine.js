@@ -555,6 +555,7 @@ async function getOverview() {
        COALESCE(SUM(amount) FILTER (WHERE status = 'unpaid'), 0)           AS unpaid_amount,
        COUNT(*) FILTER (WHERE status = 'paid')                            AS paid_count,
        COALESCE(SUM(amount) FILTER (WHERE status = 'paid'), 0)             AS paid_amount,
+       COALESCE(SUM(amount), 0)                                            AS total_amount,
        COUNT(*)                                                             AS total_count
      FROM invoices`,
   );
