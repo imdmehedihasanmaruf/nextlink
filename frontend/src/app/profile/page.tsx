@@ -135,9 +135,22 @@ export default function ProfilePage() {
             Manage your personal contact details, installation address, and subscription circuit.
           </p>
         </div>
-        <Badge className="bg-emerald-500/10 text-emerald-600 border-emerald-500/30 px-3 py-1 text-xs font-bold">
-          Active Subscription
-        </Badge>
+        {(() => {
+          const s = String(user.status || '').toLowerCase()
+          const variants: Record<string, { label: string; cls: string }> = {
+            active:      { label: 'Active Subscription', cls: 'bg-emerald-500/10 text-emerald-600 border-emerald-500/30' },
+            suspended:   { label: 'Line Suspended', cls: 'bg-amber-500/10 text-amber-600 border-amber-500/30' },
+            blocked:     { label: 'Line Blocked', cls: 'bg-rose-500/10 text-rose-600 border-rose-500/30' },
+            pending:     { label: 'Pending Activation', cls: 'bg-blue-500/10 text-blue-600 border-blue-500/30' },
+            deactivated: { label: 'Deactivated', cls: 'bg-muted text-muted-foreground' },
+          }
+          const v = variants[s] || { label: s ? s.replace(/_/g, ' ') : 'Account On File', cls: 'bg-muted text-muted-foreground' }
+          return (
+            <Badge className={`${v.cls} px-3 py-1 text-xs font-bold capitalize`}>
+              {v.label}
+            </Badge>
+          )
+        })()}
       </div>
 
       {savedSuccess && (
@@ -174,7 +187,7 @@ export default function ProfilePage() {
                   <Calendar size={12} /> Member Since {user.joinDate}
                 </Badge>
                 <Badge variant="outline" className="gap-1 text-xs">
-                  <Wifi size={12} /> 100% Optical Gigabit
+                  <Wifi size={12} /> Fiber GPON
                 </Badge>
               </div>
             </div>

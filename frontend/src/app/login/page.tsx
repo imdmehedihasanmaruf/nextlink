@@ -208,13 +208,13 @@ function LoginForm() {
           </CardContent>
         </Card>
 
-        {/* Register Prompt */}
+        {/* Apply Prompt */}
         <Card className="border shadow-md bg-card/60 backdrop-blur-sm text-center p-4">
-          <Link 
-            href="/register" 
+          <Link
+            href="/register"
             className="text-primary font-bold hover:underline inline-flex items-center justify-center gap-1.5 text-sm"
           >
-            <span>{language === 'bn' ? 'রেজিস্ট্রেশন করুন' : 'Register Now'}</span>
+            <span>{language === 'bn' ? 'নতুন কানেকশনের জন্য আবেদন করুন' : 'Apply for a New Connection'}</span>
             <UserPlus size={15} />
           </Link>
         </Card>

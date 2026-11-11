@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import { BarChart, Bar, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend } from 'recharts';
-import { Download, TrendingUp, Users, DollarSign, Activity, Trash2, RotateCcw } from 'lucide-react';
+import { Download, TrendingUp, Users, DollarSign, Activity, RotateCcw } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -10,7 +10,7 @@ import { useAdminDataStore } from '@/store/adminDataStore';
 
 export default function ReportsPage() {
   const t = (en: string, _bn?: string) => en;
-  const { invoices, subscribers, clearCollection, fetchData } = useAdminDataStore();
+  const { invoices, subscribers, fetchData } = useAdminDataStore();
   const [reportFilter, setReportFilter] = useState<'all' | 'recent'>('all');
 
   useEffect(() => {
@@ -156,16 +156,11 @@ export default function ReportsPage() {
               <Button
                 size="sm"
                 variant="ghost"
-                onClick={async () => {
-                  if (confirm('Delete subscriber report dataset?')) {
-                    await clearCollection('subscribers');
-                    toast.success('Subscriber analytics deleted');
-                  }
-                }}
-                className="h-8 gap-1 text-xs text-rose-500 hover:text-rose-600 hover:bg-rose-50"
+                onClick={handleExport}
+                className="h-8 gap-1 text-xs text-primary hover:text-primary hover:bg-primary/5"
               >
-                <Trash2 className="h-3.5 w-3.5" />
-                Delete
+                <Download className="h-3.5 w-3.5" />
+                Export CSV
               </Button>
             )}
           </CardHeader>
