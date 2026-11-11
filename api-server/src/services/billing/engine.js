@@ -104,13 +104,20 @@ async function getPackagePrice(packageId) {
  * Generate one invoice for a subscriber for a given period.
  *
  * Idempotent: re-running for the same period will not create duplicates.
+ *
+ * @param {number} [lateFee]  The fixed late fee (USD) carried by this invoice —
+ *                            added when a previous bill stayed unpaid past the
+ *                            grace days. The caller decides when to levy it.
  */
-async function generateInvoice({ subscriber, period, amount, dueDate }) {
+async function generateInvoice({ subscriber, period, amount, dueDate, lateFee = 0 }) {
   const invoiceId = `${INVOICE_PREFIX}-${period.replace('-', '')}-${subscriber.id}`;
   const existing = await db.queryOne('SELECT * FROM invoices WHERE id = $1', [invoiceId]);
   if (existing) {
     return { invoice: existing, created: false };
   }
+
+  const invoiceAmount = Number(amount) + Number(lateFee);
+  const subscriptionAmount = Number(amount);
 
   const rawData = {
     period,
@@ -119,7 +126,7 @@ async function generateInvoice({ subscriber, period, amount, dueDate }) {
     subscriberPhone: subscriber.phone,
     packageId: subscriber.packageId,
     packageName: subscriber.packageName,
-    amount: Number(amount),
+    amount: invoiceAmount,
     currency: config.billing.currency,
     dueDate,
     // The legacy admin store rewrites the whole invoices table from
@@ -128,7 +135,9 @@ async function generateInvoice({ subscriber, period, amount, dueDate }) {
     status: 'unpaid',
     generatedBy: 'billing-engine',
     generatedAt: utils.nowIso(),
-    lateFee: 0,
+    lateFee: Number(lateFee),
+    lateFeeReason: lateFee > 0 ? 'Previous bill unpaid past the grace days' : null,
+    subscriptionAmount,
     mikrotikUsername: subscriber.pppoeUsername || '',
   };
 
@@ -152,14 +161,14 @@ async function generateInvoice({ subscriber, period, amount, dueDate }) {
         raw_data = invoices.raw_data || (EXCLUDED.raw_data - 'status'),
         updated_at = NOW()
      RETURNING *`,
-    [invoiceId, subscriber.id, Number(amount), dueDate, JSON.stringify(rawData)],
+    [invoiceId, subscriber.id, invoiceAmount, dueDate, JSON.stringify(rawData)],
   );
 
   if (inserted && !existing) {
     await db.query(
       `INSERT INTO billing_events (subscriber_id, invoice_id, event, amount, message)
        VALUES ($1, $2, 'invoice_generated', $3, $4)`,
-      [subscriber.id, invoiceId, Number(amount), `Invoice generated for ${period}`],
+      [subscriber.id, invoiceId, invoiceAmount, `Invoice generated for ${period}`],
     );
     await db.query(
       `UPDATE subscriber_billing SET last_invoice_id = $2, updated_at = NOW() WHERE subscriber_id = $1`,
@@ -277,9 +286,24 @@ async function executeCycle({ period, dryRun, cycleId, startedAt }) {
       continue;
     }
 
+    // A late fee is carried onto this bill when the previous bill(s) stayed
+    // unpaid past the grace days. The fee is taken from the configured amount
+    // (default $5) and only once per invoice.
+    const overdue = await db.queryOne(
+      `SELECT COUNT(*)::int AS count
+         FROM invoices
+        WHERE subscriber_id = $1
+          AND status = 'unpaid'
+          AND due_date <> ''
+          AND due_date::date < (NOW() - ($2 || ' days')::interval)::date`,
+      [subscriber.id, config.billing.lateGraceDays],
+    );
+    const lateFee =
+      Number(overdue?.count || 0) > 0 ? Number(config.billing.lateFee || 0) : 0;
+
     if (dryRun) {
       invoiceCount += 1;
-      totalAmount += price;
+      totalAmount += price + lateFee;
       continue;
     }
 
@@ -290,6 +314,7 @@ async function executeCycle({ period, dryRun, cycleId, startedAt }) {
         period,
         amount: price,
         dueDate,
+        lateFee,
       });
 
       // Count every invoice covered by this cycle, but only notify for the

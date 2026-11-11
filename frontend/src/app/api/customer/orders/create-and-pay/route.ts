@@ -134,12 +134,18 @@ export async function POST(request: Request) {
     const currentDaily = currentPrice / BILLING_DAYS;
     const targetDaily = targetPrice / BILLING_DAYS;
 
-    // The credit for the unused days of the old plan.
-    const proratedAdjustment = -Number((currentDaily * daysRemaining).toFixed(2));
-    const installationFee = 0;
+    // An additional line carries a fixed $18 installation fee; an upgrade has
+    // the unused days of the old plan credited instead.
+    const ADDITIONAL_LINE_INSTALLATION_FEE = 18;
+    const proratedAdjustment =
+      type === 'UPGRADE' ? -Number((currentDaily * daysRemaining).toFixed(2)) : 0;
+    const installationFee = type === 'UPGRADE' ? 0 : ADDITIONAL_LINE_INSTALLATION_FEE;
     const taxes = 0;
     const totalPayable = Number(
-      Math.max(0, targetDaily * daysRemaining + installationFee + taxes + proratedAdjustment).toFixed(2)
+      Math.max(
+        installationFee,
+        targetDaily * daysRemaining + installationFee + taxes + proratedAdjustment,
+      ).toFixed(2),
     );
 
     // 6. Generate Server Verified Tokens

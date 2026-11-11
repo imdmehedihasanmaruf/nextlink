@@ -184,8 +184,8 @@ async function run() {
     SMS_SENDER_ID: 'NextLink',
     REDIS_ENABLED: 'false',
     JWT_SECRET: 'live-mode-test-secret',
-    BILLING_CURRENCY: 'BDT',
-    BILLING_CURRENCY_SYMBOL: '৳',
+    BILLING_CURRENCY: 'USD',
+    BILLING_CURRENCY_SYMBOL: '$',
   };
 
   const apiProcess = spawn(process.execPath, [path.join(__dirname, '..', 'src', 'server.js')], {

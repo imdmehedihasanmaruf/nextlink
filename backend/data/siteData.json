@@ -40,7 +40,7 @@
       "name": "Essential",
       "speed": 100,
       "uploadSpeed": 100,
-      "price": 0,
+      "price": 9.99,
       "bdixSpeed": 1000,
       "popular": false,
       "badge": "Starter Symmetrical",
@@ -72,7 +72,10 @@
       "hardwareReady": "Gigabit ONU",
       "ddosProtection": "Basic",
       "bgpFailover": "—",
-      "cirGuarantee": "—"
+      "cirGuarantee": "—",
+      "duration": 30,
+      "downloadSpeed": 100,
+      "subscriberCount": 85
     },
     {
       "id": "PKG-002",
@@ -111,14 +114,17 @@
       "hardwareReady": "Wi-Fi 6 ONU",
       "ddosProtection": "Basic",
       "bgpFailover": "—",
-      "cirGuarantee": "—"
+      "cirGuarantee": "—",
+      "duration": 30,
+      "downloadSpeed": 200,
+      "subscriberCount": 142
     },
     {
       "id": "PKG-003",
       "name": "Advanced",
       "speed": 300,
       "uploadSpeed": 300,
-      "price": 39.99,
+      "price": 49.99,
       "bdixSpeed": 1000,
       "popular": false,
       "badge": "Remote Work Ready",
@@ -150,14 +156,17 @@
       "hardwareReady": "Wi-Fi 6 ONU",
       "ddosProtection": "Basic",
       "bgpFailover": "—",
-      "cirGuarantee": "—"
+      "cirGuarantee": "—",
+      "duration": 30,
+      "downloadSpeed": 300,
+      "subscriberCount": 93
     },
     {
       "id": "PKG-004",
       "name": "Premium",
       "speed": 500,
       "uploadSpeed": 500,
-      "price": 49.99,
+      "price": 99.99,
       "bdixSpeed": 1000,
       "popular": true,
       "badge": "MOST POPULAR",
@@ -191,14 +200,17 @@
       "hardwareReady": "Wi-Fi 6 Mesh",
       "ddosProtection": "Medium",
       "bgpFailover": "—",
-      "cirGuarantee": "—"
+      "cirGuarantee": "—",
+      "duration": 30,
+      "downloadSpeed": 500,
+      "subscriberCount": 215
     },
     {
       "id": "PKG-005",
       "name": "Ultra",
       "speed": 750,
       "uploadSpeed": 750,
-      "price": 69.99,
+      "price": 249.99,
       "bdixSpeed": 1000,
       "popular": false,
       "badge": "Esports Choice",
@@ -233,14 +245,17 @@
       "hardwareReady": "Esports Router",
       "ddosProtection": "Medium",
       "bgpFailover": "—",
-      "cirGuarantee": "—"
+      "cirGuarantee": "—",
+      "duration": 30,
+      "downloadSpeed": 750,
+      "subscriberCount": 68
     },
     {
       "id": "PKG-006",
       "name": "Gigabit",
       "speed": 1000,
       "uploadSpeed": 1000,
-      "price": 89.99,
+      "price": 499.99,
       "bdixSpeed": 5000,
       "popular": false,
       "badge": "1 Gbps True Symmetrical",
@@ -274,14 +289,17 @@
       "hardwareReady": "Wi-Fi 6E Tri-Band",
       "ddosProtection": "Medium",
       "bgpFailover": "—",
-      "cirGuarantee": "—"
+      "cirGuarantee": "—",
+      "duration": 30,
+      "downloadSpeed": 1000,
+      "subscriberCount": 47
     },
     {
       "id": "PKG-007",
       "name": "Multi-Gig",
       "speed": 2000,
       "uploadSpeed": 2000,
-      "price": 149.99,
+      "price": 999.99,
       "bdixSpeed": 5000,
       "popular": false,
       "badge": "2 Gbps Multi-Gigabit",
@@ -316,14 +334,17 @@
       "hardwareReady": "2.5G Port ONU",
       "ddosProtection": "✓ (Clean Pipe)",
       "bgpFailover": "Add-on",
-      "cirGuarantee": "Add-on"
+      "cirGuarantee": "Add-on",
+      "duration": 30,
+      "downloadSpeed": 2000,
+      "subscriberCount": 24
     },
     {
       "id": "PKG-008",
       "name": "Business Pro",
       "speed": 5000,
       "uploadSpeed": 5000,
-      "price": 299.99,
+      "price": 2299.99,
       "bdixSpeed": 5000,
       "popular": false,
       "badge": "5 Gbps Enterprise Grade",
@@ -359,7 +380,10 @@
       "hardwareReady": "10G SFP+ ONU",
       "ddosProtection": "✓ (Multi-Tbps)",
       "bgpFailover": "Included (99.99%)",
-      "cirGuarantee": "Included (100% CIR)"
+      "cirGuarantee": "Included (100% CIR)",
+      "duration": 30,
+      "downloadSpeed": 5000,
+      "subscriberCount": 12
     }
   ],
   "ctaBanner": {

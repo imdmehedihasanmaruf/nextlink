@@ -150,7 +150,7 @@ const server = http.createServer(async (request, response) => {
       `<!doctype html><html><body style="font-family:system-ui;padding:40px">
        <h2>bKash checkout</h2>
        <p>Invoice: ${record ? record.merchantInvoiceNumber : paymentId}</p>
-       <p>Amount: BDT ${record ? record.amount : '—'}</p>
+       <p>Amount: USD ${record ? record.amount : '—'}</p>
        <p>Transaction: ${record ? record.trxID : '—'}</p>
        <p>paymentID: ${paymentId}</p>
        <p>status: Completed</p>
@@ -205,7 +205,7 @@ const server = http.createServer(async (request, response) => {
       `<!doctype html><html><body style="font-family:system-ui;padding:40px">
        <h2>Nagad checkout</h2>
        <p>Invoice: ${record ? record.merchantInvoiceNumber : transactionId}</p>
-       <p>Amount: BDT ${record ? record.amount : '—'}</p>
+       <p>Amount: USD ${record ? record.amount : '—'}</p>
        </body></html>`
     );
   }
@@ -243,7 +243,7 @@ const server = http.createServer(async (request, response) => {
       val_id: record.val_id,
       tran_id: record.tran_id,
       amount: record.amount,
-      currency: 'BDT',
+      currency: 'USD',
       store_id: body.store_id,
     });
   }
@@ -255,7 +255,7 @@ const server = http.createServer(async (request, response) => {
       `<!doctype html><html><body style="font-family:system-ui;padding:40px">
        <h2>SSLCommerz checkout</h2>
        <p>Invoice: ${record ? record.tran_id : sessionkey}</p>
-       <p>Amount: BDT ${record ? record.amount : '—'}</p>
+       <p>Amount: USD ${record ? record.amount : '—'}</p>
        </body></html>`
     );
   }
@@ -304,7 +304,7 @@ const server = http.createServer(async (request, response) => {
       `<!doctype html><html><body style="font-family:system-ui;padding:40px">
        <h2>Rocket checkout</h2>
        <p>Invoice: ${record ? record.order_id : transactionId}</p>
-       <p>Amount: BDT ${record ? record.amount : '—'}</p>
+       <p>Amount: USD ${record ? record.amount : '—'}</p>
        </body></html>`
     );
   }

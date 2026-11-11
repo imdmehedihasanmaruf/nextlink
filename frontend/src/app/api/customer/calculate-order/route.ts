@@ -104,10 +104,12 @@ export async function POST(request: Request) {
         Math.max(0, targetDaily * daysRemaining + installationFee + taxes + proratedAdjustment).toFixed(2)
       );
     } else {
-      // An additional connection is a separate line with its own fee.
+      // An additional connection is a separate line with a fixed installation
+      // fee — $18, not a percentage of the plan price.
+      const ADDITIONAL_LINE_INSTALLATION_FEE = 18;
       remainingSubscriptionValue = 0.00;
       proratedAdjustment = 0.00;
-      installationFee = Number((targetPrice * 0.1).toFixed(2));
+      installationFee = ADDITIONAL_LINE_INSTALLATION_FEE;
       taxes = 0.00;
       totalPayable = Number((targetPrice + installationFee).toFixed(2));
     }

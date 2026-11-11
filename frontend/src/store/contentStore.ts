@@ -102,7 +102,7 @@ export interface ContentState {
     status: string
   }>
   retention?: {
-    referralBonusBDT?: number
+    referralBonusUSD?: number
     referralDiscountPercent?: number
     turboBoostSpeed?: number
     turboBoostDurationHours?: number

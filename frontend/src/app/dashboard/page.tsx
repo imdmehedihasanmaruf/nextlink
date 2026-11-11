@@ -152,7 +152,7 @@ export default function DashboardPage() {
   const dueYearStr = String(dueYearNum)
   const nextDueDateRangeFormatted = `05/${dueMonthNumStr}/${dueYearStr} - 10/${dueMonthNumStr}/${dueYearStr} of Every Month`
   const currencyOf = (invoice?: PortalInvoice | null) =>
-    String(invoice?.raw_data?.currency || 'BDT').toUpperCase()
+    String(invoice?.raw_data?.currency || 'USD').toUpperCase()
   const unpaidAmount = unpaidInvoice ? Number(unpaidInvoice.amount || 0) : 0
   const invoiceCurrency = currencyOf(unpaidInvoice)
 
@@ -328,7 +328,7 @@ export default function DashboardPage() {
     const paidAt = paid.raw_data?.paidAt
       ? new Date(paid.raw_data.paidAt)
       : new Date(paid.created_at)
-    const currency = String(paid.raw_data?.currency || 'BDT').toUpperCase()
+    const currency = String(paid.raw_data?.currency || 'USD').toUpperCase()
     setLatestReceipt({
       receiptNo: paid.raw_data?.invoiceNumber || paid.id,
       trxId: String(paid.raw_data?.transactionId || paid.id),

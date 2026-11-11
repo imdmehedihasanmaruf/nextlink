@@ -151,10 +151,9 @@ The demo API answers `/health` with the active modes:
 ### A note on the currency symbol
 
 `BILLING_CURRENCY_SYMBOL` is used for the PDF invoice and the web UI, where
-the Bengali Taka sign (`৳`) is displayed correctly. SMS messages travel as
-GSM 7-bit, which has no Taka sign, so they use
-`BILLING_CURRENCY_SYMBOL_SMS` (`BDT` by default). Run
-`node scripts/check-gsm-encoding.js` to see why.
+`$` is displayed correctly. SMS messages travel as GSM 7-bit, and `$` is in
+that set, so both keep the same symbol. Run
+`node scripts/check-gsm-encoding.js` to verify a symbol is safe.
 
 ---
 
@@ -291,7 +290,14 @@ All of them are repeatable — they clean up after themselves.
 - Set `JWT_SECRET` to a long random string.
 - Set `NODE_ENV=production` and put the API behind a TLS-terminating proxy.
 - Run `npm run migrate` as part of the deployment step.
-- `BILLING_CURRENCY` / `BILLING_CURRENCY_SYMBOL` label the generated invoices;
-  the underlying `packages.price` values are left untouched.
+- `BILLING_CURRENCY` / `BILLING_CURRENCY_SYMBOL` label the generated invoices.
+  The project bills in USD only, and `packages.price` is already USD-scale,
+  so no conversion is applied — the labels were switched in the database by
+  `node scripts/migrate-currency-usd.js --apply`.
+- `BILLING_LATE_FEE_USD` (default `5`) sets the fixed late fee that is added
+  to the next bill when a previous invoice is still overdue past the grace
+  days. Payment is only accepted between the 5th and the 10th
+  (`BILLING_PAYMENT_WINDOW_*`); the rule is enforced by the API, the portal
+  just hides the button.
 - The queue falls back to an in-process queue when Redis is unreachable, which
   is fine for a single node but should be enabled for multi-node deployments.

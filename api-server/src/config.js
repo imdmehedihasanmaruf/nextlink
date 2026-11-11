@@ -103,6 +103,9 @@ const config = {
     dueDay: int(process.env.BILLING_DUE_DAY, 10),
     lateGraceDays: int(process.env.BILLING_LATE_GRACE_DAYS, 5),
     suspendAfterDays: int(process.env.BILLING_SUSPEND_AFTER_DAYS, 10),
+    // A fixed late fee added to the NEXT bill when the previous one stayed
+    // unpaid past the grace days. Per operator policy: $5, in USD.
+    lateFee: int(process.env.BILLING_LATE_FEE_USD, 5),
     // The payment window is enforced on the server. It can be switched off
     // for operators who accept payments at any time.
     paymentWindow: {
@@ -112,12 +115,11 @@ const config = {
     },
     // Currency used for generated invoices. The existing `packages.price`
     // values are kept untouched, so this only labels the amount.
-    currency: process.env.BILLING_CURRENCY || 'BDT',
-    currencySymbol: process.env.BILLING_CURRENCY_SYMBOL || '৳',
-    // SMS messages travel as GSM 7-bit, which has no Taka sign. The SMS
-    // engine uses this symbol instead, while the PDF invoice and the web UI
-    // keep the native symbol.
-    currencySymbolSms: process.env.BILLING_CURRENCY_SYMBOL_SMS || 'BDT',
+    currency: process.env.BILLING_CURRENCY || 'USD',
+    currencySymbol: process.env.BILLING_CURRENCY_SYMBOL || '$',
+    // SMS messages travel as GSM 7-bit, so the symbol must be 7-bit safe.
+    // '$' is GSM 7-bit safe.
+    currencySymbolSms: process.env.BILLING_CURRENCY_SYMBOL_SMS || '$',
     pdfDir: process.env.BILLING_PDF_DIR
       ? path.resolve(rootDir, process.env.BILLING_PDF_DIR)
       : path.resolve(rootDir, 'storage', 'invoices'),

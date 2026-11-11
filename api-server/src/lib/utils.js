@@ -60,7 +60,7 @@ function addDays(date, days) {
   return require('./dates').addDays(date, days);
 }
 
-/** Format a numeric amount as BDT string, e.g. 1500 -> '1,500'. */
+/** Format a numeric amount as USD string, e.g. 1500 -> '1,500'. */
 function formatAmount(amount) {
   const value = Number(amount || 0);
   return value.toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: 2 });

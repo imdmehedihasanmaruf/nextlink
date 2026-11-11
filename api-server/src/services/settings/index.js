@@ -44,7 +44,8 @@ const DEFAULTS = {
     dueDay: 10,
     lateGraceDays: 5,
     suspendAfterDays: 10,
-    currency: 'BDT',
+    currency: 'USD',
+    lateFee: 5,
   },
 };
 

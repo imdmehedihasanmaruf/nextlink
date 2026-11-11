@@ -49,6 +49,7 @@ interface SystemSettings {
     lateGraceDays: number;
     suspendAfterDays: number;
     currency: string;
+    lateFee?: number;
   };
 }
 
@@ -641,7 +642,7 @@ export default function SettingsPage() {
                   <CardDescription>Read-only summary of the active gateway and billing configuration.</CardDescription>
                 </CardHeader>
                 <CardContent>
-                  <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
+                  <div className="grid grid-cols-2 md:grid-cols-6 gap-4">
                     <div className="rounded-lg border p-3">
                       <p className="text-xs text-muted-foreground">Payment Mode</p>
                       <p className="text-lg font-bold mt-1 capitalize">{system.payments.mode}</p>
@@ -657,6 +658,10 @@ export default function SettingsPage() {
                     <div className="rounded-lg border p-3">
                       <p className="text-xs text-muted-foreground">Grace Days</p>
                       <p className="text-lg font-bold mt-1">{system.billing.lateGraceDays}</p>
+                    </div>
+                    <div className="rounded-lg border p-3">
+                      <p className="text-xs text-muted-foreground">Late Fee</p>
+                      <p className="text-lg font-bold mt-1">${system.billing.lateFee ?? 5}</p>
                     </div>
                     <div className="rounded-lg border p-3">
                       <p className="text-xs text-muted-foreground">Timezone</p>

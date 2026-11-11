@@ -230,7 +230,7 @@ async function approveRequest(id, { activate = true } = {}) {
     await client.query(
       `INSERT INTO subscriber_billing
          (subscriber_id, package_id, amount, currency, billing_start, next_invoice_date, auto_disconnect, status, raw_data)
-       VALUES ($1, $2, $3, 'BDT', CURRENT_DATE, $4, TRUE, $5, $6)
+       VALUES ($1, $2, $3, 'USD', CURRENT_DATE, $4, TRUE, $5, $6)
        ON CONFLICT (subscriber_id) DO UPDATE SET
          package_id = EXCLUDED.package_id,
          amount = EXCLUDED.amount,

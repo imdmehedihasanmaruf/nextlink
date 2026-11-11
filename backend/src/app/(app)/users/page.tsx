@@ -1205,7 +1205,7 @@ export default function UserDetailsPage() {
                   <SelectContent>
                     {packages.map((p) => (
                       <SelectItem key={p.id} value={p.id}>
-                        {p.name} - ৳{p.price}
+                        {p.name} - ${p.price}
                       </SelectItem>
                     ))}
                   </SelectContent>

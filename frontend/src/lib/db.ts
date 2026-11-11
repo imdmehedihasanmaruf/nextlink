@@ -293,7 +293,7 @@ export async function createOrderRecord(order: any): Promise<any> {
           packageName: order.packageName,
           amount: Number(order.totalPayable || 0),
           status: 'paid',
-          currency: 'BDT',
+          currency: 'USD',
           date: new Date().toISOString().split('T')[0],
           dueDate: order.nextBillingDate || new Date().toISOString().split('T')[0],
           paymentMethod: order.paymentMethod,

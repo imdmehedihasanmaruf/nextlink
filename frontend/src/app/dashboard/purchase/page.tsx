@@ -802,7 +802,7 @@ function PurchaseContent() {
                       </li>
                       <li className="flex items-center gap-2">
                         <CheckCircle2 className="h-3.5 w-3.5 text-emerald-500 shrink-0" />
-                        <span>Standard installation &amp; provisioning fee: <strong>$50.00</strong></span>
+                        <span>Fixed installation fee: <strong>$18.00</strong></span>
                       </li>
                       <li className="flex items-center gap-2">
                         <CheckCircle2 className="h-3.5 w-3.5 text-emerald-500 shrink-0" />
@@ -1355,7 +1355,7 @@ function PurchaseContent() {
                       <div className="flex justify-between">
                         <span className="text-muted-foreground">Total Paid:</span>
                         <span className="font-black text-emerald-600 dark:text-emerald-400 text-sm">
-                          BDT {confirmedOrder.totalPayable.toFixed(2)}
+                          USD {confirmedOrder.totalPayable.toFixed(2)}
                         </span>
                       </div>
                       <div className="flex justify-between">
@@ -1486,7 +1486,7 @@ function PurchaseContent() {
                         {confirmedOrder.purchaseType}
                       </td>
                       <td className="p-3 text-right font-bold text-foreground">
-                        BDT {confirmedOrder.totalPayable.toFixed(2)}
+                        USD {confirmedOrder.totalPayable.toFixed(2)}
                       </td>
                     </tr>
                   </tbody>
@@ -1500,7 +1500,7 @@ function PurchaseContent() {
                 </div>
                 <div className="text-right">
                   <span className="text-[11px] text-muted-foreground">Grand Total:</span>
-                  <p className="text-xl font-black text-foreground font-mono">BDT {confirmedOrder.totalPayable.toFixed(2)}</p>
+                  <p className="text-xl font-black text-foreground font-mono">USD {confirmedOrder.totalPayable.toFixed(2)}</p>
                 </div>
               </div>
 

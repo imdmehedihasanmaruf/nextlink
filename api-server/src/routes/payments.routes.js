@@ -31,7 +31,7 @@ async function recordTransaction({
   const result = await db.queryOne(
     `INSERT INTO payment_transactions
        (id, invoice_id, subscriber_id, gateway, amount, currency, status, gateway_txn_id, reference, method, raw_data)
-     VALUES ($1, $2, $3, $4, $5, 'BDT', $6, $7, $8, $9, $10)
+     VALUES ($1, $2, $3, $4, $5, 'USD', $6, $7, $8, $9, $10)
      ON CONFLICT (id) DO NOTHING
      RETURNING *`,
     [
@@ -149,7 +149,7 @@ router.post(
         gatewayTransactionId: result.transactionId,
         redirectUrl: result.redirectUrl,
         amount: Number(invoice.amount),
-        currency: 'BDT',
+        currency: 'USD',
         invoiceId: invoice.id,
       });
     } catch (error) {
@@ -430,7 +430,7 @@ router.get(
        .done{background:#16a34a;color:#052e16}</style></head>
        <body><div class="card">
        <h1>Mock ${transaction.gateway.toUpperCase()} Checkout</h1>
-       <div class="amt">BDT ${utils.formatAmount(amount)}</div>
+       <div class="amt">USD ${utils.formatAmount(amount)}</div>
        <div class="muted">Invoice ${transaction.invoice_id} · Txn ${transaction.gateway_txn_id}</div>
        <p class="${settled ? 'ok' : 'bad'}">${settled ? 'Payment completed successfully.' : 'Payment was not completed.'}</p>
        ${settled
