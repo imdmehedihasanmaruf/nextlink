@@ -73,7 +73,7 @@ async function run() {
       packageId: 'PKG-004',
       packageName: 'Premium',
       ontConfig: 'Wi-Fi 6 Gateway Mode',
-      referral: 'NL-REF-1',
+      referral: '',
     },
   });
   assert(request.status === 201 && request.body.success, 'connection request accepted', request.body);

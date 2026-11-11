@@ -1,8 +1,7 @@
 'use client';
-import { useState, useEffect } from 'react';
-import { 
-  Gift, Save, Plus, Trash2, CheckCircle2, DollarSign, 
-  Users, Share2, Percent, Tag, RefreshCw, AlertCircle
+import { useState, useEffect, useCallback } from 'react';
+import {
+  Gift, Save, CheckCircle2, Users, RefreshCw, AlertTriangle, DollarSign,
 } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { Button } from '@/components/ui/button';
@@ -12,294 +11,245 @@ import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { Switch } from '@/components/ui/switch';
 import { Badge } from '@/components/ui/badge';
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
-import { useAdminDataStore } from '@/store/adminDataStore';
+import { apiGet, apiPost, apiPut } from '@/lib/apiClient';
+
+interface Referral {
+  id: string;
+  code: string;
+  status: string;
+  referrer_id: string;
+  referred_subscriber_id: string | null;
+  application_id: string | null;
+  reward_amount: string | number;
+  created_at: string;
+  credited_at: string | null;
+}
+
+const STATUS_STYLES: Record<string, string> = {
+  pending: 'bg-amber-500/10 text-amber-600 border-amber-500/30',
+  qualified: 'bg-blue-500/10 text-blue-600 border-blue-500/30',
+  credited: 'bg-emerald-500/10 text-emerald-600 border-emerald-500/30',
+  void: 'bg-muted text-muted-foreground',
+  rejected: 'bg-rose-500/10 text-rose-600 border-rose-500/30',
+};
 
 export default function ReferralRewardsPage() {
-  const { referralRewards, saveItem, fetchData } = useAdminDataStore();
   const [loading, setLoading] = useState(false);
+  const [settingsLoading, setSettingsLoading] = useState(false);
+  const [referrals, setReferrals] = useState<Referral[]>([]);
+  const [loadingList, setLoadingList] = useState(true);
 
-  // Local config state — the initial values are honest empties; the stored
-  // CMS configuration (synced on load) overwrites them.
+  // Configuration state
   const [enabled, setEnabled] = useState(false);
   const [bonusAmount, setBonusAmount] = useState(25);
-  const [discountPercent, setDiscountPercent] = useState(10);
-  const [defaultCode, setDefaultCode] = useState('');
   const [title, setTitle] = useState('Refer a friend');
-  const [description, setDescription] = useState('Share your invite link with a friend — you both receive billing credit when they activate.');
-  const [tierName, setTierName] = useState('');
-  const [referrals, setReferrals] = useState<any[]>([]);
+  const [description, setDescription] = useState(
+    'Share your invite link — the reward is applied to your next invoice once your friend activates and pays.',
+  );
 
-  // Add modal state
-  const [dialogOpen, setDialogOpen] = useState(false);
-  const [newName, setNewName] = useState('');
-  const [newEmail, setNewEmail] = useState('');
-  const [newReward, setNewReward] = useState('25');
-
-  useEffect(() => {
-    fetchData();
-  }, [fetchData]);
-
-  useEffect(() => {
-    if (referralRewards) {
-      setEnabled(referralRewards.enabled ?? false);
-      setBonusAmount(referralRewards.bonusAmount ?? 25);
-      setDiscountPercent(referralRewards.discountPercent ?? 10);
-      setDefaultCode(referralRewards.defaultCode || '');
-      setTitle(referralRewards.title || 'Refer a friend');
-      setDescription(referralRewards.description || 'Share your invite link with a friend — you both receive billing credit when they activate.');
-      setTierName(referralRewards.tierName || '');
-      setReferrals(Array.isArray(referralRewards.referrals) ? referralRewards.referrals : []);
+  const loadSettings = useCallback(async () => {
+    setSettingsLoading(true);
+    try {
+      const result = await apiGet('/api/admin/referral-settings');
+      if (result.success && result.settings) {
+        setEnabled(!!result.settings.enabled);
+        setBonusAmount(Number(result.settings.bonusAmount ?? 25));
+        setTitle(result.settings.title || 'Refer a friend');
+        setDescription(result.settings.description || '');
+      }
+    } catch {
+      toast.error('Could not load the referral configuration');
+    } finally {
+      setSettingsLoading(false);
     }
-  }, [referralRewards]);
+  }, []);
 
-  const handleSave = async (updatedReferrals?: any[]) => {
+  const loadReferrals = useCallback(async () => {
+    setLoadingList(true);
+    try {
+      const result = await apiGet('/api/admin/referrals');
+      if (result.success) {
+        setReferrals(Array.isArray(result.referrals) ? result.referrals : []);
+      } else {
+        toast.error(result.error || 'Could not load referrals');
+      }
+    } catch {
+      toast.error('Could not load referrals');
+    } finally {
+      setLoadingList(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    loadSettings();
+    loadReferrals();
+  }, [loadSettings, loadReferrals]);
+
+  const handleSave = async () => {
     setLoading(true);
-    const activeList = updatedReferrals !== undefined ? updatedReferrals : referrals;
-    const payload = {
-      enabled,
-      bonusAmount: Number(bonusAmount),
-      discountPercent: Number(discountPercent),
-      defaultCode,
-      title,
-      description,
-      tierName,
-      friendsJoinedCount: activeList.length,
-      totalSavedAmount: activeList.reduce((acc, cur) => acc + (Number(cur.reward) || Number(bonusAmount)), 0),
-      referrals: activeList,
-    };
-
-    await saveItem('referralRewards', payload);
-    setLoading(false);
-    toast.success('Referral Rewards configuration saved & synced to Frontend Portal!');
-  };
-
-  const handleAddReferral = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!newName.trim()) return;
-
-    const newEntry = {
-      id: `REF-${Date.now().toString().slice(-4)}`,
-      name: newName,
-      email: newEmail || `${newName.toLowerCase().replace(/\s+/g, '.')}@example.com`,
-      date: new Date().toISOString().slice(0, 10),
-      reward: Number(newReward) || bonusAmount,
-      status: 'Rewarded',
-    };
-
-    const updated = [newEntry, ...referrals];
-    setReferrals(updated);
-    setDialogOpen(false);
-    setNewName('');
-    setNewEmail('');
-    await handleSave(updated);
-  };
-
-  const handleDeleteReferral = async (id: string) => {
-    if (confirm('Are you sure you want to delete this referral record?')) {
-      const updated = referrals.filter(r => r.id !== id);
-      setReferrals(updated);
-      await handleSave(updated);
-      toast.success('Referral entry deleted!');
+    try {
+      const result = await apiPut('/api/admin/referral-settings', {
+        enabled,
+        bonusAmount: Number(bonusAmount),
+        title,
+        description,
+      });
+      if (result.success) {
+        toast.success('Referral configuration saved.');
+      } else {
+        toast.error(result.error || 'The settings could not be saved');
+      }
+    } catch {
+      toast.error('The settings could not be saved');
+    } finally {
+      setLoading(false);
     }
   };
 
-  const handleClearAllReferrals = async () => {
-    if (confirm('Clear all referral reward history records?')) {
-      setReferrals([]);
-      await handleSave([]);
-      toast.success('All referral records cleared!');
+  const handleVoid = async (id: string) => {
+    const reason = prompt('Reason for voiding this referral (required):')?.trim();
+    if (!reason) return;
+    const result = await apiPost(`/api/admin/referrals/${encodeURIComponent(id)}/void`, { reason });
+    if (result.success) {
+      toast.success('Referral voided.');
+      await loadReferrals();
+    } else {
+      toast.error(result.error || 'Could not void the referral');
     }
   };
 
-  const handleResetSettings = async () => {
-    if (confirm('Reset Referral Rewards to the neutral defaults?')) {
-      setEnabled(false);
-      setBonusAmount(25);
-      setDiscountPercent(10);
-      setDefaultCode('');
-      setTitle('Refer a friend');
-      setDescription('Share your invite link with a friend — you both receive billing credit when they activate.');
-      setTierName('');
-      toast.success('Settings reset. Remember to click Save Changes.');
-    }
-  };
-
-  const totalRewardsGiven = referrals.reduce((sum, r) => sum + (Number(r.reward) || bonusAmount), 0);
+  const totalCredited = referrals
+    .filter((r) => r.status === 'credited')
+    .reduce((acc, r) => acc + Number(r.reward_amount || 0), 0);
+  const qualifiedCount = referrals.filter((r) => r.status === 'qualified' || r.status === 'credited').length;
 
   return (
     <div className="space-y-6">
-      {/* Top Header */}
+      {/* Header */}
       <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
         <div>
           <h1 className="text-2xl font-bold tracking-tight flex items-center gap-2.5">
             <Gift className="h-6 w-6 text-emerald-600" />
-            Referral Rewards Management
+            Referral Rewards
           </h1>
           <p className="text-sm text-muted-foreground mt-1">
-            Configure the referral card shown on the subscriber dashboard. This is CMS content only — no referrals are tracked and no credits are applied automatically while the tracking backend does not exist yet.
+            Configure the referral program and watch real referrals arrive — each reward is credited against the referrer&apos;s next invoice after their friend activates and pays.
           </p>
         </div>
         <div className="flex items-center gap-2">
-          <Button variant="outline" size="sm" onClick={handleResetSettings} className="gap-1.5 text-xs text-rose-600 border-rose-200 hover:bg-rose-50">
-            <Trash2 className="h-3.5 w-3.5" />
-            Reset Defaults
+          <Button variant="outline" size="sm" onClick={loadReferrals} className="gap-1.5 text-xs">
+            <RefreshCw className={`h-3.5 w-3.5 ${loadingList ? 'animate-spin' : ''}`} />
+            Refresh
           </Button>
-          <Button onClick={() => handleSave()} disabled={loading} className="gap-1.5 bg-emerald-600 hover:bg-emerald-700 text-white shadow">
+          <Button onClick={handleSave} disabled={loading} className="gap-1.5 bg-emerald-600 hover:bg-emerald-700 text-white shadow">
             {loading ? <RefreshCw className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
-            Save & Sync Frontend
+            Save Configuration
           </Button>
         </div>
       </div>
 
-      {/* KPI Stats */}
+      {/* KPI Stats — all live from the database */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
         <Card className="border-emerald-500/20 bg-emerald-500/5 shadow-sm">
           <CardHeader className="pb-2">
-            <CardDescription className="text-xs uppercase font-bold text-emerald-700 dark:text-emerald-400">Bonus Credit Per Referral</CardDescription>
+            <CardDescription className="text-xs uppercase font-bold text-emerald-700 dark:text-emerald-400">Credit Per Referral</CardDescription>
             <CardTitle className="text-2xl font-extrabold text-emerald-600">${bonusAmount}</CardTitle>
           </CardHeader>
           <CardContent>
-            <p className="text-xs text-muted-foreground">Credited directly to subscriber invoice</p>
+            <p className="text-xs text-muted-foreground">Applied to the next monthly invoice</p>
           </CardContent>
         </Card>
 
         <Card className="shadow-sm">
           <CardHeader className="pb-2">
-            <CardDescription className="text-xs uppercase font-bold">Total Referred Friends</CardDescription>
+            <CardDescription className="text-xs uppercase font-bold">Referrals Tracked</CardDescription>
             <CardTitle className="text-2xl font-extrabold">{referrals.length}</CardTitle>
           </CardHeader>
           <CardContent>
-            <p className="text-xs text-muted-foreground">Active successful signups</p>
+            <p className="text-xs text-muted-foreground">Records in the referral ledger</p>
           </CardContent>
         </Card>
 
         <Card className="shadow-sm">
           <CardHeader className="pb-2">
-            <CardDescription className="text-xs uppercase font-bold">Total Rewards Given</CardDescription>
-            <CardTitle className="text-2xl font-extrabold text-primary">${totalRewardsGiven}</CardTitle>
+            <CardDescription className="text-xs uppercase font-bold">Qualified (Activated &amp; Paid)</CardDescription>
+            <CardTitle className="text-2xl font-extrabold text-primary">{qualifiedCount}</CardTitle>
           </CardHeader>
           <CardContent>
-            <p className="text-xs text-muted-foreground">Customer loyalty billing credits</p>
+            <p className="text-xs text-muted-foreground">Friends already contributing</p>
           </CardContent>
         </Card>
 
         <Card className="shadow-sm">
           <CardHeader className="pb-2">
-            <CardDescription className="text-xs uppercase font-bold">Global Promo Code</CardDescription>
-            <CardTitle className="text-lg font-mono font-bold text-foreground">{defaultCode}</CardTitle>
+            <CardDescription className="text-xs uppercase font-bold">Total Credited</CardDescription>
+            <CardTitle className="text-2xl font-extrabold text-emerald-600">${totalCredited.toFixed(2)}</CardTitle>
           </CardHeader>
           <CardContent>
-            <Badge variant="outline" className="text-xs font-semibold">{tierName}</Badge>
+            <Badge variant={enabled ? 'outline' : 'secondary'} className="text-xs font-semibold">
+              {enabled ? 'Program Active' : 'Program Disabled'}
+            </Badge>
           </CardContent>
         </Card>
       </div>
 
-      {/* Configuration Form Card */}
+      {/* Configuration */}
       <Card className="shadow-sm">
-        <CardHeader className="flex flex-row items-center justify-between pb-3">
-          <div>
-            <CardTitle className="text-base flex items-center gap-2">
-              <Share2 className="h-4 w-4 text-emerald-600" />
-              Frontend Card Display & Program Rules
-            </CardTitle>
-            <CardDescription>Changes here update the "Refer & Earn" card on the subscriber dashboard in real time</CardDescription>
-          </div>
-          <div className="flex items-center gap-2">
-            <span className="text-xs font-semibold">{enabled ? 'Active on Frontend' : 'Disabled'}</span>
-            <Switch checked={enabled} onCheckedChange={setEnabled} />
-          </div>
+        <CardHeader className="pb-3">
+          <CardTitle className="text-base flex items-center gap-2">
+            <CheckCircle2 className="h-4 w-4 text-emerald-600" />
+            Program Configuration
+          </CardTitle>
+          <CardDescription>Controls the referral card on the subscriber dashboard and the reward amount</CardDescription>
         </CardHeader>
-        <CardContent className="space-y-4 pt-2">
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+        <CardContent className="space-y-4 pt-1">
+          <div className="flex items-center justify-between border rounded-lg px-4 py-3">
             <div>
-              <Label className="text-xs">Reward Amount ($ USD)</Label>
-              <Input
-                type="number"
-                value={bonusAmount}
-                onChange={(e) => setBonusAmount(Number(e.target.value))}
-                className="mt-1"
-              />
+              <p className="text-sm font-semibold">Referral program enabled</p>
+              <p className="text-xs text-muted-foreground">When disabled, the portal card is hidden and the API refuses the referral code</p>
             </div>
-            <div>
-              <Label className="text-xs">Invitee Discount (% Percent)</Label>
-              <Input
-                type="number"
-                value={discountPercent}
-                onChange={(e) => setDiscountPercent(Number(e.target.value))}
-                className="mt-1"
-              />
-            </div>
-            <div>
-              <Label className="text-xs">Default Referral Code</Label>
-              <Input
-                value={defaultCode}
-                onChange={(e) => setDefaultCode(e.target.value.toUpperCase())}
-                className="font-mono mt-1"
-              />
-            </div>
+            <Switch checked={enabled} onCheckedChange={setEnabled} disabled={settingsLoading} />
           </div>
-
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div>
-              <Label className="text-xs">Card Header Title</Label>
+              <Label className="text-xs">Credit Per Referral (USD)</Label>
               <Input
-                value={title}
-                onChange={(e) => setTitle(e.target.value)}
-                placeholder="e.g. Earn $25 on Your Next Invoice"
-                className="mt-1"
+                type="number"
+                min={1}
+                value={bonusAmount}
+                onChange={(e) => setBonusAmount(Number(e.target.value) || 0)}
+                className="mt-1 font-bold"
               />
             </div>
             <div>
-              <Label className="text-xs">Subscriber Loyalty Tier Name</Label>
-              <Input
-                value={tierName}
-                onChange={(e) => setTierName(e.target.value)}
-                placeholder="e.g. Silver Tier (optional)"
-                className="mt-1"
-              />
+              <Label className="text-xs">Card Title (Portal)</Label>
+              <Input value={title} onChange={(e) => setTitle(e.target.value)} className="mt-1" />
             </div>
           </div>
-
           <div>
-            <Label className="text-xs">Card Description Subtitle</Label>
-            <Textarea
-              rows={2}
-              value={description}
-              onChange={(e) => setDescription(e.target.value)}
-              placeholder="Instructions shown to subscriber on frontend card"
-              className="mt-1"
-            />
+            <Label className="text-xs">Card Description (Portal)</Label>
+            <Textarea rows={2} value={description} onChange={(e) => setDescription(e.target.value)} className="mt-1" />
           </div>
         </CardContent>
       </Card>
 
-      {/* Referrals Ledger Table */}
+      {/* Live referral ledger */}
       <Card className="shadow-sm">
-        <CardHeader className="flex flex-row items-center justify-between pb-3">
-          <div>
-            <CardTitle className="text-base flex items-center gap-2">
-              <Users className="h-4 w-4 text-primary" />
-              Referrals Record Ledger
-            </CardTitle>
-            <CardDescription>Track all subscriber referrals and credits issued</CardDescription>
-          </div>
-          <div className="flex items-center gap-2">
-            <Button size="sm" variant="outline" onClick={handleClearAllReferrals} className="gap-1.5 text-xs text-rose-600 hover:bg-rose-50 border-rose-200">
-              <Trash2 className="h-3.5 w-3.5" />
-              Clear Ledger
-            </Button>
-            <Button size="sm" onClick={() => setDialogOpen(true)} className="gap-1.5 text-xs bg-emerald-600 hover:bg-emerald-700 text-white">
-              <Plus className="h-3.5 w-3.5" />
-              Add Referral
-            </Button>
-          </div>
+        <CardHeader className="pb-2">
+          <CardTitle className="text-base flex items-center gap-2">
+            <Users className="h-4 w-4 text-primary" />
+            Live Referral Ledger
+          </CardTitle>
+          <CardDescription>Every row is a real, database-backed referral record — rewards only credit after a friend activates and pays</CardDescription>
         </CardHeader>
         <CardContent>
-          {referrals.length === 0 ? (
+          {loadingList ? (
+            <p className="text-sm text-muted-foreground text-center py-6">Loading referrals…</p>
+          ) : referrals.length === 0 ? (
             <div className="py-8 text-center border border-dashed rounded-xl">
-              <p className="text-sm font-semibold text-muted-foreground">No Referrals Recorded</p>
-              <p className="text-xs text-muted-foreground mt-1">Click "Add Referral" above to log a new subscriber referral reward.</p>
+              <AlertTriangle className="h-6 w-6 text-muted-foreground mx-auto mb-2" />
+              <p className="text-sm font-semibold text-muted-foreground">No referrals recorded yet</p>
+              <p className="text-xs text-muted-foreground mt-1">They will appear here when subscribers share their invite link.</p>
             </div>
           ) : (
             <div className="overflow-x-auto">
@@ -307,38 +257,33 @@ export default function ReferralRewardsPage() {
                 <thead>
                   <tr className="border-b text-xs text-muted-foreground text-left">
                     <th className="py-2.5 px-3">ID</th>
-                    <th className="py-2.5 px-3">Referred Friend</th>
-                    <th className="py-2.5 px-3">Date</th>
-                    <th className="py-2.5 px-3">Reward Amount</th>
+                    <th className="py-2.5 px-3">Code</th>
+                    <th className="py-2.5 px-3">Referrer</th>
+                    <th className="py-2.5 px-3">Referred Subscriber</th>
                     <th className="py-2.5 px-3">Status</th>
-                    <th className="py-2.5 px-3 text-right">Delete</th>
+                    <th className="py-2.5 px-3">Reward</th>
+                    <th className="py-2.5 px-3">Created</th>
+                    <th className="py-2.5 px-3 text-right">Action</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y">
-                  {referrals.map((ref) => (
-                    <tr key={ref.id} className="hover:bg-muted/40 transition-colors">
-                      <td className="py-2.5 px-3 font-mono text-xs font-semibold">{ref.id}</td>
+                  {referrals.map((r) => (
+                    <tr key={r.id} className="hover:bg-muted/40">
+                      <td className="py-2.5 px-3 font-mono text-xs">{r.id}</td>
+                      <td className="py-2.5 px-3 font-mono text-xs font-semibold">{r.code}</td>
+                      <td className="py-2.5 px-3 text-xs">{r.referrer_id}</td>
+                      <td className="py-2.5 px-3 text-xs">{r.referred_subscriber_id || '—'}</td>
                       <td className="py-2.5 px-3">
-                        <div className="font-semibold text-foreground">{ref.name}</div>
-                        <div className="text-xs text-muted-foreground">{ref.email}</div>
+                        <Badge variant="outline" className={`text-[11px] ${STATUS_STYLES[r.status] || ''}`}>{r.status}</Badge>
                       </td>
-                      <td className="py-2.5 px-3 text-xs text-muted-foreground">{ref.date}</td>
-                      <td className="py-2.5 px-3 font-bold text-emerald-600">${ref.reward}</td>
-                      <td className="py-2.5 px-3">
-                        <Badge className="bg-emerald-500/10 text-emerald-600 border-emerald-500/30 text-xs">
-                          {ref.status || 'Rewarded'}
-                        </Badge>
-                      </td>
+                      <td className="py-2.5 px-3 font-bold text-emerald-600">${Number(r.reward_amount).toFixed(2)}</td>
+                      <td className="py-2.5 px-3 text-xs text-muted-foreground">{new Date(r.created_at).toLocaleDateString()}</td>
                       <td className="py-2.5 px-3 text-right">
-                        <Button
-                          size="sm"
-                          variant="ghost"
-                          onClick={() => handleDeleteReferral(ref.id)}
-                          className="h-8 w-8 p-0 text-rose-500 hover:text-rose-600 hover:bg-rose-50"
-                          title="Delete referral entry"
-                        >
-                          <Trash2 className="h-4 w-4" />
-                        </Button>
+                        {r.status === 'pending' && (
+                          <Button size="sm" variant="ghost" className="h-7 text-xs text-rose-600 hover:bg-rose-50" onClick={() => handleVoid(r.id)}>
+                            Void
+                          </Button>
+                        )}
                       </td>
                     </tr>
                   ))}
@@ -348,47 +293,6 @@ export default function ReferralRewardsPage() {
           )}
         </CardContent>
       </Card>
-
-      {/* Add Referral Dialog */}
-      <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
-        <DialogContent className="max-w-md">
-          <DialogHeader>
-            <DialogTitle>Add Manual Referral Entry</DialogTitle>
-          </DialogHeader>
-          <form onSubmit={handleAddReferral} className="space-y-4 pt-2">
-            <div>
-              <Label>Referred Customer Full Name *</Label>
-              <Input
-                value={newName}
-                onChange={(e) => setNewName(e.target.value)}
-                placeholder="e.g. Sophia Anderson"
-                required
-              />
-            </div>
-            <div>
-              <Label>Email Address</Label>
-              <Input
-                type="email"
-                value={newEmail}
-                onChange={(e) => setNewEmail(e.target.value)}
-                placeholder="sophia@example.com"
-              />
-            </div>
-            <div>
-              <Label>Reward Amount ($ USD)</Label>
-              <Input
-                type="number"
-                value={newReward}
-                onChange={(e) => setNewReward(e.target.value)}
-              />
-            </div>
-            <DialogFooter>
-              <Button type="button" variant="outline" onClick={() => setDialogOpen(false)}>Cancel</Button>
-              <Button type="submit" className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold">Add & Save</Button>
-            </DialogFooter>
-          </form>
-        </DialogContent>
-      </Dialog>
     </div>
   );
 }

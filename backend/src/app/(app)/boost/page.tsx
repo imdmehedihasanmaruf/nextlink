@@ -1,7 +1,7 @@
 'use client';
 import { useState, useEffect } from 'react';
 import { 
-  Zap, Save, Plus, Trash2, Clock, Gauge, 
+  Zap, Save, Trash2, Clock, Gauge,
   Activity, Users, ShieldAlert, RefreshCw, CheckCircle2
 } from 'lucide-react';
 import toast from 'react-hot-toast';
@@ -12,15 +12,14 @@ import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { Switch } from '@/components/ui/switch';
 import { Badge } from '@/components/ui/badge';
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
 import { useAdminDataStore } from '@/store/adminDataStore';
+import { apiGet, apiPost } from '@/lib/apiClient';
 
 export default function BoostBandwidthPage() {
   const { boostBandwidth, saveItem, fetchData } = useAdminDataStore();
   const [loading, setLoading] = useState(false);
 
-  // Configuration State — honest, disabled-by-default initial values; the
-  // stored CMS configuration overrides them on load.
+  // Configuration State — the CMS only stores display copy.
   const [enabled, setEnabled] = useState(false);
   const [boostSpeed, setBoostSpeed] = useState(1000);
   const [durationHours, setDurationHours] = useState(6);
@@ -28,16 +27,15 @@ export default function BoostBandwidthPage() {
   const [description, setDescription] = useState('Time-boxed speed burst routed through support like any other change.');
   const [status, setStatus] = useState('');
   const [burstQuotaPerMonth, setBurstQuotaPerMonth] = useState(0);
-  const [history, setHistory] = useState<any[]>([]);
 
-  // Modal State for Manual Boost
-  const [dialogOpen, setDialogOpen] = useState(false);
-  const [subscriberInput, setSubscriberInput] = useState('');
-  const [customSpeed, setCustomSpeed] = useState('1000');
-  const [customHours, setCustomHours] = useState('6');
+  // Real request queue from the server.
+  const [liveRequests, setLiveRequests] = useState<any[]>([]);
+  const [loadingRequests, setLoadingRequests] = useState(false);
 
   useEffect(() => {
     fetchData();
+    loadLiveRequests();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [fetchData]);
 
   useEffect(() => {
@@ -49,13 +47,11 @@ export default function BoostBandwidthPage() {
       setDescription(boostBandwidth.description || 'Time-boxed speed burst routed through support like any other change.');
       setStatus(boostBandwidth.status || '');
       setBurstQuotaPerMonth(boostBandwidth.burstQuotaPerMonth ?? 0);
-      setHistory(Array.isArray(boostBandwidth.history) ? boostBandwidth.history : []);
     }
   }, [boostBandwidth]);
 
-  const handleSave = async (updatedHistory?: any[]) => {
+  const handleSave = async () => {
     setLoading(true);
-    const activeList = updatedHistory !== undefined ? updatedHistory : history;
     const payload = {
       enabled,
       boostSpeed: Number(boostSpeed),
@@ -64,7 +60,6 @@ export default function BoostBandwidthPage() {
       description,
       status,
       burstQuotaPerMonth: Number(burstQuotaPerMonth),
-      history: activeList,
     };
 
     try {
@@ -77,41 +72,32 @@ export default function BoostBandwidthPage() {
     }
   };
 
-  const handleAddBoost = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!subscriberInput.trim()) return;
-
-    const newBoost = {
-      id: `BST-${Date.now().toString().slice(-4)}`,
-      subscriber: subscriberInput,
-      speed: Number(customSpeed) || boostSpeed,
-      duration: Number(customHours) || durationHours,
-      date: new Date().toISOString().slice(0, 10),
-      status: 'Active',
-    };
-
-    const updated = [newBoost, ...history];
-    setHistory(updated);
-    setDialogOpen(false);
-    setSubscriberInput('');
-    await handleSave(updated);
-    toast.success(`Boost recorded for ${subscriberInput} in the log — no router command was sent. Apply the change on the router if a burst is required.`);
-  };
-
-  const handleDeleteHistory = async (id: string) => {
-    if (confirm('Delete this boost history record?')) {
-      const updated = history.filter(h => h.id !== id);
-      setHistory(updated);
-      await handleSave(updated);
-      toast.success('Boost record deleted!');
+  const loadLiveRequests = async () => {
+    setLoadingRequests(true);
+    try {
+      const result = await apiGet('/api/admin/turbo-boost');
+      if (result.success) {
+        setLiveRequests(Array.isArray(result.requests) ? result.requests : []);
+      }
+    } catch (error: any) {
+      toast.error(error?.message || 'Could not load the boost requests');
+    } finally {
+      setLoadingRequests(false);
     }
   };
 
-  const handleClearAllHistory = async () => {
-    if (confirm('Clear all turbo boost activation logs?')) {
-      setHistory([]);
-      await handleSave([]);
-      toast.success('All boost records cleared!');
+  const handleBoostAction = async (id: string, action: 'approve' | 'reject' | 'complete') => {
+    const note = action === 'reject' ? (prompt('Optional rejection note:') ?? '') : undefined;
+    try {
+      const result = await apiPost(`/api/admin/turbo-boost/${encodeURIComponent(id)}/${action}`, note !== undefined ? { note } : {});
+      if (result.success) {
+        toast.success(`Request ${result.request?.reference || id} ${action === 'approve' ? 'approved' : action === 'reject' ? 'rejected' : 'marked completed'}`);
+        await loadLiveRequests();
+      } else {
+        toast.error(result.error || 'The action failed');
+      }
+    } catch (error: any) {
+      toast.error(error?.message || 'The action failed');
     }
   };
 
@@ -128,7 +114,8 @@ export default function BoostBandwidthPage() {
     }
   };
 
-  const activeCount = history.filter(h => h.status === 'Active').length;
+  const inFlightCount = liveRequests.filter(r => r.status === 'requested' || r.status === 'in_progress').length;
+  const totalCount = liveRequests.length;
 
   return (
     <div className="space-y-6">
@@ -179,18 +166,18 @@ export default function BoostBandwidthPage() {
 
         <Card className="shadow-sm">
           <CardHeader className="pb-2">
-            <CardDescription className="text-xs uppercase font-bold">Active Subscribed Boosts</CardDescription>
-            <CardTitle className="text-2xl font-extrabold text-primary">{activeCount}</CardTitle>
+            <CardDescription className="text-xs uppercase font-bold">In-Flight Requests</CardDescription>
+            <CardTitle className="text-2xl font-extrabold text-primary">{inFlightCount}</CardTitle>
           </CardHeader>
           <CardContent>
-            <p className="text-xs text-muted-foreground">Currently utilizing burst pipe</p>
+            <p className="text-xs text-muted-foreground">Awaiting helpdesk activation</p>
           </CardContent>
         </Card>
 
         <Card className="shadow-sm">
           <CardHeader className="pb-2">
-            <CardDescription className="text-xs uppercase font-bold">Total Boost Activations</CardDescription>
-            <CardTitle className="text-2xl font-extrabold">{history.length}</CardTitle>
+            <CardDescription className="text-xs uppercase font-bold">Total Requests Logged</CardDescription>
+            <CardTitle className="text-2xl font-extrabold">{totalCount}</CardTitle>
           </CardHeader>
           <CardContent>
             <Badge variant="outline" className="text-xs font-semibold">{burstQuotaPerMonth}x Monthly Quota</Badge>
@@ -284,64 +271,60 @@ export default function BoostBandwidthPage() {
           <div>
             <CardTitle className="text-base flex items-center gap-2">
               <Activity className="h-4 w-4 text-primary" />
-              Turbo Boost Activation Log
+              Live Boost Requests
             </CardTitle>
-            <CardDescription>Log of boost activations recorded by staff — not a live feed from the router</CardDescription>
+            <CardDescription>Real requests submitted by subscribers from the portal — approve to activate the change on the router, then mark it completed</CardDescription>
           </div>
-          <div className="flex items-center gap-2">
-            <Button size="sm" variant="outline" onClick={handleClearAllHistory} className="gap-1.5 text-xs text-rose-600 hover:bg-rose-50 border-rose-200">
-              <Trash2 className="h-3.5 w-3.5" />
-              Clear Log
-            </Button>
-            <Button size="sm" onClick={() => setDialogOpen(true)} className="gap-1.5 text-xs bg-amber-600 hover:bg-amber-700 text-white">
-              <Plus className="h-3.5 w-3.5" />
-              Manual Boost Log
-            </Button>
-          </div>
+          <Button size="sm" variant="outline" onClick={loadLiveRequests} className="gap-1.5 text-xs">
+            <RefreshCw className={`h-3.5 w-3.5 ${loadingRequests ? 'animate-spin' : ''}`} />
+            Refresh
+          </Button>
         </CardHeader>
         <CardContent>
-          {history.length === 0 ? (
+          {liveRequests.length === 0 ? (
             <div className="py-8 text-center border border-dashed rounded-xl">
-              <p className="text-sm font-semibold text-muted-foreground">No Boost Sessions Recorded</p>
-              <p className="text-xs text-muted-foreground mt-1">Boost activations logged by staff will appear here.</p>
+              <p className="text-sm font-semibold text-muted-foreground">No Boost Requests</p>
+              <p className="text-xs text-muted-foreground mt-1">Customer boost requests from the portal will appear here.</p>
             </div>
           ) : (
             <div className="overflow-x-auto">
               <table className="w-full text-sm">
                 <thead>
                   <tr className="border-b text-xs text-muted-foreground text-left">
-                    <th className="py-2.5 px-3">Session ID</th>
-                    <th className="py-2.5 px-3">Subscriber Identifier</th>
-                    <th className="py-2.5 px-3">Boosted Speed</th>
+                    <th className="py-2.5 px-3">Reference</th>
+                    <th className="py-2.5 px-3">Subscriber</th>
+                    <th className="py-2.5 px-3">Requested</th>
                     <th className="py-2.5 px-3">Duration</th>
-                    <th className="py-2.5 px-3">Date</th>
+                    <th className="py-2.5 px-3">Ticket</th>
                     <th className="py-2.5 px-3">Status</th>
-                    <th className="py-2.5 px-3 text-right">Delete</th>
+                    <th className="py-2.5 px-3 text-right">Actions</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y">
-                  {history.map((h) => (
-                    <tr key={h.id} className="hover:bg-muted/40 transition-colors">
-                      <td className="py-2.5 px-3 font-mono text-xs font-semibold">{h.id}</td>
-                      <td className="py-2.5 px-3 font-medium text-foreground">{h.subscriber}</td>
-                      <td className="py-2.5 px-3 font-bold text-amber-600">{h.speed} Mbps</td>
-                      <td className="py-2.5 px-3 text-xs text-muted-foreground">{h.duration} Hours</td>
-                      <td className="py-2.5 px-3 text-xs text-muted-foreground">{h.date}</td>
+                  {liveRequests.map((r) => (
+                    <tr key={r.id} className="hover:bg-muted/40 transition-colors">
+                      <td className="py-2.5 px-3 font-mono text-xs font-semibold">{r.reference}</td>
+                      <td className="py-2.5 px-3 font-medium text-foreground">{r.subscriber_id}</td>
+                      <td className="py-2.5 px-3 font-bold text-amber-600">{r.requested_mbps} Mbps</td>
+                      <td className="py-2.5 px-3 text-xs text-muted-foreground">{r.duration_hours} Hours</td>
+                      <td className="py-2.5 px-3 text-xs text-muted-foreground">{r.ticket_id || '—'}</td>
                       <td className="py-2.5 px-3">
-                        <Badge className={h.status === 'Active' ? 'bg-amber-500/10 text-amber-600 border-amber-500/30' : 'bg-muted text-muted-foreground'}>
-                          {h.status}
+                        <Badge className={r.status === 'requested' ? 'bg-amber-500/10 text-amber-600 border-amber-500/30' : r.status === 'in_progress' ? 'bg-blue-500/10 text-blue-600 border-blue-500/30' : r.status === 'completed' ? 'bg-emerald-500/10 text-emerald-600 border-emerald-500/30' : 'bg-muted text-muted-foreground'}>
+                          {r.status}
                         </Badge>
                       </td>
                       <td className="py-2.5 px-3 text-right">
-                        <Button
-                          size="sm"
-                          variant="ghost"
-                          onClick={() => handleDeleteHistory(h.id)}
-                          className="h-8 w-8 p-0 text-rose-500 hover:text-rose-600 hover:bg-rose-50"
-                          title="Delete boost log"
-                        >
-                          <Trash2 className="h-4 w-4" />
-                        </Button>
+                        <div className="flex items-center justify-end gap-1">
+                          {['requested', 'in_progress'].includes(r.status) && (
+                            <>
+                              {r.status === 'requested' && (
+                                <Button size="sm" variant="outline" className="h-7 text-xs" onClick={() => handleBoostAction(r.id, 'approve')}>Approve</Button>
+                              )}
+                              <Button size="sm" variant="outline" className="h-7 text-xs text-emerald-600 border-emerald-200 hover:bg-emerald-50" onClick={() => handleBoostAction(r.id, 'complete')}>Complete</Button>
+                              <Button size="sm" variant="outline" className="h-7 text-xs text-rose-600 border-rose-200 hover:bg-rose-50" onClick={() => handleBoostAction(r.id, 'reject')}>Reject</Button>
+                            </>
+                          )}
+                        </div>
                       </td>
                     </tr>
                   ))}
@@ -353,44 +336,6 @@ export default function BoostBandwidthPage() {
       </Card>
 
       {/* Manual Boost Override Modal */}
-      <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
-        <DialogContent className="max-w-md">
-          <DialogHeader>
-            <DialogTitle>Log a Manual Bandwidth Boost</DialogTitle>
-          </DialogHeader>
-          <form onSubmit={handleAddBoost} className="space-y-4 pt-2">
-            <div>
-              <Label>Subscriber Account / Username / ID *</Label>
-              <Input
-                value={subscriberInput}
-                onChange={(e) => setSubscriberInput(e.target.value)}
-                placeholder="e.g. NL-SUB-0104 or user@fiber"
-                required
-              />
-            </div>
-            <div>
-              <Label>Override Speed (Mbps)</Label>
-              <Input
-                type="number"
-                value={customSpeed}
-                onChange={(e) => setCustomSpeed(e.target.value)}
-              />
-            </div>
-            <div>
-              <Label>Burst Duration (Hours)</Label>
-              <Input
-                type="number"
-                value={customHours}
-                onChange={(e) => setCustomHours(e.target.value)}
-              />
-            </div>
-            <DialogFooter>
-              <Button type="button" variant="outline" onClick={() => setDialogOpen(false)}>Cancel</Button>
-              <Button type="submit" className="bg-amber-600 hover:bg-amber-700 text-white font-bold">Trigger Boost</Button>
-            </DialogFooter>
-          </form>
-        </DialogContent>
-      </Dialog>
     </div>
   );
 }

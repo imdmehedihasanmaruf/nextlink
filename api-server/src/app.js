@@ -28,6 +28,8 @@ const applicationRoutes = require('./routes/applications.routes');
 const coverageRoutes = require('./routes/coverage.routes');
 const ticketRoutes = require('./routes/tickets.routes');
 const settingsRoutes = require('./routes/settings.routes');
+const customerRoutes = require('./routes/customer.routes');
+const adminFeatureRoutes = require('./routes/adminFeatures.routes');
 
 function createApp() {
   const app = express();
@@ -89,6 +91,8 @@ function createApp() {
   app.use('/api/coverage', coverageRoutes);
   app.use('/api/tickets', ticketRoutes);
   app.use('/api/settings', settingsRoutes);
+  app.use('/api/customer', customerRoutes);
+  app.use('/api/admin', adminFeatureRoutes);
 
   app.use(notFound);
   app.use(errorHandler);

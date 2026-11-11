@@ -305,3 +305,83 @@ CREATE INDEX IF NOT EXISTS idx_ticket_messages_ticket ON ticket_messages (ticket
 CREATE UNIQUE INDEX IF NOT EXISTS idx_subscriber_credentials_username_unique
   ON subscriber_credentials (username)
   WHERE username IS NOT NULL;
+
+-- ============================================================================
+-- Referral program — real, tracked, database-backed.
+-- ============================================================================
+
+-- One referral code per eligible subscriber.
+CREATE TABLE IF NOT EXISTS referral_codes (
+  subscriber_id   VARCHAR(100) PRIMARY KEY,
+  code            VARCHAR(40)  NOT NULL UNIQUE,
+  is_active       BOOLEAN      NOT NULL DEFAULT TRUE,
+  created_at      TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+  updated_at      TIMESTAMPTZ  NOT NULL DEFAULT NOW()
+);
+
+-- One row per referred application/purchase.
+CREATE TABLE IF NOT EXISTS referrals (
+  id                      VARCHAR(64)  PRIMARY KEY,
+  referrer_id             VARCHAR(100) NOT NULL,
+  referred_subscriber_id  VARCHAR(100),
+  application_id          VARCHAR(64),
+  code                    VARCHAR(40)  NOT NULL,
+  status                  VARCHAR(30)  NOT NULL DEFAULT 'pending',
+  reward_amount           NUMERIC(12,2) NOT NULL DEFAULT 0,
+  qualified_at            TIMESTAMPTZ,
+  credited_at             TIMESTAMPTZ,
+  notes                   TEXT,
+  raw_data                JSONB,
+  created_at              TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+  updated_at              TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+  CONSTRAINT referrals_application_unique UNIQUE (application_id),
+  CONSTRAINT referrals_referred_unique    UNIQUE (referred_subscriber_id)
+);
+
+-- Reward ledger — every credit posted for a referral. This is the transaction
+-- record. A `credited` row means the bill credit was applied to the
+-- referrer's balance; it is never marked credited without the balance having
+-- been adjusted.
+CREATE TABLE IF NOT EXISTS referral_rewards (
+  id              VARCHAR(64)  PRIMARY KEY,
+  referral_id     VARCHAR(64)  NOT NULL REFERENCES referrals(id),
+  subscriber_id   VARCHAR(100) NOT NULL,
+  amount          NUMERIC(12,2) NOT NULL,
+  status          VARCHAR(30)  NOT NULL DEFAULT 'pending',
+  credited_at     TIMESTAMPTZ,
+  raw_data        JSONB,
+  created_at      TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+  updated_at      TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+  CONSTRAINT referral_rewards_referral_unique UNIQUE (referral_id)
+);
+
+-- ============================================================================
+-- Turbo Boost — customer support/service request with a DB-backed workflow.
+-- ============================================================================
+
+CREATE TABLE IF NOT EXISTS turbo_boost_requests (
+  id              VARCHAR(64)  PRIMARY KEY,
+  reference       VARCHAR(40)  NOT NULL UNIQUE,
+  subscriber_id   VARCHAR(100) NOT NULL,
+  duration_hours  INTEGER      NOT NULL,
+  requested_mbps  INTEGER      NOT NULL,
+  status          VARCHAR(30)  NOT NULL DEFAULT 'requested',
+  admin_note      TEXT,
+  decided_by      VARCHAR(100),
+  decided_at      TIMESTAMPTZ,
+  applied_at      TIMESTAMPTZ,
+  ticket_id       VARCHAR(100),
+  raw_data        JSONB,
+  created_at      TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+  updated_at      TIMESTAMPTZ  NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_referral_codes_code     ON referral_codes (code);
+CREATE INDEX IF NOT EXISTS idx_referrals_referrer      ON referrals (referrer_id);
+CREATE INDEX IF NOT EXISTS idx_referrals_status        ON referrals (status);
+CREATE INDEX IF NOT EXISTS idx_referrals_code          ON referrals (code);
+CREATE INDEX IF NOT EXISTS idx_referral_rewards_sub    ON referral_rewards (subscriber_id);
+CREATE INDEX IF NOT EXISTS idx_referral_rewards_status ON referral_rewards (status);
+CREATE INDEX IF NOT EXISTS idx_turbo_reference         ON turbo_boost_requests (reference);
+CREATE INDEX IF NOT EXISTS idx_turbo_subscriber        ON turbo_boost_requests (subscriber_id);
+CREATE INDEX IF NOT EXISTS idx_turbo_status            ON turbo_boost_requests (status);

@@ -438,9 +438,9 @@ export default function HomePage() {
             </CardContent>
           </Card>
 
-          {/* 7. Referral Rewards — rendered only when the operator enables the
-              programme in the CMS. It advertises an invite a subscriber can
-              share; there is no automatic claim/credit backend yet. */}
+          {/* 7. Referral Rewards — advertised only when the operator enables
+              the programme. Subscribers get their personal invite link inside
+              the dashboard; there is no global code. */}
           {referralRewards?.enabled !== false && (
           <Card className="border-2 border-border/80 hover:border-primary/60 transition-all duration-300 hover:shadow-xl md:col-span-2 lg:col-span-3 flex flex-col md:flex-row items-center justify-between p-6 gap-6 bg-gradient-to-r from-primary/5 via-card to-emerald-500/5">
             <div className="flex items-start gap-4">
@@ -452,13 +452,10 @@ export default function HomePage() {
                   <Badge className="bg-emerald-600 text-white font-bold text-xs">
                     Earn ${referralRewards?.bonusAmount || 25} Credit
                   </Badge>
-                  {referralRewards?.defaultCode && (
-                    <span className="text-xs font-mono text-muted-foreground">Code: {referralRewards.defaultCode}</span>
-                  )}
                 </div>
                 <h3 className="text-xl font-extrabold">{referralRewards?.title || 'Refer a friend'}</h3>
                 <p className="text-xs sm:text-sm text-muted-foreground max-w-2xl">
-                  {referralRewards?.description || 'Invite your friends, colleagues, or neighbors to NextLink Optical Fiber. Both of you receive billing credit when they activate.'}
+                  {referralRewards?.description || 'Invite your friends to NextLink Optical Fiber — when your friend activates and pays their first bill, you both receive billing credit.'}
                 </p>
               </div>
             </div>

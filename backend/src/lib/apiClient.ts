@@ -140,6 +140,15 @@ export function apiPost<T = any>(path: string, body?: any, auth = true) {
   });
 }
 
+/** PUT helper. */
+export function apiPut<T = any>(path: string, body?: any, auth = true) {
+  return apiFetch<T>(path, {
+    method: 'PUT',
+    auth,
+    body: body ? JSON.stringify(body) : undefined,
+  });
+}
+
 /**
  * Open an authenticated PDF in a new browser tab.
  * Because the endpoint needs an Authorization header, the file is fetched as a

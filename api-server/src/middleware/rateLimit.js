@@ -53,6 +53,8 @@ const WINDOWS = {
   smsMax: Number(process.env.RATE_LIMIT_SMS_MAX || 100),
   global: Number(process.env.RATE_LIMIT_GLOBAL_WINDOW_MS || 60 * 1000),
   globalMax: Number(process.env.RATE_LIMIT_GLOBAL_MAX || 300),
+  portal: Number(process.env.RATE_LIMIT_PORTAL_WINDOW_MS || 15 * 60 * 1000),
+  portalMax: Number(process.env.RATE_LIMIT_PORTAL_MAX || 60),
 };
 
 /** Sign in attempts — strict, so a password cannot be brute forced. */
@@ -90,6 +92,13 @@ const paymentLimiter = limiter({
   message: 'Too many payment attempts. Please try again in a few minutes.',
 });
 
+/** Portal reads and customer actions — generous but enumeration-proof. */
+const portalLimiter = limiter({
+  windowMs: WINDOWS.portal,
+  max: WINDOWS.portalMax,
+  message: 'Too many requests. Please slow down.',
+});
+
 /** The outbound SMS is charged per message. */
 const smsLimiter = limiter({
   windowMs: WINDOWS.sms,
@@ -111,6 +120,7 @@ module.exports = {
   applicationLimiter,
   paymentLimiter,
   smsLimiter,
+  portalLimiter,
   globalLimiter,
   WINDOWS,
 };

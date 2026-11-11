@@ -7,6 +7,7 @@ const utils = require('../../lib/utils');
 const dates = require('../../lib/dates');
 const mikrotik = require('../mikrotik');
 const sms = require('../sms');
+const referrals = require('../referrals');
 
 /**
  * Automated billing engine.
@@ -41,6 +42,7 @@ function readSubscriber(row) {
     packageName: raw.packageName || raw.package || '',
     status: row.status || 'active',
     balance: Number(raw.balance || 0),
+    creditBalance: Number(raw.credit_balance || 0),
     dueDate: raw.dueDate || '',
     pppoeUsername: raw.pppoeUsername || raw.username || raw.connectionUsername || '',
     pppoePassword: raw.pppoePassword || raw.connectionPassword || '',
@@ -116,7 +118,14 @@ async function generateInvoice({ subscriber, period, amount, dueDate, lateFee = 
     return { invoice: existing, created: false };
   }
 
-  const invoiceAmount = Number(amount) + Number(lateFee);
+  // Referral credits are consumed at invoice generation time. A customer with
+  // credit is billed the reduced amount; the credit is deducted from the
+  // account in the same transaction as the invoice insert, so an invoice can
+  // never be created without its credit being consumed.
+  const creditBalance = Number(subscriber.creditBalance || 0);
+  const invoiceSubtotal = Number(amount) + Number(lateFee);
+  const creditUsed = Math.min(creditBalance, invoiceSubtotal);
+  const invoiceAmount = invoiceSubtotal - creditUsed;
   const subscriptionAmount = Number(amount);
 
   const rawData = {
@@ -138,6 +147,8 @@ async function generateInvoice({ subscriber, period, amount, dueDate, lateFee = 
     lateFee: Number(lateFee),
     lateFeeReason: lateFee > 0 ? 'Previous bill unpaid past the grace days' : null,
     subscriptionAmount,
+    creditUsed,
+    creditBalanceBefore: creditBalance,
     mikrotikUsername: subscriber.pppoeUsername || '',
   };
 
@@ -163,6 +174,41 @@ async function generateInvoice({ subscriber, period, amount, dueDate, lateFee = 
      RETURNING *`,
     [invoiceId, subscriber.id, invoiceAmount, dueDate, JSON.stringify(rawData)],
   );
+
+  // Decrement the consumption of the referral credit and record the ledger
+  // entry. Done in a transaction so the invoice and the credit deduction
+  // always land together.
+  if (creditUsed > 0) {
+    const deductClient = await db.getPool().connect();
+    try {
+      await deductClient.query('BEGIN');
+      const sub = await deductClient.query('SELECT raw_data FROM subscribers WHERE id = $1 FOR UPDATE', [subscriber.id]);
+      const currentCredit = Number((((sub.rows[0] || {}).raw_data || {})).credit_balance || 0);
+      const nextCredit = Math.max(0, currentCredit - creditUsed);
+      await deductClient.query(
+        `UPDATE subscribers
+            SET raw_data = COALESCE(raw_data, '{}'::jsonb) || jsonb_build_object('credit_balance', $2),
+                updated_at = NOW()
+          WHERE id = $1`,
+        [subscriber.id, nextCredit],
+      );
+      await deductClient.query(
+        `INSERT INTO billing_events (subscriber_id, invoice_id, event, amount, message)
+         VALUES ($1, $2, 'referral_credit_applied', $3, $4)`,
+        [subscriber.id, invoiceId, creditUsed, `Referral credit of $${creditUsed.toFixed(2)} applied`],
+      );
+      await deductClient.query('COMMIT');
+    } catch (error) {
+      await deductClient.query('ROLLBACK').catch(() => {});
+      logger.error('failed to deduct referral credit after invoice generation', {
+        subscriberId: subscriber.id,
+        error: error.message,
+      });
+      throw error;
+    } finally {
+      deductClient.release();
+    }
+  }
 
   if (inserted && !existing) {
     await db.query(
@@ -650,6 +696,20 @@ async function applyPayment({ invoiceId, transactionId, gateway, amount, raw = {
   );
 
   const updated = await db.queryOne('SELECT * FROM invoices WHERE id = $1', [invoiceId]);
+
+  // A settled payment is the moment a referrer's reward becomes earned.
+  if (subscriber) {
+    try {
+      await referrals.onPaymentSettled({ subscriberId: subscriber.id, invoiceId });
+    } catch (error) {
+      logger.error('referral qualification failed', {
+        subscriberId: subscriber.id,
+        invoiceId,
+        error: error.message,
+      });
+    }
+  }
+
   return { invoice: updated, alreadyPaid: false };
 }
 

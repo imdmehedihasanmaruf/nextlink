@@ -44,7 +44,7 @@ import { Label } from '@/components/ui/label'
 import { useAuthStore } from '@/store/authStore'
 import { useTranslation } from '@/store/settingsStore'
 import { useContentStore } from '@/store/contentStore'
-import { createTicket, fetchMyInvoices, fetchMySummary, payInvoice, type PortalInvoice, type PortalSummary } from '@/lib/portalApi'
+import { fetchMyInvoices, fetchMySummary, fetchMyReferral, fetchMyTurboBoost, payInvoice, requestTurboBoost, type PortalInvoice, type PortalSummary } from '@/lib/portalApi'
 import { useModalA11y } from '@/lib/useModalA11y'
 
 interface PaymentRecord {
@@ -101,6 +101,11 @@ export default function DashboardPage() {
   const [boostSending, setBoostSending] = useState(false)
   const [boostError, setBoostError] = useState<string | null>(null)
   const [copiedReferral, setCopiedReferral] = useState(false)
+
+  // Real, database-backed values for the referral and turbo boost cards.
+  // The CMS only supplies display copy; the numbers and the actions are real.
+  const [myReferral, setMyReferral] = useState<{ code: string; title: string; description: string; bonusAmount: number; referrals: Array<{ status: string }> } | null>(null)
+  const [myBoost, setMyBoost] = useState<{ activeRequest: boolean; requests: Array<{ reference: string; status: string; adminNote: string | null }> } | null>(null)
 
   // Payable balance state
   const [balance, setBalance] = useState(0.00)
@@ -205,11 +210,34 @@ export default function DashboardPage() {
     }
   }, [])
 
+  // Real referral code + stats and turbo boost requests from the server.
+  const loadReferralAndBoost = React.useCallback(async () => {
+    const ref = await fetchMyReferral()
+    if (ref.success && ref.code) {
+      setMyReferral({
+        code: ref.code,
+        title: ref.title || 'Refer a friend',
+        description: ref.description || 'Share your invite link — the reward is applied when your friend activates and pays.',
+        bonusAmount: Number(ref.bonusAmount || 0),
+        referrals: Array.isArray(ref.referrals) ? ref.referrals : [],
+      })
+    }
+    const boost = await fetchMyTurboBoost()
+    if (boost.success) {
+      setMyBoost({
+        activeRequest: !!boost.activeRequest,
+        requests: Array.isArray(boost.requests) ? boost.requests : [],
+      })
+    }
+  }, [])
+
   useEffect(() => {
     if (isAuthenticated) {
       loadLiveBilling()
+      loadReferralAndBoost()
     }
-  }, [isAuthenticated, loadLiveBilling])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isAuthenticated, loadLiveBilling, loadReferralAndBoost])
 
   // Pay a real invoice through the selected local gateway
   const handlePayLiveInvoice = async (invoice: PortalInvoice) => {
@@ -346,24 +374,23 @@ export default function DashboardPage() {
     setBoostSending(true)
     const hours = Number(boostBandwidth?.durationHours || 6)
     const speed = Number(boostBandwidth?.boostSpeed || 1000)
-    const result = await createTicket({
-      subject: `Turbo boost request (${hours}h × ${speed} Mbps)`,
-      category: 'Configuration',
-      priority: 'low',
-      description: `Subscriber ${user?.id || ''} requested a ${hours}-hour burst to ${speed} Mbps. Please activate it on the router and notify the subscriber by SMS.`,
-    })
+    const result = await requestTurboBoost({ durationHours: hours, requestedMbps: speed })
     setBoostSending(false)
     if (result.success) {
       setBoostRequested(true)
+      // Refresh from the server so the card reflects the new request's
+      // reference and pending state.
+      await loadReferralAndBoost()
     } else {
       setBoostError(result.error || 'The boost request could not be sent. Please try again.')
     }
   }
 
   const handleCopyReferral = async () => {
-    const code = referralRewards?.defaultCode || '—'
+    const code = myReferral?.code || referralRewards?.defaultCode || ''
+    if (!code) return
     try {
-      await navigator.clipboard.writeText(`https://nextlink.global/apply?ref=${code}`)
+      await navigator.clipboard.writeText(`${typeof window !== 'undefined' ? window.location.origin : ''}/apply?ref=${code}`)
       setCopiedReferral(true)
       setTimeout(() => setCopiedReferral(false), 3000)
     } catch {
@@ -517,7 +544,7 @@ export default function DashboardPage() {
           the programme in the admin panel, the portal card disappears rather
           than advertising a programme that does not exist. */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        {/* 1. Refer & Earn Box */}
+        {/* 1. Refer & Earn Box — real data from the server */}
         {referralRewards?.enabled !== false && (
         <Card className="border-2 border-emerald-500/30 bg-emerald-500/5 shadow-sm">
           <CardHeader className="pb-3">
@@ -526,20 +553,20 @@ export default function DashboardPage() {
                 <Gift className="h-3.5 w-3.5 mr-1" />
                 {t('referAndEarn')}
               </Badge>
-              <span className="text-xs font-bold text-emerald-600">${referralRewards?.bonusAmount || 25} Reward</span>
+              <span className="text-xs font-bold text-emerald-600">${myReferral?.bonusAmount ?? referralRewards?.bonusAmount ?? 0} Reward</span>
             </div>
             <CardTitle className="text-lg mt-2">
-              {referralRewards?.title || 'Refer a friend'}
+              {myReferral?.title || referralRewards?.title || 'Refer a friend'}
             </CardTitle>
             <CardDescription>
-              {referralRewards?.description || 'Share your invite link with a friend — you both receive billing credit when they activate.'}
+              {myReferral?.description || referralRewards?.description || 'Share your invite link — you get credit when your friend activates and pays.'}
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
             <div className="rounded-xl border bg-card p-3 flex items-center justify-between">
               <div>
                 <p className="text-[10px] text-muted-foreground uppercase font-bold">Your Referral Code</p>
-                <p className="font-mono font-bold text-sm text-primary">{referralRewards?.defaultCode || '—'}</p>
+                <p className="font-mono font-bold text-sm text-primary">{myReferral?.code || '…'}</p>
               </div>
               <Button size="sm" variant="outline" onClick={handleCopyReferral} className="gap-1.5 h-8">
                 {copiedReferral ? <Check className="h-3.5 w-3.5 text-emerald-600" /> : <Copy className="h-3.5 w-3.5" />}
@@ -548,14 +575,8 @@ export default function DashboardPage() {
             </div>
 
             <div className="flex items-center justify-between text-xs text-muted-foreground pt-1 border-t">
-              {referralRewards?.friendsJoinedCount !== undefined || Array.isArray(referralRewards?.referrals) ? (
-                <>
-                  <span>Friends Joined: <strong className="text-foreground">{referralRewards?.friendsJoinedCount ?? (referralRewards?.referrals?.length ?? 0)}</strong></span>
-                  <span className="text-emerald-600 font-semibold">{referralRewards?.tierName || ''}</span>
-                </>
-              ) : (
-                <span>Invite friends and get the reward credited to your next invoice.</span>
-              )}
+              <span>Referrals Tracked: <strong className="text-foreground">{myReferral?.referrals?.length ?? 0}</strong></span>
+              <span className="text-emerald-600 font-semibold">Credit: ${(myReferral?.referrals?.length ? myReferral.referrals.length * (myReferral.bonusAmount || 0) : 0).toFixed(2)}</span>
             </div>
           </CardContent>
         </Card>
@@ -566,26 +587,31 @@ export default function DashboardPage() {
         <Card className="border-2 border-amber-500/30 bg-amber-500/5 shadow-sm">
           <CardHeader className="pb-3">
             <div className="flex items-center justify-between">
-              <Badge className="bg-amber-600 text-white font-bold">
-                <Zap className="h-3.5 w-3.5 mr-1" />
-                {t('instantBoost')}
-              </Badge>
-              <span className="text-xs font-bold text-amber-600">{boostRequested ? 'Requested' : (boostBandwidth?.status || 'Ready')}</span>
+              <div>
+                <Badge className="bg-amber-600 text-white font-bold">
+                  <Zap className="h-3.5 w-3.5 mr-1" />
+                  {t('instantBoost')}
+                </Badge>
+                <CardTitle className="text-lg mt-2">
+                  {boostBandwidth?.title || 'Turbo Boost on Request'}
+                </CardTitle>
+              </div>
+              <span className="text-xs font-bold text-amber-600">
+                {myBoost?.activeRequest ? 'Pending' : (boostBandwidth?.status || 'Available')}
+              </span>
             </div>
-            <CardTitle className="text-lg mt-2">
-              {boostBandwidth?.title || 'Turbo Boost on Request'}
-            </CardTitle>
             <CardDescription>
-              {boostBandwidth?.description || 'Instantly scale bandwidth for massive cloud syncs, torrents, or gaming'}
+              {boostBandwidth?.description || 'Request a time-boxed burst and the helpdesk activates it on your line.'}
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
-            {boostRequested ? (
+            {myBoost?.activeRequest ? (
               <div className="space-y-2">
                 <div className="p-3 bg-amber-500/10 rounded-xl border border-amber-500/20 text-center">
-                  <p className="text-xs font-bold text-amber-700 dark:text-amber-400">⚡ Boost request sent</p>
+                  <p className="text-xs font-bold text-amber-700 dark:text-amber-400">⚡ Boost request received</p>
                   <p className="text-[11px] text-muted-foreground mt-1">
-                    The helpdesk has been asked to activate a {boostBandwidth?.durationHours || 6}-hour × {boostBandwidth?.boostSpeed || 1000} Mbps burst for your line. You will receive an SMS when it is live.
+                    Reference: <span className="font-mono font-semibold text-foreground">{myBoost.requests.find(r => r.status === 'requested' || r.status === 'in_progress')?.reference || '—'}</span>
+                    <br />The helpdesk will apply the change on your line and confirm by SMS.
                   </p>
                 </div>
               </div>

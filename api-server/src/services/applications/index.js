@@ -7,6 +7,7 @@ const config = require('../../config');
 const db = require('../../lib/db');
 const logger = require('../../lib/logger');
 const utils = require('../../lib/utils');
+const referrals = require('../referrals');
 
 /**
  * Online connection request service (SRS 3.1 — Online Connection Request).
@@ -74,8 +75,19 @@ async function storeIdDocument(dataUrl, requestId) {
 /**
  * Create a connection request.
  */
+function randomIdPart() {
+  return crypto.randomBytes(4).toString('hex').toUpperCase();
+}
+
 async function createRequest(payload) {
   const id = `REQ-${new Date().getFullYear()}-${utils.randomToken(4).toUpperCase()}`;
+
+  let referral = null;
+  if (payload.referral && String(payload.referral).trim()) {
+    // An unrecognised or disabled code must abort the request — accepting a
+    // referral we cannot track would silently break the reward.
+    referral = await referrals.validateCode(payload.referral, payload.phone);
+  }
 
   let idDocumentPath = null;
   if (payload.idDocumentDataUrl) {
@@ -109,6 +121,20 @@ async function createRequest(payload) {
   );
 
   logger.info('connection request created', { id, package: payload.packageName });
+
+  if (referral) {
+    try {
+      await referrals.createReferralForApplication({
+        referrerId: referral.referrerId,
+        code: referral.code,
+        applicationId: id,
+        raw: { phone: payload.phone || null, applicantName: payload.fullName || null },
+      });
+    } catch (error) {
+      logger.warn('could not record the referral for the application', { id, error: error.message });
+    }
+  }
+
   return result;
 }
 
@@ -256,6 +282,18 @@ async function approveRequest(id, { activate = true } = {}) {
   });
 
   logger.info('connection request activated', { requestId: id, subscriberId });
+
+  // Link the pending referral (if any) created at application time to the
+  // new account. Idempotent.
+  try {
+    await referrals.attachToSubscriberByApplication(id, subscriberId);
+  } catch (error) {
+    logger.warn('could not attach the referral to the new subscriber', {
+      id,
+      subscriberId,
+      error: error.message,
+    });
+  }
 
   return {
     success: true,

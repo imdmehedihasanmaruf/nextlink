@@ -258,6 +258,63 @@ export interface PortalTicket {
   updated_at: string;
 }
 
+/** The signed-in subscriber's referral information. */
+export async function fetchMyReferral() {
+  return portalFetch<{
+    code: string;
+    enabled: boolean;
+    title: string;
+    description: string;
+    bonusAmount: number;
+    stats: { pending: number; qualified: number; credited: number; void: number; totalCredited: number };
+    referrals: Array<{
+      id: string;
+      code: string;
+      status: string;
+      rewardAmount: number;
+      qualifiedAt: string | null;
+      creditedAt: string | null;
+      createdAt: string;
+    }>;
+  }>('/api/customer/referral');
+}
+
+/** List the signed-in subscriber's turbo boost requests. */
+export async function fetchMyTurboBoost() {
+  return portalFetch<{
+    activeRequest: boolean;
+    maxMbps: number;
+    requests: Array<{
+      id: string;
+      reference: string;
+      durationHours: number;
+      requestedMbps: number;
+      status: string;
+      adminNote: string | null;
+      ticketId: string | null;
+      createdAt: string;
+      decidedAt: string | null;
+      appliedAt: string | null;
+    }>;
+  }>('/api/customer/turbo-boost');
+}
+
+/** Request a turbo boost. */
+export async function requestTurboBoost(payload: { durationHours: number; requestedMbps: number }) {
+  return portalFetch<{
+    reference: string;
+    request: {
+      id: string;
+      reference: string;
+      status: string;
+      durationHours: number;
+      requestedMbps: number;
+      ticketId: string | null;
+      createdAt: string;
+    };
+  }>('/api/customer/turbo-boost', { method: 'POST', body: JSON.stringify(payload) });
+}
+
 /** Create a support ticket. */
 export async function createTicket(payload: {
   subject: string;
