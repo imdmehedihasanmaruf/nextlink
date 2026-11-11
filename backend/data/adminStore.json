@@ -2461,60 +2461,26 @@
   "revenueHistory": [],
   "subscriberGrowth": [],
   "referralRewards": {
+    "title": "Refer a friend",
     "enabled": true,
+    "tierName": "",
+    "referrals": [],
     "bonusAmount": 25,
+    "defaultCode": "",
+    "description": "Share your invite link — ask support to apply your referral credit to your next bill once your friend activates.",
     "discountPercent": 10,
-    "defaultCode": "NL-GLOBAL-REF",
-    "title": "Earn $25 on Your Next Invoice",
-    "description": "Share your unique invite link with colleagues or neighbors worldwide",
-    "friendsJoinedCount": 3,
-    "totalSavedAmount": 75,
-    "tierName": "Platinum Tier",
-    "referrals": [
-      {
-        "id": "REF-001",
-        "name": "Alexander Wright",
-        "email": "alex.w@cloudcorp.io",
-        "date": "2026-10-14",
-        "reward": 25,
-        "status": "Rewarded"
-      },
-      {
-        "id": "REF-002",
-        "name": "Elena Rostova",
-        "email": "elena.r@quantum.tech",
-        "date": "2026-10-28",
-        "reward": 25,
-        "status": "Rewarded"
-      },
-      {
-        "id": "REF-003",
-        "name": "Marcus Vance",
-        "email": "marcus.v@edgefiber.net",
-        "date": "2026-11-02",
-        "reward": 25,
-        "status": "Rewarded"
-      }
-    ]
+    "totalSavedAmount": 0,
+    "friendsJoinedCount": 0
   },
   "boostBandwidth": {
+    "title": "Turbo Boost on Request",
+    "status": "",
     "enabled": true,
+    "history": [],
     "boostSpeed": 1000,
+    "description": "Request a time-boxed speed burst for a big upload or download — routed to support like any other change.",
     "durationHours": 6,
-    "title": "1-Click 1 Gbps Turbo Boost",
-    "description": "Instantly scale bandwidth for massive cloud syncs, torrents, or gaming",
-    "status": "Ready",
-    "burstQuotaPerMonth": 3,
-    "history": [
-      {
-        "id": "BST-001",
-        "subscriber": "NL-SUB-0192",
-        "speed": 1000,
-        "duration": 6,
-        "date": "2026-11-05",
-        "status": "Completed"
-      }
-    ]
+    "burstQuotaPerMonth": 0
   },
   "liveLatency": {
     "enabled": true,

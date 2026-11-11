@@ -587,23 +587,23 @@ const defaultContent = {
   // and the credits are not applied automatically. Empty lists render as no
   // stats rather than made-up ones.
   referralRewards: {
-    enabled: false,
+    enabled: true,
     bonusAmount: 25,
     discountPercent: 10,
     defaultCode: "",
     title: "Refer a friend",
-    description: "Share your invite link with a friend — you both receive billing credit when they activate.",
+    description: "Share your invite link — ask support to apply your referral credit to your next bill once your friend activates.",
     friendsJoinedCount: 0,
     totalSavedAmount: 0,
     tierName: "",
     referrals: [],
   },
   boostBandwidth: {
-    enabled: false,
+    enabled: true,
     boostSpeed: 1000,
     durationHours: 6,
     title: "Turbo Boost on Request",
-    description: "Request a time-boxed speed burst over the service hours. Routed to support like any other change.",
+    description: "Request a time-boxed speed burst for a big upload or download — routed to support like any other change.",
     status: "",
     burstQuotaPerMonth: 0,
     history: [],

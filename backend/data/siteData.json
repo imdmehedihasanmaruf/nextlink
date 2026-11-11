@@ -470,10 +470,10 @@
   "boostBandwidth": {
     "title": "Turbo Boost on Request",
     "status": "",
-    "enabled": false,
+    "enabled": true,
     "history": [],
     "boostSpeed": 1000,
-    "description": "Time-boxed speed burst routed through support like any other change.",
+    "description": "Request a time-boxed speed burst for a big upload or download — routed to support like any other change.",
     "durationHours": 6,
     "burstQuotaPerMonth": 0
   },
@@ -490,12 +490,12 @@
   },
   "referralRewards": {
     "title": "Refer a friend",
-    "enabled": false,
+    "enabled": true,
     "tierName": "",
     "referrals": [],
     "bonusAmount": 25,
     "defaultCode": "",
-    "description": "Share your invite link with a friend — you both receive billing credit when they activate.",
+    "description": "Share your invite link — ask support to apply your referral credit to your next bill once your friend activates.",
     "discountPercent": 10,
     "totalSavedAmount": 0,
     "friendsJoinedCount": 0

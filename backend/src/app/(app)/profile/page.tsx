@@ -7,11 +7,12 @@ import {
   Mail,
   Phone,
   Save,
-  Key, 
-  Check, 
-  AlertTriangle, 
-  LogOut, 
+  Key,
+  Check,
+  AlertTriangle,
+  LogOut,
   Lock,
+  Shield,
   Building,
   RefreshCw,
   Trash2
@@ -104,13 +105,23 @@ export default function AdminProfilePage() {
                 Staff ID: <span className="text-foreground font-semibold">{user.id}</span> • Auth Email: <span className="text-foreground font-semibold">{email}</span>
               </p>
               <div className="flex flex-wrap gap-2 pt-1">
-                {/* No MFA exists in this system yet — the previous badge read
-                    "MFA Hardware Enforced", which was fiction. Multi-factor
-                    setup is planned; what is real is the server-verified
-                    staff session, so that is what the badge states. */}
+                {/* What this badge says is true for every staff account. The
+                    MFA badge was removed because no MFA exists in the system. */}
                 <Badge variant="outline" className="gap-1 text-xs">
                   <Lock size={12} className="text-emerald-500" /> Server-verified staff session
                 </Badge>
+                {/* The previous screen showed "Full Infrastructure Privileges"
+                    to every staff member — including field technicians. It was
+                    only ever true for super_admin, so that is when it shows. */}
+                {String(user.role) === 'super_admin' ? (
+                  <Badge variant="secondary" className="gap-1 text-xs">
+                    <Shield size={12} className="text-primary" /> Full Infrastructure Privileges
+                  </Badge>
+                ) : (
+                  <Badge variant="secondary" className="gap-1 text-xs capitalize">
+                    <Shield size={12} className="text-primary" /> {String(user.role).replace('_', ' ')} access — per role matrix
+                  </Badge>
+                )}
               </div>
             </div>
           </div>
