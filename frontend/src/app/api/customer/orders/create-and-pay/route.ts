@@ -105,48 +105,22 @@ export async function POST(request: Request) {
     // 5. Server-Side Financial Calculation
     const targetPrice = Number(targetPkg.price || 0);
 
-    // The current price comes from the catalogue, not from the subscriber
-    // record — the raw_data field the old code read does not exist, so the
-    // credit was always computed against a hard-coded 29.99.
-    const currentPkg = (siteData.packages || []).find(
-      (p: any) =>
-        p.id === subscriber.packageId ||
-        String(p.name || '').toLowerCase() === String(subscriber.packageName || '').toLowerCase()
-    );
-    const currentPrice = Number(currentPkg?.price ?? currentPkg?.downloadSpeed ?? 0);
-
     const pTypeStr = String(purchaseType || '').toLowerCase();
     const type = pTypeStr.includes('add') ? 'ADDITIONAL' : 'UPGRADE';
 
-    // Proration is calculated from the real billing cycle, not from a fixed
-    // number of days. The unused part of the old plan is credited and the new
-    // plan is only charged for the days that are left in the cycle.
-    const BILLING_DAYS = 30;
-    const cycleStart = subscriber.raw_data?.billingStart
-      ? new Date(subscriber.raw_data.billingStart)
-      : new Date(Date.now() - 12 * 86400000);
-    const daysElapsed = Math.max(
-      0,
-      Math.min(BILLING_DAYS, Math.floor((Date.now() - cycleStart.getTime()) / 86400000))
-    );
-    const daysRemaining = Math.max(0, BILLING_DAYS - daysElapsed);
+    // The operator's pricing rule: every package purchase is charged the plan
+    // price PLUS a fixed $18 installation fee PLUS a fixed $5 late fee. No
+    // proration credit is subtracted — the plan price is always the base.
+    const INSTALLATION_FEE = 18;
+    const LATE_FEE = 5;
 
-    const currentDaily = currentPrice / BILLING_DAYS;
-    const targetDaily = targetPrice / BILLING_DAYS;
-
-    // An additional line carries a fixed $18 installation fee; an upgrade has
-    // the unused days of the old plan credited instead.
-    const ADDITIONAL_LINE_INSTALLATION_FEE = 18;
-    const proratedAdjustment =
-      type === 'UPGRADE' ? -Number((currentDaily * daysRemaining).toFixed(2)) : 0;
-    const installationFee = type === 'UPGRADE' ? 0 : ADDITIONAL_LINE_INSTALLATION_FEE;
+    const daysRemaining = 0;
+    const currentDaily = 0;
+    const proratedAdjustment = 0;
+    const installationFee = INSTALLATION_FEE;
+    const lateFee = LATE_FEE;
     const taxes = 0;
-    const totalPayable = Number(
-      Math.max(
-        installationFee,
-        targetDaily * daysRemaining + installationFee + taxes + proratedAdjustment,
-      ).toFixed(2),
-    );
+    const totalPayable = Number((targetPrice + installationFee + lateFee).toFixed(2));
 
     // 6. Generate Server Verified Tokens
     // The ids are unique: the previous values came from small spaces that
@@ -187,8 +161,10 @@ export async function POST(request: Request) {
       connectionId: `CONN-${subscriber.id.replace('SUB-', 'OPT-')}-01`,
       packageId: targetPkg.id,
       packageName: targetPkg.name,
+      // The stored value is always upper-case; the comparison with lower-case
+      // in db.ts used to silently fail and the pending plan was never kept.
       purchaseType: type,
-      purchase_type: type,
+      purchase_type: type.toUpperCase(),
       purchaseTypeLabel: orderClassificationLabel,
       purchase_type_label: orderClassificationLabel,
       currentPackageId: subscriber.packageId,
@@ -198,6 +174,7 @@ export async function POST(request: Request) {
       monthlyPrice: targetPrice,
       proratedAdjustment,
       installationFee,
+      lateFee,
       taxes,
       discount: 0.00,
       totalPayable,

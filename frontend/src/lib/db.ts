@@ -249,7 +249,7 @@ export async function createOrderRecord(order: any): Promise<any> {
     // The subscriber's package is NOT changed here. The plan changes when the
     // order is approved, so a pending order does not change what the customer
     // is billed for, and a cancelled order can be reverted.
-    if (order.purchaseType === 'upgrade') {
+    if (String(order.purchaseType || '').toUpperCase() === 'UPGRADE') {
       const subRes = await client.query('SELECT raw_data FROM subscribers WHERE id = $1', [order.customerId]);
       if (subRes.rows.length > 0) {
         const raw = subRes.rows[0].raw_data || {};

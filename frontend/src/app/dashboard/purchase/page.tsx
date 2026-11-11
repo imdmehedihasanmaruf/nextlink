@@ -54,6 +54,7 @@ interface OrderCalculation {
   newPrice: number
   proratedAdjustment: number
   installationFee: number
+  lateFee?: number
   taxes: number
   discount: number
   totalPayable: number
@@ -63,6 +64,7 @@ interface OrderCalculation {
     remainingCurrentSubscriptionValue?: number
     totalPayableToday?: number
     daysRemainingInCycle?: number
+    lateFee?: number
     purchaseType?: string
   }
 }
@@ -761,7 +763,7 @@ function PurchaseContent() {
                       </li>
                       <li className="flex items-center gap-2">
                         <CheckCircle2 className="h-3.5 w-3.5 text-emerald-500 shrink-0" />
-                        <span><strong>$0.00</strong> Zero optical installation fee</span>
+                        <span>One-time installation fee <strong>$18.00</strong></span>
                       </li>
                       <li className="flex items-center gap-2">
                         <CheckCircle2 className="h-3.5 w-3.5 text-emerald-500 shrink-0" />
@@ -1036,44 +1038,33 @@ function PurchaseContent() {
                         </span>
                       </div>
 
-                      {/* Remaining days of the old plan are credited (upgrades only) */}
-                      {purchaseType === 'UPGRADE' && (
-                        <div className="flex justify-between items-center py-1 border-t border-border/50">
-                          <div>
-                            <p className="font-medium text-foreground">Unused Days of Current Plan (credited)</p>
-                            <p className="text-muted-foreground text-[11px]">
-                              {orderCalculation?.calculation?.daysRemainingInCycle !== undefined
-                                ? `${orderCalculation.calculation.daysRemainingInCycle} of 30 days remaining in the current cycle`
-                                : 'Credit for the unused days of the plan you are leaving'}
-                            </p>
-                          </div>
-                          <span className="font-mono font-semibold text-emerald-600 dark:text-emerald-400">
-                            −{Number(
-                              orderCalculation?.calculation?.remainingCurrentSubscriptionValue ??
-                              Math.abs(orderCalculation?.proratedAdjustment ?? 0),
-                            ).toFixed(2)}
-                          </span>
-                        </div>
-                      )}
-
-                      {/* Optical Provisioning Fee */}
+                      {/* Installation fee — fixed for every package purchase */}
                       <div className="flex justify-between items-center py-1 border-t border-border/50">
                         <div>
-                          <p className="font-medium text-foreground">Carrier Optical Provisioning &amp; Installation Fee</p>
-                          <p className="text-muted-foreground text-[11px]">
-                            {purchaseType === 'UPGRADE' ? 'Waived for existing customer upgrade' : 'Secondary optical line drop setup'}
-                          </p>
+                          <p className="font-medium text-foreground">One-Time Installation Fee</p>
+                          <p className="text-muted-foreground text-[11px]">Fixed fee for provisioning the optical drop</p>
                         </div>
                         <span className="font-mono font-semibold text-foreground">
-                          {Number(orderCalculation?.installationFee ?? 0).toFixed(2)}
+                          +{Number(orderCalculation?.installationFee ?? 18).toFixed(2)}
                         </span>
                       </div>
 
-                      {/* Telecom Tax / Regulatory */}
+                      {/* Late fee — fixed for every package purchase */}
+                      <div className="flex justify-between items-center py-1 border-t border-border/50">
+                        <div>
+                          <p className="font-medium text-foreground">Late Payment Fee</p>
+                          <p className="text-muted-foreground text-[11px]">Fixed fee applied to the plan price</p>
+                        </div>
+                        <span className="font-mono font-semibold text-foreground">
+                          +{Number(orderCalculation?.lateFee ?? 5).toFixed(2)}
+                        </span>
+                      </div>
+
+                      {/* Regulatory note */}
                       <div className="flex justify-between items-center py-1 border-t border-border/50">
                         <div>
                           <p className="font-medium text-foreground">Applicable Telecommunications Tax &amp; Regulatory Surcharge</p>
-                          <p className="text-muted-foreground text-[11px]">100% Symmetrical Fiber Regulatory Clearance</p>
+                          <p className="text-muted-foreground text-[11px]">Included in the plan — nothing extra is charged</p>
                         </div>
                         <span className="font-mono font-semibold text-foreground">
                           {Number(orderCalculation?.taxes ?? 0).toFixed(2)}

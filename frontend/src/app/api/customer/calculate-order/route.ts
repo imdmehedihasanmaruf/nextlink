@@ -71,48 +71,24 @@ export async function POST(request: Request) {
     const pTypeStr = String(purchaseType || '').toLowerCase();
     const type = pTypeStr.includes('add') ? 'ADDITIONAL' : 'UPGRADE';
 
-    // The proration is calculated from the real billing cycle. The previous
-    // code used a fixed number of days and always charged the full price of
-    // the new plan on top of the month's bill.
-    const BILLING_DAYS = 30;
-    const cycleStart = subscriber.raw_data?.billingStart
-      ? new Date(subscriber.raw_data.billingStart)
-      : new Date(Date.now() - 12 * 86400000);
-    const daysElapsed = Math.max(
-      0,
-      Math.min(BILLING_DAYS, Math.floor((Date.now() - cycleStart.getTime()) / 86400000))
-    );
-    const daysRemaining = Math.max(0, BILLING_DAYS - daysElapsed);
+    // The operator's pricing rule: every package purchase is charged the plan
+    // price PLUS a fixed $18 installation fee PLUS a fixed $5 late fee. No
+    // proration credit is subtracted — the plan price is always the base.
+    const INSTALLATION_FEE = 18;
+    const LATE_FEE = 5;
 
-    const currentDaily = currentPrice / BILLING_DAYS;
-    const targetDaily = targetPrice / BILLING_DAYS;
-
-    let remainingSubscriptionValue = 0;
-    let proratedAdjustment = 0;
-    let installationFee = 0;
-    let taxes = 0;
-    let totalPayable = targetPrice;
+    const remainingSubscriptionValue = 0.00;
+    const proratedAdjustment = 0.00;
+    const installationFee = INSTALLATION_FEE;
+    const lateFee = LATE_FEE;
+    const taxes = 0.00;
+    const totalPayable = Number((targetPrice + installationFee + lateFee).toFixed(2));
 
     if (type === 'UPGRADE') {
-      // The unused part of the old plan is credited, and the new plan is only
-      // charged for the days that are left in the cycle.
-      remainingSubscriptionValue = Number((currentDaily * daysRemaining).toFixed(2));
-      proratedAdjustment = -remainingSubscriptionValue;
-      installationFee = 0.00;
-      taxes = 0.00;
-      totalPayable = Number(
-        Math.max(0, targetDaily * daysRemaining + installationFee + taxes + proratedAdjustment).toFixed(2)
-      );
-    } else {
-      // An additional connection is a separate line with a fixed installation
-      // fee — $18, not a percentage of the plan price.
-      const ADDITIONAL_LINE_INSTALLATION_FEE = 18;
-      remainingSubscriptionValue = 0.00;
-      proratedAdjustment = 0.00;
-      installationFee = ADDITIONAL_LINE_INSTALLATION_FEE;
-      taxes = 0.00;
-      totalPayable = Number((targetPrice + installationFee).toFixed(2));
+      // No proration credit is applied — the plan price is the base.
     }
+    // An additional connection is simply priced the same way — package price +
+    // fixed fees.
 
     // Determine next billing date
     const nextBillingDate = subscriber.dueDate || '2026-02-15';
@@ -140,11 +116,12 @@ export async function POST(request: Request) {
       remainingCurrentSubscriptionValue: remainingSubscriptionValue,
       proratedAdjustment,
       installationFee,
+      lateFee,
       taxes,
       discount: 0.00,
       totalPayableToday: totalPayable,
       nextBillingDate,
-      daysRemainingInCycle: daysRemaining,
+      daysRemainingInCycle: 0,
     };
 
     return NextResponse.json(
@@ -157,6 +134,7 @@ export async function POST(request: Request) {
         newPrice: targetPrice,
         proratedAdjustment,
         installationFee,
+        lateFee,
         taxes,
         discount: 0.00,
         totalPayable,

@@ -803,7 +803,7 @@ export async function updateOrderStatus(orderId: string, newStatus: string): Pro
       const subRes = await client.query('SELECT raw_data FROM subscribers WHERE id = $1', [order.customer_id]);
       if (subRes.rows.length > 0) {
         const raw = subRes.rows[0].raw_data || {};
-        if (order.purchase_type === 'upgrade') {
+        if (String(order.purchase_type || '').toUpperCase() === 'UPGRADE') {
           // The plan only changes now, on approval. A pending or cancelled
           // order leaves the account on its current plan.
           raw.packageId = order.package_id;
@@ -812,7 +812,7 @@ export async function updateOrderStatus(orderId: string, newStatus: string): Pro
           raw.uploadSpeed = order.upload_speed;
           delete raw.pendingPackageId;
           delete raw.pendingPackageName;
-        } else if (order.purchase_type === 'additional') {
+        } else if (String(order.purchase_type || '').toUpperCase() === 'ADDITIONAL') {
           if (!raw.additionalConnections) raw.additionalConnections = [];
           raw.additionalConnections.push({
             orderId: order.id,
