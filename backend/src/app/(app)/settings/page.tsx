@@ -35,6 +35,15 @@ interface StaffUser {
 }
 
 interface SystemSettings {
+  // New in the settings API — tells the admin UI which values the
+  // environment pins, so production shows the effective mode read-only.
+  runtime?: {
+    nodeEnv: string;
+    mikrotikMode: string;
+    smsMode: string;
+    paymentMode: string;
+    locked: boolean;
+  };
   mikrotik: {
     mode: string;
     host: string;
@@ -493,22 +502,28 @@ export default function SettingsPage() {
                     <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
                       <div>
                         <Label>Mode</Label>
-                        <Select
-                          value={system.mikrotik.mode}
-                          onValueChange={(value) =>
-                            updateSystem({
-                              mikrotik: { ...system.mikrotik, mode: value },
-                            })
-                          }
-                        >
-                          <SelectTrigger>
-                            <SelectValue placeholder="Select mode" />
-                          </SelectTrigger>
-                          <SelectContent>
-                            <SelectItem value="simulator">Simulator (no hardware)</SelectItem>
-                            <SelectItem value="live">Live RouterOS</SelectItem>
-                          </SelectContent>
-                        </Select>
+                        {system.runtime?.locked ? (
+                          <div className="mt-1.5 h-9 flex items-center px-3 rounded-md border bg-muted/50 text-sm font-semibold">
+                            {system.runtime.mikrotikMode === 'live' ? 'Live RouterOS (enforced by environment)' : 'Simulator (enforced by environment)'}
+                          </div>
+                        ) : (
+                          <Select
+                            value={system.mikrotik.mode}
+                            onValueChange={(value) =>
+                              updateSystem({
+                                mikrotik: { ...system.mikrotik, mode: value },
+                              })
+                            }
+                          >
+                            <SelectTrigger>
+                              <SelectValue placeholder="Select mode" />
+                            </SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value="simulator">Simulator (development only)</SelectItem>
+                              <SelectItem value="live">Live RouterOS</SelectItem>
+                            </SelectContent>
+                          </Select>
+                        )}
                       </div>
                       <div>
                         <Label>Router Host IP</Label>
@@ -612,20 +627,26 @@ export default function SettingsPage() {
                     <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
                       <div>
                         <Label>Mode</Label>
-                        <Select
-                          value={system.sms.mode}
-                          onValueChange={(value) =>
-                            updateSystem({ sms: { ...system.sms, mode: value } })
-                          }
-                        >
-                          <SelectTrigger>
-                            <SelectValue placeholder="Select mode" />
-                          </SelectTrigger>
-                          <SelectContent>
-                            <SelectItem value="mock">Mock (logged only)</SelectItem>
-                            <SelectItem value="live">Live gateway</SelectItem>
-                          </SelectContent>
-                        </Select>
+                        {system.runtime?.locked ? (
+                          <div className="mt-1.5 h-9 flex items-center px-3 rounded-md border bg-muted/50 text-sm font-semibold">
+                            {system.runtime.smsMode === 'live' ? 'Live gateway (enforced by environment)' : 'Mock — logged only (enforced by environment)'}
+                          </div>
+                        ) : (
+                          <Select
+                            value={system.sms.mode}
+                            onValueChange={(value) =>
+                              updateSystem({ sms: { ...system.sms, mode: value } })
+                            }
+                          >
+                            <SelectTrigger>
+                              <SelectValue placeholder="Select mode" />
+                            </SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value="mock">Mock — logged only (development)</SelectItem>
+                              <SelectItem value="live">Live gateway</SelectItem>
+                            </SelectContent>
+                          </Select>
+                        )}
                       </div>
                       <div>
                         <Label>Provider</Label>
@@ -687,7 +708,14 @@ export default function SettingsPage() {
                   <div className="grid grid-cols-2 md:grid-cols-6 gap-4">
                     <div className="rounded-lg border p-3">
                       <p className="text-xs text-muted-foreground">Payment Mode</p>
-                      <p className="text-lg font-bold mt-1 capitalize">{system.payments.mode}</p>
+                      <p className="text-lg font-bold mt-1 capitalize">
+                        {system.runtime?.paymentMode ?? system.payments.mode}
+                        {system.runtime?.locked && (
+                          <span className="block text-[10px] uppercase tracking-wider text-muted-foreground mt-1">
+                            Enforced by environment
+                          </span>
+                        )}
+                      </p>
                     </div>
                     <div className="rounded-lg border p-3">
                       <p className="text-xs text-muted-foreground">Currency</p>

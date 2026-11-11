@@ -6,7 +6,7 @@
   "main": "src/server.js",
   "scripts": {
     "dev": "node --watch --watch-path=src src/server.js",
-    "start": "node src/server.js",
+    "start": "node scripts/start-production.js",
     "migrate": "node scripts/migrate.js",
     "migrate:passwords": "node scripts/migrate-passwords.js",
     "seed:coverage": "node scripts/seed-coverage.js",

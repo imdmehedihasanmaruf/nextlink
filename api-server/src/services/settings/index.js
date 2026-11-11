@@ -208,11 +208,25 @@ function maskSecrets(settings) {
 }
 
 /**
- * A masked view for the admin panel.
+ * A masked view for the admin panel. Includes a `runtime` section that tells
+ * the admin UI which values the environment pins, so production always
+ * displays the effective mode instead of a clickable mock/simulator switch.
  */
 async function getMasked() {
   const all = await getAll();
-  return maskSecrets(all);
+  const masked = maskSecrets(all);
+  const config = require('../../config');
+  return {
+    ...masked,
+    runtime: {
+      nodeEnv: process.env.NODE_ENV || 'development',
+      // Effective mode — the environment wins when it explicitly pins live.
+      mikrotikMode: config.mikrotik.mode === 'live' ? 'live' : all.mikrotik.mode,
+      smsMode: config.sms.mode === 'live' ? 'live' : all.sms.mode,
+      paymentMode: config.payments.mode === 'live' ? 'live' : all.payments.mode,
+      locked: process.env.NODE_ENV === 'production',
+    },
+  };
 }
 
 /**
