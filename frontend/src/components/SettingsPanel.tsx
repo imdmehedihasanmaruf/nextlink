@@ -51,16 +51,23 @@ export function SettingsPanel() {
   const [draftLanguage, setDraftLanguage] = useState<Language>(language)
   const [draftAutoSave, setDraftAutoSave] = useState<boolean>(autoSave)
 
-  // Synchronize draft state when the panel is opened or when saved store updates
+  // Synchronize draft state when the panel opens — and only then. Depending
+  // on the store values as well made the panel overwrite what the user was
+  // editing, whenever something else in the app wrote to the store.
+  const wasOpen = React.useRef(false)
+
   useEffect(() => {
-    if (open) {
+    if (open && !wasOpen.current) {
       setDraftTheme(theme)
       setDraftThemeColor(themeColor)
       setDraftFontSize(fontSize)
       setDraftLanguage(language)
       setDraftAutoSave(autoSave)
     }
-  }, [open, theme, themeColor, fontSize, language, autoSave])
+    wasOpen.current = open
+    // The values are intentionally read at the moment the panel opens.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open])
 
   const handleClose = () => {
     // Revert draft changes back to saved settings when panel is closed without saving

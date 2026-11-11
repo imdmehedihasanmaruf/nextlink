@@ -9,6 +9,7 @@ import { useAuthStore } from '@/store/authStore'
 import { useContentStore } from '@/store/contentStore'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
+import { useMounted } from '@/lib/useMounted'
 
 export function Navbar() {
   const [mobileOpen, setMobileOpen] = useState(false)
@@ -29,7 +30,7 @@ export function Navbar() {
   }
 
   const handleHomeClick = (e: React.MouseEvent) => {
-    if (isAuthenticated) {
+    if (authed) {
       if (pathname === '/dashboard') {
         e.preventDefault()
         window.location.reload()
@@ -42,11 +43,17 @@ export function Navbar() {
 
   const homeHref = isAuthenticated ? '/dashboard' : '/'
 
+  // The server render must match the first client render — the auth state is
+  // only known on the client. Both renders show the signed-out defaults and
+  // the gate switches once mounted.
+  const mounted = useMounted()
+  const authed = mounted && isAuthenticated
+
   // Navigation links: Home, Packages, My Orders (if auth), Coverage, Settings (next to Coverage), Tickets
   const navLinks = [
-    { href: homeHref, label: isAuthenticated ? t('dashboard') : t('home'), isHome: true },
+    { href: homeHref, label: authed ? t('dashboard') : t('home'), isHome: true },
     { href: '/packages', label: 'Packages' },
-    ...(isAuthenticated ? [{ href: '/dashboard/orders', label: 'My Orders', isHome: false }] : []),
+    ...(authed ? [{ href: '/dashboard/orders', label: 'My Orders', isHome: false }] : []),
     { href: '/coverage', label: t('coverage') },
     { href: '/settings', label: t('settings') },
     { href: '/tickets', label: 'Tickets' },
@@ -54,8 +61,9 @@ export function Navbar() {
 
   return (
     <header className="sticky top-0 z-40 w-full border-b border-border bg-background/95 backdrop-blur-md">
-      {/* Optional Top Announcement Bar */}
-      {notice?.active && notice?.textEn && (
+      {/* Optional Top Announcement Bar — rendered only after mount so the
+          server and first client render agree on whether it exists */}
+      {mounted && notice?.active && notice?.textEn && (
         <div className="bg-primary px-4 py-1.5 text-xs font-semibold text-primary-foreground shadow-sm">
           <div className="container mx-auto max-w-6xl flex items-center justify-center gap-2 text-center">
             <span className="inline-block h-2 w-2 rounded-full bg-emerald-300 animate-pulse" />
@@ -131,7 +139,7 @@ export function Navbar() {
             )}
           </Button>
 
-          {isAuthenticated ? (
+          {authed ? (
             <div className="flex items-center gap-2">
               <Link href="/profile">
                 <Button 
@@ -220,7 +228,7 @@ export function Navbar() {
                 )}
               </Button>
 
-              {isAuthenticated ? (
+              {authed ? (
                 <div className="flex flex-col gap-2">
                   <Link href="/profile" onClick={() => setMobileOpen(false)}>
                     <Button variant="secondary" className="w-full justify-start gap-2">

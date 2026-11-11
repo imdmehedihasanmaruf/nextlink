@@ -1,5 +1,5 @@
 'use client';
-import { useEffect, useMemo } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Users, Wifi, WifiOff, BanknoteIcon, AlertCircle, CheckCircle, Trash2, RefreshCw } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { Button } from '@/components/ui/button';
@@ -10,19 +10,33 @@ import { StatsCard } from '@/components/StatsCard';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { useAdminDataStore } from '@/store/adminDataStore';
 import { getStatusColor } from '@/lib/utils';
+import { apiGet } from '@/lib/apiClient';
 
 export default function DashboardPage() {
   const { subscribers, invoices, tickets, deleteTicket, clearCollection, fetchData } = useAdminDataStore();
+  const [apiHealth, setApiHealth] = useState<any | null>(null);
 
   useEffect(() => {
     fetchData();
   }, [fetchData]);
 
+  useEffect(() => {
+    let cancelled = false;
+    apiGet<any>('/health', false).then((result) => {
+      if (!cancelled && result) setApiHealth(result);
+    }).catch(() => {
+      if (!cancelled) setApiHealth(null);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
   const totalSubscribers = subscribers.length;
   const activeSubscribers = subscribers.filter(s => s.status === 'active').length;
   const suspendedSubscribers = subscribers.filter(s => s.status === 'suspended').length;
   const collectedRevenue = invoices.filter(i => i.status === 'paid').reduce((sum, inv) => sum + inv.amount, 0);
-  const openTickets = tickets.filter(tk => tk.status === 'open' || tk.status === 'in-progress');
+  const openTickets = tickets.filter(tk => tk.status === 'open' || tk.status === 'in_progress');
   const pendingInvoices = invoices.filter(i => i.status !== 'paid');
 
   const recentTickets = openTickets.slice(0, 5);
@@ -216,19 +230,42 @@ export default function DashboardPage() {
           </CardHeader>
           <CardContent>
             <div className="space-y-4">
+              {/* Status is read from the live API health probe. The previous
+                  panel showed hard-coded green "Operational" dots no matter
+                  what the system was actually doing. */}
               {[
-                { label: 'Optical Network Core', status: 'Operational', color: 'bg-green-500' },
-                { label: 'Automated Billing Engine', status: 'Operational', color: 'bg-green-500' },
-                { label: 'SMS & OTP Gateway', status: 'Operational', color: 'bg-green-500' },
-                { label: 'MikroTik RouterOS API', status: 'Operational', color: 'bg-green-500' },
-                { label: 'JSON Data Store & Backup', status: 'Operational', color: 'bg-green-500' },
+                {
+                  label: 'Automated Billing Engine',
+                  status: apiHealth?.database === 'connected' ? 'Operational' : 'Unavailable',
+                  ok: apiHealth?.database === 'connected',
+                },
+                {
+                  label: 'MikroTik RouterOS API',
+                  status: apiHealth?.mikrotikMode === 'live' ? 'Live' : (apiHealth?.mikrotikMode ? 'Simulator' : 'Unknown'),
+                  ok: apiHealth?.mikrotikMode === 'live' || apiHealth?.mikrotikMode === 'simulator',
+                },
+                {
+                  label: 'SMS & OTP Gateway',
+                  status: apiHealth?.smsMode === 'live' ? 'Live' : (apiHealth?.smsMode ? 'Mock Mode' : 'Unknown'),
+                  ok: apiHealth?.smsMode === 'live' || apiHealth?.smsMode === 'mock',
+                },
+                {
+                  label: 'Payment Gateways',
+                  status: apiHealth?.paymentMode === 'live' ? 'Live' : (apiHealth?.paymentMode ? 'Mock Mode' : 'Unknown'),
+                  ok: apiHealth?.paymentMode === 'live' || apiHealth?.paymentMode === 'mock',
+                },
+                {
+                  label: 'Job Queue',
+                  status: apiHealth?.queue?.mode ? `${apiHealth.queue.mode === 'redis' ? 'Redis' : 'In-Process'} (${apiHealth.queue.pending ?? 0} pending)` : 'Unknown',
+                  ok: Boolean(apiHealth?.queue?.mode),
+                },
               ].map((item) => (
                 <div key={item.label} className="flex items-center justify-between">
                   <div className="flex items-center gap-2">
-                    <div className={`h-2 w-2 rounded-full ${item.color}`} />
+                    <div className={`h-2 w-2 rounded-full ${item.ok ? 'bg-green-500' : 'bg-rose-500'}`} />
                     <span className="text-sm font-medium">{item.label}</span>
                   </div>
-                  <span className="text-xs font-semibold text-green-600">
+                  <span className={`text-xs font-semibold ${item.ok ? 'text-green-600' : 'text-rose-600'}`}>
                     {item.status}
                   </span>
                 </div>

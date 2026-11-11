@@ -205,9 +205,18 @@ router.delete(
   requireAuth,
   requireRole(ROLES.SUPER_ADMIN, ROLES.BILLING),
   asyncHandler(async (req, res) => {
-    const invoice = await db.queryOne('SELECT id FROM invoices WHERE id = $1', [req.params.id]);
+    const invoice = await db.queryOne('SELECT id, status FROM invoices WHERE id = $1', [req.params.id]);
     if (!invoice) {
       return res.status(404).json({ success: false, error: 'Invoice not found' });
+    }
+
+    // A paid invoice is a revenue record — it is never deleted. The admin can
+    // still remove an invoice that was generated in error.
+    if (String(invoice.status).toLowerCase() === 'paid') {
+      return res.status(409).json({
+        success: false,
+        error: 'A paid invoice cannot be deleted. Revenue records are preserved.',
+      });
     }
 
     await db.transaction(async (client) => {

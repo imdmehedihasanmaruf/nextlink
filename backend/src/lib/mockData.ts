@@ -1,9 +1,9 @@
-export type SubscriberStatus = 'active' | 'suspended' | 'pending' | 'inactive' | 'blocked';
+export type SubscriberStatus = 'active' | 'suspended' | 'pending' | 'inactive' | 'blocked' | 'deactivated';
 export type InvoiceStatus = 'paid' | 'unpaid' | 'overdue';
-export type TicketStatus = 'open' | 'in-progress' | 'resolved' | 'closed';
+export type TicketStatus = 'open' | 'in_progress' | 'resolved' | 'closed';
 export type TicketPriority = 'low' | 'medium' | 'high' | 'critical';
 export type TechnicianStatus = 'available' | 'busy' | 'off-duty';
-export type UserRole = 'super_admin' | 'billing' | 'support' | 'technician';
+export type UserRole = 'super_admin' | 'billing' | 'support' | 'technician' | 'noc_operator';
 
 export type PackageCategory = 'Home Internet' | 'Advanced Internet' | 'Business Internet';
 
@@ -531,7 +531,7 @@ export const mockTickets: Ticket[] = [
   {
     id: 'TKT-001', subscriberId: 'SUB-001', subscriberName: 'Alexander Wright', phone: '+1 (212) 555-0143',
     subject: 'Intermittent optical loss during evening peak', description: 'Experiencing micro-packet drops between 8 PM and 11 PM on the Manhattan metro ring.',
-    priority: 'high', status: 'in-progress', assignedTo: 'TECH-001', createdAt: '2024-02-01T09:30:00Z', updatedAt: '2024-02-01T14:00:00Z',
+    priority: 'high', status: 'in_progress', assignedTo: 'TECH-001', createdAt: '2024-02-01T09:30:00Z', updatedAt: '2024-02-01T14:00:00Z',
     messages: [
       { id: 'MSG-001', author: 'Alexander Wright', role: 'Subscriber', content: 'Connection experiences packet loss during peak streaming hours.', timestamp: '2024-02-01T09:30:00Z' },
       { id: 'MSG-002', author: 'Support Team', role: 'Support', content: 'We have dispatched a field engineer to inspect the optical splitter at the local distribution node.', timestamp: '2024-02-01T10:15:00Z' },

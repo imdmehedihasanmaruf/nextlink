@@ -86,28 +86,47 @@ export default function CoveragePage() {
     loadZones()
   }, [loadZones])
 
-  // Load the districts of the selected zone.
+  // Load the districts of the selected zone. A stale list from the previous
+  // zone is cleared immediately and again when the request fails.
+  const [districtsError, setDistrictsError] = useState<string | null>(null)
+
   useEffect(() => {
     if (!region) {
       setDistricts([])
+      setDistrictsError(null)
       return
     }
+    // Clear the previous zone's districts right away — otherwise the visitor
+    // sees markets from another region while the new list loads.
+    setDistricts([])
+    setDistrictsError(null)
     let cancelled = false
     fetchCoverageDistricts(region).then((result) => {
       if (cancelled) return
-      if (result.success) setDistricts(result.districts || [])
+      if (result.success) {
+        setDistricts(result.districts || [])
+      } else {
+        setDistricts([])
+        setDistrictsError(result.error || 'The district list could not be loaded.')
+      }
+    }).catch(() => {
+      if (cancelled) return
+      setDistricts([])
+      setDistrictsError('The district list could not be loaded.')
     })
     return () => {
       cancelled = true
     }
   }, [region])
 
-  const areas = districts.length > 0
-    ? districts.flatMap((district) =>
-        mapAreas
-          .filter((entry) => entry.district === district.district)
-          .flatMap((entry) => entry.areas || [])
-      )
+  // The districts are the metros of the selected zone, so they are grouped
+  // from the zone explicitly. The areas shown belong to the selected metro.
+  const areas = metro
+    ? mapAreas
+        .filter(
+          (entry) => (entry.district || '').toLowerCase() === metro.toLowerCase(),
+        )
+        .flatMap((entry) => entry.areas || [])
     : []
 
   const handleCheck = async () => {
@@ -155,8 +174,9 @@ export default function CoveragePage() {
           <CardContent>
             <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4">
               <div className="space-y-2">
-                <label className="text-sm font-semibold">Select Region / Continent</label>
+                <label htmlFor="coverage-region" className="text-sm font-semibold">Select Region / Continent</label>
                 <Select
+                  id="coverage-region"
                   value={region}
                   onChange={(e) => {
                     setRegion(e.target.value)
@@ -173,8 +193,9 @@ export default function CoveragePage() {
               </div>
 
               <div className="space-y-2">
-                <label className="text-sm font-semibold">Select Metropolitan Market</label>
+                <label htmlFor="coverage-metro" className="text-sm font-semibold">Select Metropolitan Market</label>
                 <Select
+                  id="coverage-metro"
                   value={metro}
                   disabled={!region}
                   onChange={(e) => {
@@ -188,11 +209,15 @@ export default function CoveragePage() {
                     <option key={district.district} value={district.district}>{district.district}</option>
                   ))}
                 </Select>
+                {districtsError && (
+                  <p className="text-[11px] text-amber-700 dark:text-amber-400">{districtsError}</p>
+                )}
               </div>
 
               <div className="space-y-2">
-                <label className="text-sm font-semibold">Select District / Sector</label>
+                <label htmlFor="coverage-area" className="text-sm font-semibold">Select District / Sector</label>
                 <Select
+                  id="coverage-area"
                   value={area}
                   disabled={!metro}
                   onChange={(e) => {
@@ -204,6 +229,9 @@ export default function CoveragePage() {
                   {areas.map((a) => (
                     <option key={a} value={a}>{a}</option>
                   ))}
+                  {metro && areas.length === 0 && (
+                    <option value="" disabled>No districts listed for this market</option>
+                  )}
                 </Select>
               </div>
             </div>

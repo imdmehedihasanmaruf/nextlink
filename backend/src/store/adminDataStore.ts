@@ -2,21 +2,31 @@
 
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
-import { 
-  mockPackages, 
-  mockSubscribers, 
-  mockInvoices, 
-  mockTickets, 
-  mockTechnicians, 
-  type Package, 
-  type Subscriber, 
-  type Invoice, 
-  type Ticket, 
-  type Technician, 
-  type TicketStatus, 
-  type TechnicianStatus 
+import { getApiToken, apiFetch } from '@/lib/apiClient';
+import {
+  mockPackages,
+  mockSubscribers,
+  mockInvoices,
+  mockTickets,
+  mockTechnicians,
+  type Package,
+  type Subscriber,
+  type Invoice,
+  type Ticket,
+  type Technician,
+  type TicketStatus,
+  type TechnicianStatus
 } from '@/lib/mockData';
 import { defaultRoles, type Role } from '@/lib/roles';
+
+/**
+ * The Authorization header for the admin's own API routes. The staff token
+ * is issued by the Express API at sign-in.
+ */
+function adminHeaders(): Record<string, string> {
+  const token = getApiToken();
+  return token ? { Authorization: `Bearer ${token}` } : {};
+}
 
 interface AdminDataState {
   packages: Package[];
@@ -32,6 +42,8 @@ interface AdminDataState {
   peeringHubs?: any[];
   isLoading: boolean;
   lastSync: string | null;
+  /** The last failure of the data load — the panel must not save while it is set. */
+  loadError: string | null;
 
   fetchData: () => Promise<void>;
   saveCollection: (type: string, data: any) => Promise<void>;
@@ -83,11 +95,15 @@ export const useAdminDataStore = create<AdminDataState>()(
       roles: defaultRoles,
       isLoading: false,
       lastSync: null,
+      loadError: null,
 
       fetchData: async () => {
         try {
-          set({ isLoading: true });
-          const res = await fetch('/api/data?t=' + Date.now(), { cache: 'no-store' });
+          set({ isLoading: true, loadError: null });
+          const res = await fetch('/api/data?t=' + Date.now(), {
+            cache: 'no-store',
+            headers: adminHeaders(),
+          });
           if (res.ok) {
             const data = await res.json();
             set({
@@ -104,12 +120,20 @@ export const useAdminDataStore = create<AdminDataState>()(
               peeringHubs: data.peeringHubs ?? [],
               lastSync: new Date().toISOString(),
               isLoading: false,
+              loadError: null,
             });
           } else {
-            set({ isLoading: false });
+            // A failed load must be visible. The previous code silently left
+            // an empty store, and a subsequent save could then wipe the
+            // tables with the empty snapshot.
+            const payload = await res.json().catch(() => ({}));
+            set({
+              isLoading: false,
+              loadError: payload.error || `The data could not be loaded (${res.status})`,
+            });
           }
-        } catch (e) {
-          set({ isLoading: false });
+        } catch (e: any) {
+          set({ isLoading: false, loadError: e?.message || 'The data could not be loaded.' });
         }
       },
 
@@ -119,10 +143,21 @@ export const useAdminDataStore = create<AdminDataState>()(
        * reports a successful save for a write that did not happen.
        */
       saveCollection: async (type: string, data: any) => {
+        // A save is refused while the last load failed. The previous version
+        // swallowed the error, so an empty store was saved back into the
+        // tables and wiped them.
+        const loadError = get().loadError;
+        if (loadError) {
+          const error = new Error(
+            `The data could not be loaded (${loadError}). Please reload the page before saving.`,
+          );
+          console.error(`[admin] refusing to save ${type}:`, error.message);
+          throw error;
+        }
         try {
           const response = await fetch('/api/data', {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
+            headers: { 'Content-Type': 'application/json', ...adminHeaders() },
             body: JSON.stringify({ type, data }),
           });
 
@@ -139,12 +174,20 @@ export const useAdminDataStore = create<AdminDataState>()(
       },
 
       saveItem: async (type: string, data: any) => {
+        const loadError = get().loadError;
+        if (loadError) {
+          const error = new Error(
+            `The data could not be loaded (${loadError}). Please reload the page before saving.`,
+          );
+          console.error(`[admin] refusing to save ${type}:`, error.message);
+          throw error;
+        }
         const previous = (get() as any)[type];
         try {
           set({ [type]: data } as any);
           const response = await fetch('/api/data', {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
+            headers: { 'Content-Type': 'application/json', ...adminHeaders() },
             body: JSON.stringify({ type, data }),
           });
 
@@ -188,8 +231,12 @@ export const useAdminDataStore = create<AdminDataState>()(
         set({ subscribers: updated });
         await get().saveCollection('subscribers', updated);
       },
+      // Subscribers are archived, never removed — the billing history and
+      // the ticket thread have to survive the account.
       deleteSubscriber: async (id: string) => {
-        const updated = get().subscribers.filter(s => s.id !== id);
+        const updated = get().subscribers.map(s =>
+          s.id === id ? { ...s, status: 'deactivated' as const } : s,
+        );
         set({ subscribers: updated });
         await get().saveCollection('subscribers', updated);
       },
@@ -291,19 +338,38 @@ export const useAdminDataStore = create<AdminDataState>()(
         await get().saveCollection('roles', updated);
       },
       deleteInvoice: async (id: string) => {
-        const updated = get().invoices.filter(i => i.id !== id);
-        set({ invoices: updated });
-        await get().saveCollection('invoices', updated);
+        // The backend owns the invoices table, so the deletion is performed
+        // by the billing API — a full admin save would never remove the row.
+        const result = await apiFetch(`/api/billing/invoices/${encodeURIComponent(id)}`, {
+          method: 'DELETE',
+        });
+        if (!result.success) {
+          throw new Error(result.error || 'The invoice could not be deleted.');
+        }
+        set({ invoices: get().invoices.filter(i => i.id !== id) });
       },
       deleteTicket: async (id: string) => {
-        const updated = get().tickets.filter(t => t.id !== id);
-        set({ tickets: updated });
-        await get().saveCollection('tickets', updated);
+        const result = await apiFetch(`/api/tickets/${encodeURIComponent(id)}`, {
+          method: 'DELETE',
+        });
+        if (!result.success) {
+          throw new Error(result.error || 'The ticket could not be deleted.');
+        }
+        set({ tickets: get().tickets.filter(t => t.id !== id) });
       },
       deleteTechnician: async (id: string) => {
-        const updated = get().technicians.filter(t => t.id !== id);
-        set({ technicians: updated });
-        await get().saveCollection('technicians', updated);
+        // Technicians are owned by the admin panel, so the deletion is a real
+        // row delete — the record does not reappear on a refresh.
+        const response = await fetch('/api/admin/delete-record', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', ...adminHeaders() },
+          body: JSON.stringify({ type: 'technicians', id }),
+        });
+        if (!response.ok) {
+          const payload = await response.json().catch(() => ({}));
+          throw new Error(payload.error || 'The technician could not be deleted.');
+        }
+        set({ technicians: get().technicians.filter(t => t.id !== id) });
       },
       removePermissionFromRole: async (roleId: string, permKey: string) => {
         const updated = get().roles.map(r => r.id === roleId ? {

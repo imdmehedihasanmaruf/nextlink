@@ -71,9 +71,14 @@ export default function InterfaceTrafficPage() {
       interfaces: activeList,
     };
 
-    await saveItem('interfaceTraffic', payload);
-    setLoading(false);
-    toast.success('Bandwidth & Traffic metrics saved & synced to Frontend Portal!');
+    try {
+      await saveItem('interfaceTraffic', payload);
+      toast.success('Bandwidth & Traffic metrics saved & synced to Frontend Portal!');
+    } catch (error: any) {
+      toast.error(error?.message || 'The settings could not be saved.');
+    } finally {
+      setLoading(false);
+    }
   };
 
   const handleAddInterface = async (e: React.FormEvent) => {
@@ -113,8 +118,8 @@ export default function InterfaceTrafficPage() {
     }
   };
 
-  const handleResetDefaults = () => {
-    if (confirm('Reset Bandwidth & Interface metrics to standard GPON profile?')) {
+  const handleResetDefaults = async () => {
+    if (confirm('Reset Bandwidth & Interface metrics to the standard GPON profile?')) {
       const defaultIfs = [
         { id: 'IF-1', name: 'sfp-sfpplus1 (Uplink)', type: 'Optical 10G SFP+', rx: '4.82 Gbps', tx: '3.91 Gbps', status: 'Up' },
         { id: 'IF-2', name: 'ether1-gateway (Client Drop)', type: 'Gigabit Ethernet', rx: '498.2 Mbps', tx: '494.7 Mbps', status: 'Up' },
@@ -130,7 +135,7 @@ export default function InterfaceTrafficPage() {
       setOltPort('2/1/4');
       setTerminalStatus('Synchronized');
       setInterfaces(defaultIfs);
-      handleSave(defaultIfs);
+      await handleSave(defaultIfs);
       toast.success('GPON defaults restored!');
     }
   };

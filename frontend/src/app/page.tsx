@@ -127,17 +127,14 @@ export default function HomePage() {
               <div className="rounded-3xl bg-white/10 backdrop-blur-xl border border-white/20 p-6 text-white shadow-2xl space-y-5">
                 <div className="flex items-center justify-between pb-4 border-b border-white/15">
                   <div className="flex items-center gap-2.5">
-                    <span className="relative flex h-3 w-3">
-                      <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
-                      <span className="relative inline-flex rounded-full h-3 w-3 bg-emerald-500"></span>
-                    </span>
+                    <div className="h-3 w-3 rounded-full bg-primary-foreground/80"></div>
                     <div>
                       <h4 className="font-bold text-sm tracking-wide text-white">NextLink Optical Core</h4>
-                      <p className="text-[10px] text-white/80">Connected to 10G Tier-1 Gateway</p>
+                      <p className="text-[10px] text-white/80">Illustrative preview of your portal</p>
                     </div>
                   </div>
-                  <span className="text-[10px] font-mono font-bold text-white bg-white/20 px-2.5 py-1 rounded-full border border-white/20">
-                    SLA 99.99%
+                  <span className="text-[10px] font-mono font-bold text-white/90 bg-white/10 px-2.5 py-1 rounded-full border border-white/20">
+                    Example
                   </span>
                 </div>
 
@@ -322,25 +319,28 @@ export default function HomePage() {
                   <Radio size={20} />
                 </div>
                 <Badge variant="secondary" className="font-mono text-[11px] text-purple-600 bg-purple-500/10">
-                  Live Edge POP
+                  Edge POP
                 </Badge>
               </div>
-              <CardTitle className="text-xl font-bold mt-3">Live Latency & Ping Monitor</CardTitle>
+              <CardTitle className="text-xl font-bold mt-3">Latency & Ping Reference</CardTitle>
               <CardDescription className="text-xs">
-                Real-time round-trip latency to Tier-1 international backbones, Cloudflare Anycast, and Google Cloud DNS.
+                Reference round-trip times at the peering points, Cloudflare Anycast, and Google Cloud DNS. Values are how your line is provisioned, not measured from this page.
               </CardDescription>
             </CardHeader>
             <CardContent className="space-y-3">
               <div className="space-y-1.5">
-                {(liveLatency?.targets?.slice(0, 2) || [
-                  { name: 'Direct POP Peering', ping: '1.4 ms' },
-                  { name: 'Cloudflare Edge (1.1.1.1)', ping: '2.3 ms' },
-                ]).map((t, idx) => (
-                  <div key={idx} className="flex justify-between items-center text-xs p-1.5 rounded bg-muted/40">
-                    <span className="truncate max-w-[170px]">{t.name}</span>
-                    <span className="font-mono font-bold text-emerald-600 dark:text-emerald-400">{t.ping}</span>
+                {(liveLatency?.targets?.slice(0, 2) || []).length > 0 ? (
+                  (liveLatency?.targets?.slice(0, 2) || []).map((t, idx) => (
+                    <div key={idx} className="flex justify-between items-center text-xs p-1.5 rounded bg-muted/40">
+                      <span className="truncate max-w-[170px]">{t.name}</span>
+                      <span className="font-mono font-bold text-emerald-600 dark:text-emerald-400">{t.ping}</span>
+                    </div>
+                  ))
+                ) : (
+                  <div className="text-xs p-1.5 text-muted-foreground rounded bg-muted/40">
+                    Peering reference times have not been configured yet.
                   </div>
-                ))}
+                )}
               </div>
               <Button 
                 onClick={() => handleProtectedAction(undefined, '/dashboard')}
@@ -361,12 +361,12 @@ export default function HomePage() {
                   <Gauge size={20} />
                 </div>
                 <Badge variant="secondary" className="font-mono text-[11px] text-cyan-600 bg-cyan-500/10">
-                  GPON OLT Live
+                  GPON OLT
                 </Badge>
               </div>
               <CardTitle className="text-xl font-bold mt-3">Bandwidth Consumption Meter</CardTitle>
               <CardDescription className="text-xs">
-                Inspect real-time optical link throughput, uplink SFP+ port rate, and monthly symmetrical traffic consumption.
+                Optical link provisions, uplink SFP+ port rates and monthly symmetrical traffic consumption — as configured by your operator.
               </CardDescription>
             </CardHeader>
             <CardContent className="space-y-3">
@@ -374,13 +374,13 @@ export default function HomePage() {
                 <div className="p-2 rounded bg-muted/50 border">
                   <span className="text-[10px] text-muted-foreground block">Download Rate</span>
                   <span className="text-sm font-bold text-emerald-600">
-                    {interfaceTraffic?.downloadRateMbps || 498.2} Mbps
+                    {interfaceTraffic?.downloadRateMbps ? `${interfaceTraffic.downloadRateMbps} Mbps` : '—'}
                   </span>
                 </div>
                 <div className="p-2 rounded bg-muted/50 border">
                   <span className="text-[10px] text-muted-foreground block">Upload Rate</span>
                   <span className="text-sm font-bold text-blue-600">
-                    {interfaceTraffic?.uploadRateMbps || 494.7} Mbps
+                    {interfaceTraffic?.uploadRateMbps ? `${interfaceTraffic.uploadRateMbps} Mbps` : '—'}
                   </span>
                 </div>
               </div>

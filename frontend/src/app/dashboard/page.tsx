@@ -44,7 +44,8 @@ import { Label } from '@/components/ui/label'
 import { useAuthStore } from '@/store/authStore'
 import { useTranslation } from '@/store/settingsStore'
 import { useContentStore } from '@/store/contentStore'
-import { fetchMyInvoices, fetchMySummary, payInvoice, type PortalInvoice, type PortalSummary } from '@/lib/portalApi'
+import { createTicket, fetchMyInvoices, fetchMySummary, payInvoice, type PortalInvoice, type PortalSummary } from '@/lib/portalApi'
+import { useModalA11y } from '@/lib/useModalA11y'
 
 interface PaymentRecord {
   id: string;
@@ -87,51 +88,19 @@ export default function DashboardPage() {
     'July', 'August', 'September', 'October', 'November', 'December'
   ]
 
-  // Due Billing Cycle State (starts at November 2026: month 10, year 2026)
-  const [dueBillingCycle, setDueBillingCycle] = useState<{ month: number; year: number }>({
-    month: 10, // November (0-indexed: 10 = November)
-    year: 2026
-  })
-
-  // Date Simulation for Testing Billing Window (5th-10th Open, 1st-4th & 11th-31st Restricted)
-  const [simulatedDay, setSimulatedDay] = useState<number | null>(null)
   const today = new Date()
   const actualDay = today.getDate()
-  const currentDay = simulatedDay !== null ? simulatedDay : actualDay
+  const currentDay = actualDay
   const isPaymentWindowOpen = currentDay >= 5 && currentDay <= 10
 
   // Warning state if user attempts to pay outside 5-10
   const [windowWarning, setWindowWarning] = useState<string | null>(null)
 
-  // Derived month names and due date string (Requirement 4)
-  const dueMonthName = MONTH_NAMES[dueBillingCycle.month]
-  const dueMonthNumStr = String(dueBillingCycle.month + 1).padStart(2, '0')
-  const dueYearStr = String(dueBillingCycle.year)
-  const nextDueDateRangeFormatted = `05/${dueMonthNumStr}/${dueYearStr} - 10/${dueMonthNumStr}/${dueYearStr} of Every Month`
-
-  // The billing cycle anchor is read from the local storage, but the payment
-  // history is no longer kept there: it comes from the billing service so the
-  // portal can never show a payment the server did not record.
-  useEffect(() => {
-    if (typeof window !== 'undefined') {
-      const savedCycle = localStorage.getItem('nextlink_due_billing_cycle')
-      if (savedCycle) {
-        try {
-          const parsed = JSON.parse(savedCycle)
-          if (typeof parsed.month === 'number' && typeof parsed.year === 'number') {
-            setDueBillingCycle(parsed)
-          }
-        } catch (e) {}
-      }
-    }
-  }, [])
-
   // Retention States
-  const [turboActive, setTurboActive] = useState(false)
-  const [turboHoursLeft, setTurboHoursLeft] = useState(6)
+  const [boostRequested, setBoostRequested] = useState(false)
+  const [boostSending, setBoostSending] = useState(false)
+  const [boostError, setBoostError] = useState<string | null>(null)
   const [copiedReferral, setCopiedReferral] = useState(false)
-  const [pingRunning, setPingRunning] = useState(false)
-  const [pings, setPings] = useState<Record<string, string>>({ peering: '1.8 ms', google: '18 ms', cloudflare: '9 ms' })
 
   // Payable balance state
   const [balance, setBalance] = useState(0.00)
@@ -141,6 +110,10 @@ export default function DashboardPage() {
   const [mobileWalletNumber, setMobileWalletNumber] = useState('')
   const [isProcessingPay, setIsProcessingPay] = useState(false)
   const [receiptModalOpen, setReceiptModalOpen] = useState(false)
+
+  // Escape closes both overlays and the page does not scroll behind them.
+  useModalA11y(payModalOpen, () => setPayModalOpen(false))
+  useModalA11y(receiptModalOpen, () => setReceiptModalOpen(false))
   const [latestReceipt, setLatestReceipt] = useState<{
     receiptNo: string;
     trxId: string;
@@ -162,6 +135,27 @@ export default function DashboardPage() {
   const [gatewayChoice, setGatewayChoice] = useState<'bkash' | 'nagad' | 'sslcommerz' | 'rocket'>('bkash')
   const [billingError, setBillingError] = useState<string | null>(null)
 
+  /**
+   * The bill outstanding with this account — derived from the billing
+   * service, never from a hard-coded month. The due month is the period of
+   * the first unpaid invoice.
+   */
+  const unpaidInvoice = liveInvoices.find((invoice) => invoice.status !== 'paid')
+  const periodStr = (unpaidInvoice?.raw_data?.period as string | undefined) || ''
+  const [periodYear, periodMonth] = periodStr.split('-').map(Number)
+  const dueMonthNum = Number.isFinite(periodMonth) && periodMonth >= 1 && periodMonth <= 12
+    ? periodMonth - 1
+    : new Date().getMonth()
+  const dueYearNum = Number.isFinite(periodYear) && periodYear > 2000 ? periodYear : new Date().getFullYear()
+  const dueMonthName = MONTH_NAMES[dueMonthNum]
+  const dueMonthNumStr = String(dueMonthNum + 1).padStart(2, '0')
+  const dueYearStr = String(dueYearNum)
+  const nextDueDateRangeFormatted = `05/${dueMonthNumStr}/${dueYearStr} - 10/${dueMonthNumStr}/${dueYearStr} of Every Month`
+  const currencyOf = (invoice?: PortalInvoice | null) =>
+    String(invoice?.raw_data?.currency || 'BDT').toUpperCase()
+  const unpaidAmount = unpaidInvoice ? Number(unpaidInvoice.amount || 0) : 0
+  const invoiceCurrency = currencyOf(unpaidInvoice)
+
   const loadLiveBilling = React.useCallback(async () => {
     const summaryResult = await fetchMySummary()
     if (!summaryResult.success) {
@@ -175,6 +169,20 @@ export default function DashboardPage() {
     if (invoicesResult.success) {
       const invoices = invoicesResult.invoices || []
       setLiveInvoices(invoices)
+
+      const paidParam = typeof window !== 'undefined'
+        ? new URLSearchParams(window.location.search).get('paid')
+        : null
+      if (paidParam) {
+        // The customer has just come back from the gateway — show the receipt
+        // for that settled invoice, then drop the query parameter from the URL.
+        showReceiptForInvoice(paidParam, invoices)
+        if (typeof window !== 'undefined') {
+          const url = new URL(window.location.href)
+          url.searchParams.delete('paid')
+          window.history.replaceState({}, '', url.toString())
+        }
+      }
 
       // The billing history table is built from the server invoices, so it
       // always matches what the billing service actually recorded.
@@ -221,7 +229,7 @@ export default function DashboardPage() {
 
   // Card form state — the gateway collects the card details itself, so the
   // portal never handles a card number.
-  const [cardHolder, setCardHolder] = useState('Alexander Wright')
+  const [cardHolder, setCardHolder] = useState('')
 
   // Resolve current active package and monthly subscription price
   const activePackage = React.useMemo(() => {
@@ -236,10 +244,6 @@ export default function DashboardPage() {
       packages[0]
     )
   }, [packages, user])
-
-  const monthlyBillAmount = typeof activePackage?.price === 'number' 
-    ? activePackage.price 
-    : (activePackage?.price ? Number(activePackage.price) : 0)
 
   useEffect(() => {
     if (hasHydrated && !isAuthenticated) {
@@ -302,59 +306,77 @@ export default function DashboardPage() {
   }
 
   /**
-   * Refresh the invoice list and show the receipt for a settled invoice.
+   * Show the receipt for the settled invoice that the `?paid=<invoiceId>`
+   * query parameter names. The receipt is built from the invoice the billing
+   * service returned after verification — never from local state or from the
+   * package price the customer saw on the purchase page.
    */
-  const handleRefreshAfterPayment = async () => {
-    await loadLiveBilling()
+  const showReceiptForInvoice = (paidInvoiceId: string, invoices: PortalInvoice[]) => {
+    const paid = invoices.find((invoice) => invoice.id === paidInvoiceId)
+    if (!paid) {
+      setBillingError(
+        `The payment for invoice ${paidInvoiceId} could not be verified yet. Please refresh the page or contact support.`,
+      )
+      return false
+    }
+    if (paid.status !== 'paid') {
+      // Not settled yet — show a "pending" notice instead of a receipt.
+      setBillingError(`Your payment for invoice ${paid.id} is being verified. It will appear here shortly.`)
+      return false
+    }
 
-    const paid = liveInvoices.find((invoice) => invoice.status === 'paid')
-    if (paid) {
-      const now = new Date()
-      setLatestReceipt({
-        receiptNo: paid.id,
-        trxId: (paid.raw_data?.transactionId as string) || paid.id,
-        date: now.toLocaleString(),
-        amount: `${Number(paid.amount).toFixed(2)}`,
-        method: gatewayChoice.toUpperCase(),
-        month: paid.raw_data?.period || '',
-      })
-      setReceiptModalOpen(true)
+    const paidAt = paid.raw_data?.paidAt
+      ? new Date(paid.raw_data.paidAt)
+      : new Date(paid.created_at)
+    const currency = String(paid.raw_data?.currency || 'BDT').toUpperCase()
+    setLatestReceipt({
+      receiptNo: paid.raw_data?.invoiceNumber || paid.id,
+      trxId: String(paid.raw_data?.transactionId || paid.id),
+      date: paidAt.toLocaleString(),
+      amount: `${currency} ${Number(paid.amount).toFixed(2)}`,
+      method: String(paid.raw_data?.paidVia || gatewayChoice).toUpperCase(),
+      month: paid.raw_data?.period || `${dueMonthName} ${dueYearStr}`,
+    })
+    setReceiptModalOpen(true)
+    return true
+  }
+
+  const handleTurboBoost = async () => {
+    setBoostError(null)
+    setBoostSending(true)
+    const hours = Number(boostBandwidth?.durationHours || 6)
+    const speed = Number(boostBandwidth?.boostSpeed || 1000)
+    const result = await createTicket({
+      subject: `Turbo boost request (${hours}h × ${speed} Mbps)`,
+      category: 'Configuration',
+      priority: 'low',
+      description: `Subscriber ${user?.id || ''} requested a ${hours}-hour burst to ${speed} Mbps. Please activate it on the router and notify the subscriber by SMS.`,
+    })
+    setBoostSending(false)
+    if (result.success) {
+      setBoostRequested(true)
+    } else {
+      setBoostError(result.error || 'The boost request could not be sent. Please try again.')
     }
   }
 
-  const handleTurboBoost = () => {
-    setTurboHoursLeft(boostBandwidth?.durationHours || 6)
-    setTurboActive(true)
-  }
-
-  const handleCopyReferral = () => {
+  const handleCopyReferral = async () => {
     const code = referralRewards?.defaultCode || 'NL-GLOBAL-REF'
-    navigator.clipboard.writeText(`https://nextlink.global/apply?ref=${code}`)
-    setCopiedReferral(true)
-    setTimeout(() => setCopiedReferral(false), 3000)
+    try {
+      await navigator.clipboard.writeText(`https://nextlink.global/apply?ref=${code}`)
+      setCopiedReferral(true)
+      setTimeout(() => setCopiedReferral(false), 3000)
+    } catch {
+      // The browser can refuse the clipboard — that must not look like success.
+      alert('Your browser blocked the clipboard. Please copy the link manually from the address bar.')
+    }
   }
 
-  const handleRunPing = () => {
-    setPingRunning(true)
-    setTimeout(() => {
-      const updated: Record<string, string> = {}
-      if (liveLatency?.targets && liveLatency.targets.length > 0) {
-        liveLatency.targets.forEach((t) => {
-          const base = parseFloat(t.ping) || 2.0
-          const jitter = (Math.random() * 0.8 - 0.4).toFixed(1)
-          updated[t.id] = `${Math.max(0.7, base + parseFloat(jitter)).toFixed(1)} ms`
-        })
-      }
-      setPings((prev) => ({
-        ...prev,
-        ...updated,
-        peering: `${(1 + Math.random() * 1.5).toFixed(1)} ms`,
-        google: `${Math.floor(16 + Math.random() * 6)} ms`,
-        cloudflare: `${Math.floor(7 + Math.random() * 4)} ms`
-      }))
-      setPingRunning(false)
-    }, 800)
-  }
+  // Latency values from the CMS peering configuration — shown as reference
+  // figures, not as measurements from the customer's device.
+  const latencyTargets = (Array.isArray(liveLatency?.targets) && liveLatency.targets.length > 0)
+    ? liveLatency.targets
+    : []
 
   if (!isAuthenticated) {
     return null
@@ -414,7 +436,7 @@ export default function DashboardPage() {
             </div>
             <div className="mt-3">
               <h3 className="text-2xl font-bold">
-                {turboActive ? 'Turbo 1000 Mbps' : (user?.packageName || user?.package || 'Ultra Gigabit 500')}
+                {boostRequested ? 'Boost Requested' : (user?.packageName || user?.package || 'Ultra Gigabit 500')}
               </h3>
               <p className="text-xs text-muted-foreground mt-1">Symmetrical 100% Optical Fiber</p>
             </div>
@@ -458,7 +480,7 @@ export default function DashboardPage() {
             </div>
             <div className="mt-3">
               <h3 className="text-2xl font-bold text-primary font-mono">
-                ${monthlyBillAmount.toFixed(2)}
+                {invoiceCurrency} {unpaidAmount.toFixed(2)}
               </h3>
               <p className="text-xs text-muted-foreground mt-1">
                 Active: {activePackage?.name || user?.packageName || user?.package || 'Essential'} ({activePackage?.speed || 100} Mbps)
@@ -515,8 +537,14 @@ export default function DashboardPage() {
             </div>
 
             <div className="flex items-center justify-between text-xs text-muted-foreground pt-1 border-t">
-              <span>Friends Joined: <strong className="text-foreground">{referralRewards?.friendsJoinedCount ?? (referralRewards?.referrals?.length ?? 3)} (${referralRewards?.totalSavedAmount ?? ((referralRewards?.friendsJoinedCount ?? 3) * (referralRewards?.bonusAmount || 25))} Saved)</strong></span>
-              <span className="text-emerald-600 font-semibold">{referralRewards?.tierName || 'Platinum Tier'}</span>
+              {referralRewards?.friendsJoinedCount !== undefined || Array.isArray(referralRewards?.referrals) ? (
+                <>
+                  <span>Friends Joined: <strong className="text-foreground">{referralRewards?.friendsJoinedCount ?? (referralRewards?.referrals?.length ?? 0)}</strong></span>
+                  <span className="text-emerald-600 font-semibold">{referralRewards?.tierName || ''}</span>
+                </>
+              ) : (
+                <span>Invite friends and get the reward credited to your next invoice.</span>
+              )}
             </div>
           </CardContent>
         </Card>
@@ -529,7 +557,7 @@ export default function DashboardPage() {
                 <Zap className="h-3.5 w-3.5 mr-1" />
                 {t('instantBoost')}
               </Badge>
-              <span className="text-xs font-bold text-amber-600">{turboActive ? 'Active' : (boostBandwidth?.status || 'Ready')}</span>
+              <span className="text-xs font-bold text-amber-600">{boostRequested ? 'Requested' : (boostBandwidth?.status || 'Ready')}</span>
             </div>
             <CardTitle className="text-lg mt-2">
               {boostBandwidth?.title || '1-Click 1 Gbps Turbo Boost'}
@@ -539,29 +567,42 @@ export default function DashboardPage() {
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
-            {turboActive ? (
+            {boostRequested ? (
               <div className="space-y-2">
                 <div className="p-3 bg-amber-500/10 rounded-xl border border-amber-500/20 text-center">
-                  <p className="text-xs font-bold text-amber-700 dark:text-amber-400">⚡ {boostBandwidth?.boostSpeed || 1000} Mbps Extreme Pipe Active!</p>
-                  <p className="text-2xl font-black text-amber-600 mt-1">{turboHoursLeft} Hours Left</p>
+                  <p className="text-xs font-bold text-amber-700 dark:text-amber-400">⚡ Boost request sent</p>
+                  <p className="text-[11px] text-muted-foreground mt-1">
+                    The helpdesk has been asked to activate a {boostBandwidth?.durationHours || 6}-hour × {boostBandwidth?.boostSpeed || 1000} Mbps burst for your line. You will receive an SMS when it is live.
+                  </p>
                 </div>
-                <Progress value={(turboHoursLeft / (boostBandwidth?.durationHours || 6)) * 100} className="h-2 bg-amber-200 dark:bg-amber-950" />
               </div>
             ) : (
               <div className="space-y-3">
                 <p className="text-xs text-muted-foreground">
-                  Enjoy complimentary {boostBandwidth?.durationHours || 6}-hour burst speed to {boostBandwidth?.boostSpeed || 1000} Mbps symmetrical on demand.
+                  Ask the helpdesk for a complimentary {boostBandwidth?.durationHours || 6}-hour burst to {boostBandwidth?.boostSpeed || 1000} Mbps symmetrical.
                 </p>
-                <Button onClick={handleTurboBoost} className="w-full bg-amber-600 hover:bg-amber-700 text-white font-bold gap-2 shadow">
-                  <Zap className="h-4 w-4" />
-                  Activate {boostBandwidth?.boostSpeed || 1000}M Turbo Now
+                {boostError && (
+                  <p className="text-[11px] text-destructive">{boostError}</p>
+                )}
+                <Button onClick={handleTurboBoost} disabled={boostSending} className="w-full bg-amber-600 hover:bg-amber-700 text-white font-bold gap-2 shadow">
+                  {boostSending ? (
+                    <>
+                      <RefreshCw className="h-4 w-4 animate-spin" />
+                      Sending…
+                    </>
+                  ) : (
+                    <>
+                      <Zap className="h-4 w-4" />
+                      Request {boostBandwidth?.boostSpeed || 1000}M Turbo Burst
+                    </>
+                  )}
                 </Button>
               </div>
             )}
           </CardContent>
         </Card>
 
-        {/* 3. Realtime Ping & Latency */}
+        {/* 3. Peering & Latency (reference) */}
         <Card className="border shadow-sm">
           <CardHeader className="pb-3">
             <div className="flex items-center justify-between">
@@ -569,37 +610,25 @@ export default function DashboardPage() {
                 <Radio className="h-4 w-4 text-primary" />
                 {liveLatency?.title || t('livePing')}
               </CardTitle>
-              <Button size="sm" variant="ghost" onClick={handleRunPing} disabled={pingRunning} className="h-8 w-8 p-0">
-                <RefreshCw className={`h-3.5 w-3.5 ${pingRunning ? 'animate-spin' : ''}`} />
-              </Button>
             </div>
-            <CardDescription>{liveLatency?.description || 'Real-time response to Tier-1 international backbones'}</CardDescription>
+            <CardDescription>
+              Reference round-trip times at the peering points, configured by your operator — not measured from your device.
+            </CardDescription>
           </CardHeader>
           <CardContent className="space-y-2.5 text-xs">
-            {liveLatency?.targets && liveLatency.targets.length > 0 ? (
-              liveLatency.targets.map((tgt: any) => (
+            {latencyTargets.length > 0 ? (
+              latencyTargets.map((tgt: any) => (
                 <div key={tgt.id || tgt.name} className="flex items-center justify-between p-2 rounded-lg bg-muted/30">
                   <span className="font-medium">{tgt.name}</span>
                   <Badge className="bg-emerald-500/10 text-emerald-600 border-emerald-500/30 font-mono">
-                    {pings[tgt.id] || tgt.ping}
+                    {tgt.ping}
                   </Badge>
                 </div>
               ))
             ) : (
-              <>
-                <div className="flex items-center justify-between p-2 rounded-lg bg-muted/30">
-                  <span className="font-medium">Direct POP Peering</span>
-                  <Badge className="bg-emerald-500/10 text-emerald-600 border-emerald-500/30 font-mono">{pings.peering || '1.2 ms'}</Badge>
-                </div>
-                <div className="flex items-center justify-between p-2 rounded-lg bg-muted/30">
-                  <span className="font-medium">Cloudflare Edge (1.1.1.1)</span>
-                  <Badge className="bg-blue-500/10 text-blue-600 border-blue-500/30 font-mono">{pings.cloudflare || '2.4 ms'}</Badge>
-                </div>
-                <div className="flex items-center justify-between p-2 rounded-lg bg-muted/30">
-                  <span className="font-medium">Google DNS (8.8.8.8)</span>
-                  <Badge className="bg-purple-500/10 text-purple-600 border-purple-500/30 font-mono">{pings.google || '3.1 ms'}</Badge>
-                </div>
-              </>
+              <div className="p-2 rounded-lg bg-muted/30 text-muted-foreground">
+                Peering reference times have not been configured yet.
+              </div>
             )}
           </CardContent>
         </Card>
@@ -632,10 +661,10 @@ export default function DashboardPage() {
                   {t('downloadRate')}
                 </div>
                 <p className="text-2xl font-bold mt-2 text-foreground">
-                  {turboActive ? `${(boostBandwidth?.boostSpeed || 1000) * 0.98} Mbps` : `${interfaceTraffic?.downloadRateMbps || 498.2} Mbps`}
+                  {interfaceTraffic?.downloadRateMbps ? `${interfaceTraffic.downloadRateMbps} Mbps` : (activePackage?.speed ? `${activePackage.speed} Mbps` : '—')}
                 </p>
                 <p className="text-xs text-muted-foreground">
-                  Allocated: {turboActive ? `${boostBandwidth?.boostSpeed || 1000} Mbps` : `${interfaceTraffic?.allocatedSpeed || 500} Mbps`}
+                  Allocated: {interfaceTraffic?.allocatedSpeed || activePackage?.speed || '—'} Mbps
                 </p>
               </div>
 
@@ -645,10 +674,10 @@ export default function DashboardPage() {
                   {t('uploadRate')}
                 </div>
                 <p className="text-2xl font-bold mt-2 text-foreground">
-                  {turboActive ? `${(boostBandwidth?.boostSpeed || 1000) * 0.98} Mbps` : `${interfaceTraffic?.uploadRateMbps || 494.7} Mbps`}
+                  {interfaceTraffic?.uploadRateMbps ? `${interfaceTraffic.uploadRateMbps} Mbps` : (activePackage?.speed ? `${activePackage.speed} Mbps` : '—')}
                 </p>
                 <p className="text-xs text-muted-foreground">
-                  Allocated: {turboActive ? `${boostBandwidth?.boostSpeed || 1000} Mbps` : `${interfaceTraffic?.allocatedSpeed || 500} Mbps`}
+                  Allocated: {interfaceTraffic?.allocatedSpeed || activePackage?.speed || '—'} Mbps
                 </p>
               </div>
             </div>
@@ -789,7 +818,7 @@ export default function DashboardPage() {
               <div className="rounded-lg border p-3">
                 <p className="text-xs text-muted-foreground">Outstanding</p>
                 <p className="text-lg font-bold text-amber-600">
-                  {liveSummary.outstanding.toLocaleString('en-US', { maximumFractionDigits: 2 })}
+                  {invoiceCurrency} {liveSummary.outstanding.toLocaleString('en-US', { maximumFractionDigits: 2 })}
                 </p>
               </div>
               <div className="rounded-lg border p-3">
@@ -854,7 +883,7 @@ export default function DashboardPage() {
                       <td className="py-3 px-4">{invoice.raw_data?.period || '—'}</td>
                       <td className="py-3 px-4 text-muted-foreground">{invoice.due_date}</td>
                       <td className="py-3 px-4 font-bold">
-                        {Number(invoice.amount || 0).toLocaleString('en-US', { maximumFractionDigits: 2 })}
+                        {currencyOf(invoice)} {Number(invoice.amount || 0).toLocaleString('en-US', { maximumFractionDigits: 2 })}
                       </td>
                       <td className="py-3 px-4">
                         {invoice.status === 'paid' ? (
@@ -951,7 +980,10 @@ export default function DashboardPage() {
       {/* ================= STEP 5 PAYMENT MODAL: SELECT PAYMENT METHOD & AUTHORIZE ================= */}
       {mounted && payModalOpen && createPortal(
         <div 
-          className="fixed inset-0 z-[99999] flex items-center justify-center bg-black/80 p-3 sm:p-4 animate-in fade-in"
+          className="fixed inset-0 z-[99999] flex items-center justify-center bg-black/80 p-3 sm:p-4 animate-in fade-in overflow-y-auto"
+          role="dialog"
+          aria-modal="true"
+          aria-label="Complete bill payment"
           onClick={() => setPayModalOpen(false)}
         >
           <Card 
@@ -1007,59 +1039,6 @@ export default function DashboardPage() {
                 </div>
               )}
 
-              {/* Date Simulation Tool for Instant Review of 5-10 Window vs 1-4/11-31 Warnings */}
-              <div className="p-2 rounded-lg bg-muted/30 border flex flex-wrap items-center justify-between gap-1.5 text-[11px]">
-                <span className="text-muted-foreground font-medium flex items-center gap-1">
-                  <Clock className="h-3 w-3" /> Billing Window Tester:
-                </span>
-                <div className="flex flex-wrap gap-1">
-                  <button
-                    type="button"
-                    onClick={() => setSimulatedDay(null)}
-                    className={`px-2 py-0.5 rounded text-[10px] font-bold transition-all ${
-                      simulatedDay === null
-                        ? 'bg-primary text-primary-foreground shadow-xs'
-                        : 'bg-muted hover:bg-muted/80 text-foreground'
-                    }`}
-                  >
-                    Today (Day {actualDay}) {actualDay >= 5 && actualDay <= 10 ? '✓ Open' : '✕ Restricted'}
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setSimulatedDay(8)}
-                    className={`px-2 py-0.5 rounded text-[10px] font-bold transition-all ${
-                      simulatedDay === 8
-                        ? 'bg-emerald-600 text-white shadow-xs'
-                        : 'bg-muted hover:bg-muted/80 text-foreground'
-                    }`}
-                  >
-                    Day 8 (Allowed)
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setSimulatedDay(3)}
-                    className={`px-2 py-0.5 rounded text-[10px] font-bold transition-all ${
-                      simulatedDay === 3
-                        ? 'bg-amber-600 text-white shadow-xs'
-                        : 'bg-muted hover:bg-muted/80 text-foreground'
-                    }`}
-                  >
-                    Day 3 (Warning 1-4)
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setSimulatedDay(15)}
-                    className={`px-2 py-0.5 rounded text-[10px] font-bold transition-all ${
-                      simulatedDay === 15
-                        ? 'bg-amber-600 text-white shadow-xs'
-                        : 'bg-muted hover:bg-muted/80 text-foreground'
-                    }`}
-                  >
-                    Day 15 (Warning 11-31)
-                  </button>
-                </div>
-              </div>
-
               {/* Active Package Bill Summary (Requirement 1 & Requirement 3) */}
               <div className="rounded-xl bg-muted/50 p-2.5 sm:p-3 border flex items-center justify-between text-xs">
                 <div>
@@ -1070,13 +1049,15 @@ export default function DashboardPage() {
                     {activePackage?.name || user?.packageName || user?.package || 'Essential'} ({activePackage?.speed || 100} Mbps)
                   </p>
                   <p className="text-[10px] text-muted-foreground">
-                    Purchase Fee: ${monthlyBillAmount.toFixed(2)} USD · 100% Symmetrical Optical Fiber Drop
+                    {String(invoiceCurrency)} · 100% Symmetrical Optical Fiber Drop
                   </p>
                 </div>
                 <div className="text-right">
                   <span className="text-[10px] font-semibold text-muted-foreground uppercase block">Amount Due</span>
-                  <p className="text-xl font-black text-primary font-mono">${monthlyBillAmount.toFixed(2)}</p>
-                  <span className="text-[10px] text-muted-foreground font-medium">USD / Month</span>
+                  <p className="text-xl font-black text-primary font-mono">
+                    {invoiceCurrency} {unpaidAmount.toFixed(2)}
+                  </p>
+                  <span className="text-[10px] text-muted-foreground font-medium">per month</span>
                 </div>
               </div>
 
@@ -1157,10 +1138,7 @@ export default function DashboardPage() {
                 <div className="pt-2 border-t flex justify-between items-center text-xs">
                   <span className="font-semibold text-muted-foreground">Final Charged Amount:</span>
                   <span className="font-mono font-black text-base text-primary">
-                    {(() => {
-                      const target = liveInvoices.find((invoice) => invoice.status !== 'paid')
-                      return `${Number(target?.amount ?? monthlyBillAmount).toFixed(2)} ${liveSummary ? 'BDT' : ''}`.trim()
-                    })()}
+                    {invoiceCurrency} {unpaidAmount.toFixed(2)}
                   </span>
                 </div>
               </div>
@@ -1188,7 +1166,7 @@ export default function DashboardPage() {
                 ) : (
                   <>
                     <Lock className="h-3.5 w-3.5" />
-                    <span>Confirm &amp; Pay ${monthlyBillAmount.toFixed(2)} USD</span>
+                    <span>Confirm &amp; Pay {invoiceCurrency} {unpaidAmount.toFixed(2)}</span>
                   </>
                 )}
               </Button>
@@ -1206,7 +1184,10 @@ export default function DashboardPage() {
       {/* ================= PAYMENT RECEIPT MODAL (Requirement 22) ================= */}
       {mounted && receiptModalOpen && latestReceipt && createPortal(
         <div 
-          className="fixed inset-0 z-[99999] flex items-center justify-center bg-black/80 p-4 animate-in fade-in"
+          className="fixed inset-0 z-[99999] flex items-center justify-center bg-black/80 p-4 animate-in fade-in overflow-y-auto"
+          role="dialog"
+          aria-modal="true"
+          aria-label="Payment receipt"
           onClick={() => setReceiptModalOpen(false)}
         >
           <Card 
@@ -1248,7 +1229,12 @@ export default function DashboardPage() {
                 </div>
                 <div className="flex justify-between text-xs text-muted-foreground">
                   <span>Balance Remaining:</span>
-                  <span className="text-emerald-600 font-bold">$0.00 (Cleared)</span>
+                  <span className="text-emerald-600 font-bold">
+                    {invoiceCurrency} {(liveSummary?.outstanding !== undefined
+                      ? Number(liveSummary.outstanding)
+                      : 0
+                    ).toFixed(2)}
+                  </span>
                 </div>
               </div>
 

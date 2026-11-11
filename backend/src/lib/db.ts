@@ -1,7 +1,6 @@
 import { Pool } from 'pg';
 import fs from 'fs';
 import path from 'path';
-import { mockSubscribers, mockPackages } from '@/lib/mockData';
 
 let pool: Pool | null = null;
 
@@ -89,33 +88,24 @@ export async function getAdminStore(): Promise<Record<string, any>> {
       }
     });
 
-    if (result.subscribers.length === 0) {
-      result.subscribers = mockSubscribers;
-      saveAdminSection('subscribers', mockSubscribers).catch(console.error);
-    }
-
-    if (!result.packages || result.packages.length <= 1) {
-      result.packages = mockPackages;
-      saveAdminSection('packages', mockPackages).catch(console.error);
-    }
-
+    // Nothing is seeded or written here any more. The previous code re-seeded
+    // the 8 mock packages and the mock subscribers whenever the table held
+    // one or zero rows — which replaced the operator's pricing with the
+    // built-in 8 plans and overwrote the existing customers with plaintext
+    // mock accounts. A read path must never write.
     return result;
   } catch (error) {
     console.warn('[PostgreSQL] Could not read from DB, falling back to disk:', error);
     const storePath = path.join(getDataDir(), 'adminStore.json');
     if (fs.existsSync(storePath)) {
       const diskData = JSON.parse(fs.readFileSync(storePath, 'utf-8'));
-      if (!diskData.subscribers || diskData.subscribers.length === 0) {
-        diskData.subscribers = mockSubscribers;
-      }
-      if (!diskData.packages || diskData.packages.length <= 1) {
-        diskData.packages = mockPackages;
-      }
+      if (!diskData.subscribers || !Array.isArray(diskData.subscribers)) diskData.subscribers = [];
+      if (!diskData.packages || !Array.isArray(diskData.packages)) diskData.packages = [];
       return diskData;
     }
     return {
-      packages: mockPackages,
-      subscribers: mockSubscribers,
+      packages: [],
+      subscribers: [],
       invoices: [],
       tickets: [],
       technicians: [],
@@ -151,7 +141,11 @@ export async function saveAdminSection(type: string, data: any): Promise<void> {
     const p = getDbPool();
 
     if (type === 'packages' && Array.isArray(data)) {
-      await p.query('DELETE FROM packages');
+      // Packages are an upsert instead of delete-and-reinsert. A table rewrite
+      // between the DELETE and the INSERT left the catalogue empty for a
+      // moment, and it silently dropped the RouterOS profile columns
+      // (routeros_profile, max_limit), which are not part of the admin
+      // payload — so every gigabit customer was shaped back to 10 Mbps.
       for (const item of data) {
         await p.query(
           `INSERT INTO packages (id, name, speed, upload_speed, price, duration, description, subscriber_count, raw_data, updated_at)
@@ -215,25 +209,39 @@ export async function saveAdminSection(type: string, data: any): Promise<void> {
       // The invoices table is also written by the billing engine, so this is
       // an upsert instead of a delete-and-reinsert. A full rewrite would
       // reset every paid invoice to "unpaid" and reset the creation date.
-      const ids = data.map((item: any) => String(item.id));
+      //
+      // The subscriber id may be missing from the admin payload — the billing
+      // engine writes it but the legacy admin store does not round-trip it.
+      // An empty value must never overwrite the real one, otherwise a payment
+      // can no longer find its account and no overdue account is ever cut.
+      // A paid invoice is also never flipped back to unpaid.
       for (const item of data) {
+        // The store holds the invoice either as the legacy shape (id) or as
+        // the billing engine's raw_data (invoiceNumber, never an id). Without
+        // this, String(item.id) produced the literal string "undefined" and
+        // every engine invoice collapsed onto one corrupted row.
+        const resolvedId = String(item.id || item.invoiceNumber || item.invoice_number || '');
+        if (!resolvedId || resolvedId === 'undefined') {
+          console.warn('[PostgreSQL] skipping an invoice without an id in the save payload');
+          continue;
+        }
         await p.query(
           `INSERT INTO invoices (id, subscriber_id, amount, status, due_date, raw_data, created_at, updated_at)
            VALUES ($1, $2, $3, $4, $5, $6, COALESCE((SELECT created_at FROM invoices WHERE id = $1::varchar), NOW()), NOW())
            ON CONFLICT (id) DO UPDATE SET
-             subscriber_id = EXCLUDED.subscriber_id,
-             amount = EXCLUDED.amount,
-             status = EXCLUDED.status,
-             due_date = EXCLUDED.due_date,
+             subscriber_id = COALESCE(NULLIF(EXCLUDED.subscriber_id, ''), invoices.subscriber_id),
+             amount = CASE WHEN invoices.status = 'paid' THEN invoices.amount ELSE EXCLUDED.amount END,
+             status = CASE WHEN invoices.status = 'paid' THEN invoices.status ELSE EXCLUDED.status END,
+             due_date = CASE WHEN invoices.status = 'paid' THEN invoices.due_date ELSE EXCLUDED.due_date END,
              raw_data = EXCLUDED.raw_data,
              updated_at = NOW()`,
           [
-            String(item.id),
+            resolvedId,
             item.subscriberId || item.subscriber_id || '',
             Number(item.amount || 0),
             item.status || 'unpaid',
             item.dueDate || item.due_date || '',
-            JSON.stringify(item),
+            JSON.stringify(item.id ? item : { ...item, id: resolvedId }),
           ]
         );
       }
@@ -265,63 +273,96 @@ export async function saveAdminSection(type: string, data: any): Promise<void> {
       // A ticket that the admin panel removed is deleted through the CRM API,
       // so the ticket details and the message thread stay consistent.
     } else if (type === 'technicians' && Array.isArray(data)) {
-      await p.query('DELETE FROM technicians');
-      for (const item of data) {
-        await p.query(
-          `INSERT INTO technicians (id, name, status, raw_data, updated_at)
-           VALUES ($1, $2, $3, $4, NOW())
-           ON CONFLICT (id) DO UPDATE SET
-             name = EXCLUDED.name,
-             status = EXCLUDED.status,
-             raw_data = EXCLUDED.raw_data,
-             updated_at = NOW()`,
-          [
-            String(item.id),
-            item.name || '',
-            item.status || 'active',
-            JSON.stringify(item),
-          ]
-        );
+      // The delete and the re-insert are one transaction — a failure halfway
+      // used to leave the technicians table empty, and the CRM
+      // auto-assignment then found nobody to assign.
+      const client = await p.connect();
+      try {
+        await client.query('BEGIN');
+        await client.query('DELETE FROM technicians');
+        for (const item of data) {
+          await client.query(
+            `INSERT INTO technicians (id, name, status, raw_data, updated_at)
+             VALUES ($1, $2, $3, $4, NOW())
+             ON CONFLICT (id) DO UPDATE SET
+               name = EXCLUDED.name,
+               status = EXCLUDED.status,
+               raw_data = EXCLUDED.raw_data,
+               updated_at = NOW()`,
+            [
+              String(item.id),
+              item.name || '',
+              item.status || 'active',
+              JSON.stringify(item),
+            ]
+          );
+        }
+        await client.query('COMMIT');
+      } catch (error) {
+        await client.query('ROLLBACK');
+        throw error;
+      } finally {
+        client.release();
       }
     } else if (type === 'adminUsers' && Array.isArray(data)) {
-      await p.query('DELETE FROM admin_users');
-      for (const item of data) {
-        await p.query(
-          `INSERT INTO admin_users (id, name, email, role, status, raw_data, updated_at)
-           VALUES ($1, $2, $3, $4, $5, $6, NOW())
-           ON CONFLICT (id) DO UPDATE SET
-             name = EXCLUDED.name,
-             email = EXCLUDED.email,
-             role = EXCLUDED.role,
-             status = EXCLUDED.status,
-             raw_data = EXCLUDED.raw_data,
-             updated_at = NOW()`,
-          [
-            String(item.id),
-            item.name || '',
-            item.email || '',
-            item.role || 'admin',
-            item.status || 'active',
-            JSON.stringify(item),
-          ]
-        );
+      const client = await p.connect();
+      try {
+        await client.query('BEGIN');
+        await client.query('DELETE FROM admin_users');
+        for (const item of data) {
+          await client.query(
+            `INSERT INTO admin_users (id, name, email, role, status, raw_data, updated_at)
+             VALUES ($1, $2, $3, $4, $5, $6, NOW())
+             ON CONFLICT (id) DO UPDATE SET
+               name = EXCLUDED.name,
+               email = EXCLUDED.email,
+               role = EXCLUDED.role,
+               status = EXCLUDED.status,
+               raw_data = EXCLUDED.raw_data,
+               updated_at = NOW()`,
+            [
+              String(item.id),
+              item.name || '',
+              item.email || '',
+              item.role || 'admin',
+              item.status || 'active',
+              JSON.stringify(item),
+            ]
+          );
+        }
+        await client.query('COMMIT');
+      } catch (error) {
+        await client.query('ROLLBACK');
+        throw error;
+      } finally {
+        client.release();
       }
     } else if (type === 'roles' && Array.isArray(data)) {
-      await p.query('DELETE FROM roles');
-      for (const item of data) {
-        await p.query(
-          `INSERT INTO roles (id, name, raw_data, updated_at)
-           VALUES ($1, $2, $3, NOW())
-           ON CONFLICT (id) DO UPDATE SET
-             name = EXCLUDED.name,
-             raw_data = EXCLUDED.raw_data,
-             updated_at = NOW()`,
-          [
-            String(item.id),
-            item.name || '',
-            JSON.stringify(item),
-          ]
-        );
+      const client = await p.connect();
+      try {
+        await client.query('BEGIN');
+        await client.query('DELETE FROM roles');
+        for (const item of data) {
+          await client.query(
+            `INSERT INTO roles (id, name, raw_data, updated_at)
+             VALUES ($1, $2, $3, NOW())
+             ON CONFLICT (id) DO UPDATE SET
+               name = EXCLUDED.name,
+               raw_data = EXCLUDED.raw_data,
+               updated_at = NOW()`,
+            [
+              String(item.id),
+              item.name || '',
+              JSON.stringify(item),
+            ]
+          );
+        }
+        await client.query('COMMIT');
+      } catch (error) {
+        await client.query('ROLLBACK');
+        throw error;
+      } finally {
+        client.release();
       }
     } else {
       // Store into app_settings
@@ -436,6 +477,26 @@ export async function saveSiteContent(data: Record<string, any>): Promise<void> 
   } catch (err) {
     console.error('[PostgreSQL] Error writing siteData to DB:', err);
   }
+}
+
+/**
+ * Delete a row from an admin-owned table.
+ *
+ * Used for technicians, roles and admin user accounts — collections the admin
+ * panel owns outright. The delete actually removes the row, so the record does
+ * not reappear on the next refresh.
+ *
+ * Returns false when the type is not a deletable admin-owned table or the row
+ * does not exist.
+ */
+export async function deleteAdminRecord(
+  type: 'technicians' | 'roles' | 'adminUsers',
+  id: string,
+): Promise<boolean> {
+  const table = type === 'adminUsers' ? 'admin_users' : type;
+  const p = getDbPool();
+  const result = await p.query(`DELETE FROM ${table} WHERE id = $1`, [String(id)]);
+  return (result.rowCount || 0) > 0;
 }
 
 /**

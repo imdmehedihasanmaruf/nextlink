@@ -13,6 +13,12 @@ import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { Switch } from '@/components/ui/switch';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { getApiToken } from '@/lib/apiClient';
+
+function authHeader(): Record<string, string> {
+  const token = getApiToken();
+  return token ? { Authorization: `Bearer ${token}` } : {};
+}
 
 export default function CMSPage() {
   const [loading, setLoading] = useState(true);
@@ -23,7 +29,9 @@ export default function CMSPage() {
   const fetchContent = async () => {
     try {
       setLoading(true);
-      const res = await fetch('/api/content?t=' + Date.now());
+      const res = await fetch('/api/content?t=' + Date.now(), {
+        headers: authHeader(),
+      });
       if (res.ok) {
         const json = await res.json();
         setData(json);
@@ -47,7 +55,7 @@ export default function CMSPage() {
       setSaving(true);
       const res = await fetch('/api/content', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...authHeader() },
         body: JSON.stringify(data),
       });
       if (res.ok) {
@@ -65,9 +73,28 @@ export default function CMSPage() {
   const handleSaveAll = () => handleSaveSection('All Website Content');
 
   // Backup Download
-  const handleDownloadBackup = () => {
-    window.open('/api/backup', '_blank');
-    toast.success('Downloading full system backup JSON...');
+  const handleDownloadBackup = async () => {
+    // The backup endpoint requires the staff token, so it is fetched with the
+    // Authorization header and saved as a file instead of opened in a new tab.
+    toast.success('Preparing backup download…');
+    try {
+      const res = await fetch('/api/backup', { headers: authHeader() });
+      if (!res.ok) {
+        const payload = await res.json().catch(() => ({}));
+        toast.error(payload.error || 'Backup download failed');
+        return;
+      }
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = 'nextlink-backup.json';
+      a.click();
+      URL.revokeObjectURL(url);
+      toast.success('Backup downloaded.');
+    } catch {
+      toast.error('Backup download failed');
+    }
   };
 
   // Backup Upload / Restore
@@ -81,7 +108,7 @@ export default function CMSPage() {
         const parsed = JSON.parse(event.target?.result as string);
         const res = await fetch('/api/backup', {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: { 'Content-Type': 'application/json', ...authHeader() },
           body: JSON.stringify(parsed),
         });
         if (res.ok) {

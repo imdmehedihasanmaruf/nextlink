@@ -70,11 +70,27 @@ async function run() {
   const period = '2020-01';
   const invoiceId = `INV-202001-SUB-001`;
 
-  const existing = await api('/api/billing/invoices?limit=200', { token });
-  for (const leftover of existing.body.invoices.filter((i) => i.subscriber_id === 'SUB-001')) {
+  // A paid invoice cannot be deleted, so: first reset every paid leftover to
+  // unpaid (directly in the database), then delete every invoice of this
+  // subscriber except the test one. This leaves exactly one outstanding
+  // invoice — the one the sweep and the restore assertions are built around.
+  // eslint-disable-next-line global-require
+  const db = require('../src/lib/db');
+  await db.query(
+    `UPDATE invoices
+        SET status = 'unpaid',
+            raw_data = COALESCE(raw_data, '{}'::jsonb) || '{"status":"unpaid"}'::jsonb,
+            updated_at = NOW()
+      WHERE subscriber_id = 'SUB-001'
+        AND status = 'paid'`,
+  );
+  const afterReset = await api('/api/billing/invoices?limit=200', { token });
+  for (const leftover of (afterReset.body.invoices || []).filter(
+    (invoice) => invoice.subscriber_id === 'SUB-001' && invoice.id !== invoiceId,
+  )) {
     await api(`/api/billing/invoices/${leftover.id}`, { method: 'DELETE', token });
   }
-  console.log('  (cleared the previous invoices of the test subscriber)');
+  console.log('  (reset the test subscriber invoices: only the test invoice remains)');
 
   // The subscriber must start from an active state, otherwise the sweep
   // skips it as "already suspended".
@@ -155,6 +171,14 @@ async function run() {
 
   // --- 5. Pay the invoice -> auto-reconnect ------------------------------
   console.log('\n5. Payment triggers auto-reconnect');
+
+  // The event log is cumulative across runs, so the idempotency check compares
+  // the count before the payment with the count after the duplicate callback.
+  const beforeEvents = await api(`/api/billing/invoices/${invoiceId}`, { token });
+  const restoredBefore = (beforeEvents.body.events || []).filter(
+    (event) => event.event === 'service_restored',
+  ).length;
+
   const initiate = await api('/api/payments/initiate', {
     method: 'POST',
     body: { invoiceId, gateway: 'bkash' },
@@ -205,7 +229,11 @@ async function run() {
   const restoreCount = afterDuplicate.body.events.filter(
     (event) => event.event === 'service_restored',
   ).length;
-  assert(restoreCount === 1, 'service restored only once', restoreCount);
+  assert(
+    restoreCount === restoredBefore + 1,
+    'service restored exactly once by this payment',
+    { before: restoredBefore, after: restoreCount },
+  );
 
   console.log(`\n=== Result: ${passed} passed, ${failed} failed ===\n`);
   process.exit(failed === 0 ? 0 : 1);

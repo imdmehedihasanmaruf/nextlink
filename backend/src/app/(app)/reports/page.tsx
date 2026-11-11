@@ -1,6 +1,6 @@
 'use client';
 
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { BarChart, Bar, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend } from 'recharts';
 import { Download, TrendingUp, Users, DollarSign, Activity, Trash2, RotateCcw } from 'lucide-react';
 import toast from 'react-hot-toast';
@@ -12,6 +12,52 @@ export default function ReportsPage() {
   const t = (en: string, _bn?: string) => en;
   const { invoices, subscribers, clearCollection, fetchData } = useAdminDataStore();
   const [reportFilter, setReportFilter] = useState<'all' | 'recent'>('all');
+
+  useEffect(() => {
+    fetchData();
+  }, [fetchData]);
+
+  /**
+   * Real export: a CSV of the current invoice list is generated in the
+   * browser and downloaded. The previous button only toasted a success
+   * message and exported nothing.
+   */
+  const handleExport = () => {
+    if (invoices.length === 0) {
+      toast.error('There are no invoices to export yet.');
+      return;
+    }
+
+    const escapeCsv = (value: any) => {
+      const text = String(value ?? '');
+      return text.includes(',') || text.includes('"') || text.includes('\n')
+        ? `"${text.replace(/"/g, '""')}"`
+        : text;
+    };
+
+    const rows = [
+      ['Invoice', 'Subscriber', 'Period', 'Due Date', 'Amount', 'Status'].join(','),
+      ...invoices.map((inv: any) =>
+        [
+          escapeCsv(inv.id),
+          escapeCsv(inv.subscriberName || inv.raw_data?.subscriberName || inv.subscriberId || ''),
+          escapeCsv(inv.raw_data?.period || inv.month || ''),
+          escapeCsv(inv.dueDate || inv.due_date || ''),
+          escapeCsv(inv.amount),
+          escapeCsv(inv.status || 'unpaid'),
+        ].join(','),
+      ),
+    ];
+
+    const blob = new Blob([rows.join('\n')], { type: 'text/csv;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `nextlink-invoices-${new Date().toISOString().slice(0, 10)}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+    toast.success(`Exported ${invoices.length} invoice(s).`);
+  };
 
   // Derive real monthly revenue data
   const revenueChartData = useMemo(() => {
@@ -55,9 +101,9 @@ export default function ReportsPage() {
             Financial statements, subscriber expansion, and network operational insights.
           </p>
         </div>
-        <Button onClick={() => toast.success('Exporting Full Financial Statement...')} variant="outline" className="gap-2">
+        <Button onClick={handleExport} variant="outline" className="gap-2">
           <Download className="h-4 w-4" />
-          Export Excel / PDF
+          Export CSV
         </Button>
       </div>
 
@@ -171,8 +217,10 @@ export default function ReportsPage() {
         </Card>
         <Card>
           <CardContent className="p-4">
-            <p className="text-xs text-muted-foreground">Core Router Uptime</p>
-            <h3 className="text-xl font-bold text-emerald-600 mt-1">99.98%</h3>
+            <p className="text-xs text-muted-foreground">Collected Rate</p>
+            <h3 className="text-xl font-bold text-emerald-600 mt-1">
+              {totalBilled > 0 ? `${Math.round((totalCollected / totalBilled) * 100)}%` : '—'}
+            </h3>
           </CardContent>
         </Card>
       </div>

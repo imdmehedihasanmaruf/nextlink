@@ -173,18 +173,21 @@ async function run() {
     assert(settled && settled.status === 'paid', 'invoice settled after gateway callback', settled?.status);
   }
 
-  // Restore the invoice to unpaid so the test stays repeatable.
+  // Restore the invoice to unpaid so the test stays repeatable. The billing
+  // API rightly refuses to delete a paid invoice, so the fixture reset is a
+  // direct database write instead of an HTTP call.
   if (ownUnpaid) {
-    const staff = await api('/api/auth/login', {
-      method: 'POST',
-      body: { email: 'admin@nextlink.com', password: 'admin123' },
-    });
-    const staffToken = staff.body.token;
-    const cleanup = await api(`/api/billing/invoices/${ownUnpaid.id}`, {
-      method: 'DELETE',
-      token: staffToken,
-    });
-    assert(cleanup.status === 200, 'test invoice cleaned up for a repeatable run', cleanup.body);
+    // eslint-disable-next-line global-require
+    const db = require('../src/lib/db');
+    await db.query(
+      `UPDATE invoices
+          SET status = 'unpaid',
+              raw_data = COALESCE(raw_data, '{}'::jsonb) || '{"status":"unpaid"}'::jsonb,
+              updated_at = NOW()
+        WHERE id = $1`,
+      [ownUnpaid.id],
+    );
+    assert(true, 'test invoice reset to unpaid for a repeatable run');
   }
 
   console.log(`\n=== Result: ${passed} passed, ${failed} failed ===\n`);

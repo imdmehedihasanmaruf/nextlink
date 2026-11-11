@@ -132,11 +132,24 @@ async function generateInvoice({ subscriber, period, amount, dueDate }) {
     mikrotikUsername: subscriber.pppoeUsername || '',
   };
 
+  // The conflict clause deliberately does NOT touch `status` and only fills an
+  // empty `subscriber_id`.
+  //
+  // The previous version merged the whole raw_data, which carried
+  // `status: 'unpaid'`. Because the legacy admin store rewrites the invoices
+  // table from raw_data, re-running a cycle silently turned every already
+  // paid invoice back into an unpaid one — 26 invoices in the live database.
+  // The subscriber id was blanked in the same way, which meant a payment
+  // could never find the account again and no overdue account was ever
+  // suspended.
   const inserted = await db.queryOne(
     `INSERT INTO invoices (id, subscriber_id, amount, status, due_date, raw_data, created_at, updated_at)
      VALUES ($1, $2, $3, 'unpaid', $4, $5, NOW(), NOW())
      ON CONFLICT (id) DO UPDATE SET
-        raw_data = invoices.raw_data || EXCLUDED.raw_data,
+        subscriber_id = COALESCE(invoices.subscriber_id, EXCLUDED.subscriber_id),
+        amount = CASE WHEN invoices.status = 'paid' THEN invoices.amount ELSE EXCLUDED.amount END,
+        due_date = CASE WHEN invoices.status = 'paid' THEN invoices.due_date ELSE EXCLUDED.due_date END,
+        raw_data = invoices.raw_data || (EXCLUDED.raw_data - 'status'),
         updated_at = NOW()
      RETURNING *`,
     [invoiceId, subscriber.id, Number(amount), dueDate, JSON.stringify(rawData)],
@@ -158,18 +171,71 @@ async function generateInvoice({ subscriber, period, amount, dueDate }) {
 }
 
 /**
+ * The advisory lock key for the monthly billing cycle.
+ *
+ * The cycle can be triggered by the cron, by the catch-up check and by a
+ * manual run at the same time. Without a lock all three would generate the
+ * same invoices and send the reminder SMS three times.
+ */
+const CYCLE_LOCK_KEY = 739_215_011;
+
+/**
  * Run the monthly billing cycle.
  *
  * @param {object} options
  * @param {string} [options.period]  Period key, defaults to the current month.
  * @param {boolean} [options.dryRun]  Generate nothing, only report what would happen.
+ * @param {boolean} [options.force]   Run even when another cycle holds the lock.
  */
-async function runMonthlyCycle({ period = dates.currentPeriodKey(), dryRun = false } = {}) {
+async function runMonthlyCycle({ period = dates.currentPeriodKey(), dryRun = false, force = false } = {}) {
   const cycleId = `CYCLE-${period.replace('-', '')}`;
   const startedAt = new Date();
 
   logger.info('billing cycle started', { period, dryRun });
 
+  // Only one cycle may run at a time. The lock is taken on a dedicated
+  // connection, because the session-level advisory lock belongs to the
+  // connection that took it.
+  let lockClient = null;
+  if (!dryRun) {
+    lockClient = await db.getPool().connect();
+    const lock = await lockClient.query('SELECT pg_try_advisory_lock($1) AS locked', [
+      CYCLE_LOCK_KEY,
+    ]);
+
+    if (!lock.rows[0].locked) {
+      lockClient.release();
+      lockClient = null;
+      logger.info('billing cycle skipped — another cycle is already running', { period });
+      return {
+        cycleId,
+        period,
+        dryRun,
+        skipped: [],
+        reason: 'another_cycle_is_running',
+        invoiceCount: 0,
+        createdCount: 0,
+        totalAmount: 0,
+        failures: [],
+        dueDate: '',
+      };
+    }
+  }
+
+  try {
+    return await executeCycle({ period, dryRun, cycleId, startedAt });
+  } finally {
+    if (lockClient) {
+      await lockClient.query('SELECT pg_advisory_unlock($1)', [CYCLE_LOCK_KEY]).catch(() => {});
+      lockClient.release();
+    }
+  }
+}
+
+/**
+ * The body of the monthly billing cycle.
+ */
+async function executeCycle({ period, dryRun, cycleId, startedAt }) {
   if (!dryRun) {
     await db.query(
       `INSERT INTO billing_cycles (id, period, status, started_at)
@@ -183,7 +249,10 @@ async function runMonthlyCycle({ period = dates.currentPeriodKey(), dryRun = fal
     `SELECT * FROM subscribers WHERE status IN ('active', 'pending') ORDER BY id`,
   );
 
-  const dueDate = `${period}-${String(config.billing.dueDay).padStart(2, '0')}`;
+  // The due day is clamped to the length of the month. A due day of 31 would
+  // otherwise produce "2026-02-31", which is not a date at all and made the
+  // invoice fall back to the "never due" branch.
+  const dueDate = dates.dueDateForPeriod(period, config.billing.dueDay);
   let invoiceCount = 0;
   let createdCount = 0;
   let totalAmount = 0;
@@ -348,37 +417,46 @@ async function autoSuspendOverdue() {
     });
 
     if (routerResult.success) {
-      // The legacy admin store rewrites the subscribers table from raw_data,
-      // so the status has to be kept in both places.
-      await db.query(
-        `UPDATE subscribers
-            SET status = 'suspended',
-                raw_data = COALESCE(raw_data, '{}'::jsonb) || '{"status":"suspended"}'::jsonb,
-                updated_at = NOW()
-          WHERE id = $1`,
-        [subscriber.id],
+      const totalAmount = subscriberInvoices.reduce(
+        (sum, invoice) => sum + Number(invoice.amount || 0),
+        0,
       );
-      await db.query(
-        `UPDATE subscriber_billing SET status = 'suspended', updated_at = NOW() WHERE subscriber_id = $1`,
-        [subscriber.id],
-      );
-
-      // The oldest invoice represents the account; the rest are listed too.
-      const totalAmount = subscriberInvoices.reduce((sum, invoice) => sum + Number(invoice.amount || 0), 0);
       const invoiceIds = subscriberInvoices.map((invoice) => invoice.id).join(', ');
 
-      for (const invoice of subscriberInvoices) {
-        await db.query(
-          `INSERT INTO billing_events (subscriber_id, invoice_id, event, amount, message)
-           VALUES ($1, $2, 'auto_suspended', $3, $4)`,
-          [
-            subscriber.id,
-            invoice.id,
-            Number(invoice.amount),
-            `Service auto-suspended for unpaid invoice (outstanding: ${invoiceIds})`,
-          ],
+      // The subscriber suspension and the invoice log entries are one logical
+      // change — a partial write would suspend the account without recording
+      // why, or log the suspension without changing the account.
+      await db.transaction(async (client) => {
+        // The legacy admin store rewrites the subscribers table from
+        // raw_data, so the status has to be kept in both places.
+        await client.query(
+          `UPDATE subscribers
+              SET status = 'suspended',
+                  raw_data = COALESCE(raw_data, '{}'::jsonb) || '{"status":"suspended"}'::jsonb,
+                  updated_at = NOW()
+            WHERE id = $1`,
+          [subscriber.id],
         );
-      }
+        await client.query(
+          `UPDATE subscriber_billing SET status = 'suspended', updated_at = NOW() WHERE subscriber_id = $1`,
+          [subscriber.id],
+        );
+
+        for (const invoice of subscriberInvoices) {
+          await client.query(
+            `INSERT INTO billing_events (subscriber_id, invoice_id, event, amount, message)
+             VALUES ($1, $2, 'auto_suspended', $3, $4)`,
+            [
+              subscriber.id,
+              invoice.id,
+              Number(invoice.amount),
+              `Service auto-suspended for unpaid invoice (outstanding: ${subscriberInvoices
+    .map((i) => i.id)
+    .join(', ')})`,
+            ],
+          );
+        }
+      });
 
       await sms.sendTemplate(
         'service_suspended',
@@ -480,23 +558,28 @@ async function applyPayment({ invoiceId, transactionId, gateway, amount, raw = {
       });
 
       if (routerResult.success && subscriber.status !== 'active') {
-        await db.query(
-          `UPDATE subscribers
-              SET status = 'active',
-                  raw_data = COALESCE(raw_data, '{}'::jsonb) || '{"status":"active"}'::jsonb,
-                  updated_at = NOW()
-            WHERE id = $1`,
-          [subscriber.id],
-        );
-        await db.query(
-          `UPDATE subscriber_billing SET status = 'active', updated_at = NOW() WHERE subscriber_id = $1`,
-          [subscriber.id],
-        );
-        await db.query(
-          `INSERT INTO billing_events (subscriber_id, invoice_id, event, amount, message)
-           VALUES ($1, $2, 'service_restored', $3, $4)`,
-          [subscriber.id, invoiceId, settledAmount, 'Service restored after payment'],
-        );
+        // The three writes are one logical change — either the service is
+        // restored everywhere or not at all. A partial restore left the
+        // invoice paid while the subscriber was still marked suspended.
+        await db.transaction(async (client) => {
+          await client.query(
+            `UPDATE subscribers
+                SET status = 'active',
+                    raw_data = COALESCE(raw_data, '{}'::jsonb) || '{"status":"active"}'::jsonb,
+                    updated_at = NOW()
+              WHERE id = $1`,
+            [subscriber.id],
+          );
+          await client.query(
+            `UPDATE subscriber_billing SET status = 'active', updated_at = NOW() WHERE subscriber_id = $1`,
+            [subscriber.id],
+          );
+          await client.query(
+            `INSERT INTO billing_events (subscriber_id, invoice_id, event, amount, message)
+             VALUES ($1, $2, 'service_restored', $3, $4)`,
+            [subscriber.id, invoiceId, settledAmount, 'Service restored after payment'],
+          );
+        });
 
         await sms.sendTemplate(
           'service_restored',

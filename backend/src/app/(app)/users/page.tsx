@@ -139,11 +139,12 @@ export default function UserDetailsPage() {
     }
   };
 
-  // Delete user handler
+  // Deactivate (archive) handler. The subscriber is never removed from the
+  // system — the account is deactivated and the billing history is kept.
   const handleDeleteUser = async (user: Subscriber) => {
-    if (confirm(`Are you sure you want to permanently delete user "${user.name}" (${user.id})? This cannot be undone.`)) {
+    if (confirm(`Deactivate account "${user.name}" (${user.id})? The billing history will be kept.`)) {
       await deleteSubscriber(user.id);
-      toast.success(`User ${user.name} was deleted permanently from PostgreSQL & disk!`);
+      toast.success(`User ${user.name} was deactivated and the line was suspended.`);
       if (selectedUser?.id === user.id) {
         setViewDetailsOpen(false);
         setSelectedUser(null);
@@ -726,7 +727,7 @@ export default function UserDetailsPage() {
                             variant="ghost"
                             size="icon"
                             className="h-8 w-8 text-rose-500 hover:text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-950/40"
-                            title="Delete User"
+                            title="Deactivate User"
                             onClick={() => handleDeleteUser(user)}
                           >
                             <Trash2 className="h-4 w-4" />
@@ -1043,7 +1044,7 @@ export default function UserDetailsPage() {
                     className="gap-1.5"
                   >
                     <Trash2 className="h-4 w-4" />
-                    Delete User
+                    Deactivate User
                   </Button>
                   <Button variant="outline" size="sm" onClick={() => setViewDetailsOpen(false)}>
                     Close

@@ -124,8 +124,13 @@ async function getGroup(group) {
  * Merge and persist a settings group.
  */
 async function setGroup(group, value) {
+  // The masked placeholder the admin UI sends back must never be stored as the
+  // real credential. The strip has to be recursive — a masked `appSecret`
+  // nested inside the SSLCommerz block used to be written as the literal
+  // string of bullets.
+  const cleaned = stripMaskedSecrets(value);
   const current = await getGroup(group);
-  const merged = merge(current, value);
+  const merged = merge(current, cleaned);
 
   await db.query(
     `INSERT INTO system_settings (key, value, updated_at)
@@ -134,12 +139,42 @@ async function setGroup(group, value) {
     [group, JSON.stringify(merged)],
   );
 
-  // The cache is refreshed so the services pick the new values right away.
-  cache = { ...(cache || {}), [group]: merged };
-  cachedAt = Date.now();
+  // The whole cache is refreshed instead of splicing one group in. The old
+  // splice meant the other groups kept the previous values until the next
+  // TTL expiry, so an edit to the MikroTik settings could leave the SMS
+  // gateway reading stale credentials.
+  invalidateCache();
+  await getAll()
+    .then((all) => {
+      cache = all;
+      cachedAt = Date.now();
+    })
+    .catch(() => {});
 
   logger.info('system settings updated', { group });
   return merged;
+}
+
+/**
+ * Remove every masked placeholder from a settings payload, recursively.
+ *
+ * The admin panel receives `••••••••••••` for a configured secret and may send
+ * it back unchanged on save. Storing it would overwrite the real credential
+ * with the bullets and break the integration at the next restart.
+ */
+function stripMaskedSecrets(node) {
+  if (Array.isArray(node)) return node.map(stripMaskedSecrets);
+  if (!node || typeof node !== 'object') return node;
+
+  const result = {};
+  for (const [key, value] of Object.entries(node)) {
+    if (typeof value === 'string' && value.length > 0 && /^•+$/.test(value)) {
+      // A masked value is dropped entirely — the stored value is kept.
+      continue;
+    }
+    result[key] = stripMaskedSecrets(value);
+  }
+  return result;
 }
 
 /**
@@ -199,5 +234,6 @@ module.exports = {
   setGroup,
   getMasked,
   maskSecrets,
+  stripMaskedSecrets,
   testMikrotik,
 };

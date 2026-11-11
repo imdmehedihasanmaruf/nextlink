@@ -9,6 +9,7 @@ import {
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useAuthStore } from '@/store/authStore';
+import { useAdminDataStore } from '@/store/adminDataStore';
 import { useSettingsStore, useAdminTranslation } from '@/store/settingsStore';
 import type { UserRole } from '@/lib/mockData';
 
@@ -18,28 +19,30 @@ interface NavItem {
   href: string;
   icon: React.ReactNode;
   roles: UserRole[];
+  /** The permission key used by the role matrix to gate this item. */
+  permission: string;
 }
 
 const navItems: NavItem[] = [
-  { label: 'Dashboard', key: 'dashboard', href: '/dashboard', icon: <LayoutDashboard className="h-5 w-5" />, roles: ['super_admin', 'billing', 'support', 'technician'] },
-  { label: 'Frontend CMS', key: 'cms', href: '/cms', icon: <Globe className="h-5 w-5" />, roles: ['super_admin', 'billing', 'support'] },
-  { label: 'User Details', key: 'subscribers', href: '/users', icon: <Users className="h-5 w-5" />, roles: ['super_admin', 'billing', 'support'] },
-  { label: 'Packages', key: 'packages', href: '/packages', icon: <Package className="h-5 w-5" />, roles: ['super_admin'] },
-  { label: 'Package Orders', key: 'orders', href: '/orders', icon: <PackageCheck className="h-5 w-5" />, roles: ['super_admin', 'billing', 'support'] },
-  { label: 'Billing', key: 'billing', href: '/billing', icon: <Receipt className="h-5 w-5" />, roles: ['super_admin', 'billing'] },
-  { label: 'Billing Engine', key: 'billing_engine', href: '/billing-engine', icon: <Bot className="h-5 w-5" />, roles: ['super_admin', 'billing'] },
-  { label: 'Operations', key: 'operations', href: '/operations', icon: <ClipboardList className="h-5 w-5" />, roles: ['super_admin', 'billing', 'support'] },
-  { label: 'Tickets', key: 'tickets', href: '/tickets', icon: <Ticket className="h-5 w-5" />, roles: ['super_admin', 'support', 'technician'] },
-  { label: 'Technicians', key: 'technicians', href: '/technicians', icon: <Wrench className="h-5 w-5" />, roles: ['super_admin', 'support'] },
-  { label: 'Referral Rewards', key: 'referral_rewards', href: '/referrals', icon: <Gift className="h-5 w-5" />, roles: ['super_admin', 'billing', 'support'] },
-  { label: 'Boost Bandwidth', key: 'boost_bandwidth', href: '/boost', icon: <Zap className="h-5 w-5" />, roles: ['super_admin', 'support', 'technician'] },
-  { label: 'Live Latency & Ping', key: 'live_latency', href: '/latency', icon: <Radio className="h-5 w-5" />, roles: ['super_admin', 'support', 'technician'] },
-  { label: 'Bandwidth & Traffic', key: 'interface_traffic', href: '/traffic', icon: <Activity className="h-5 w-5" />, roles: ['super_admin', 'support', 'technician'] },
-  { label: 'Cloud Peering Hubs', key: 'peering_hubs', href: '/peering', icon: <Network className="h-5 w-5" />, roles: ['super_admin', 'support'] },
-  { label: 'Reports', key: 'reports', href: '/reports', icon: <BarChart3 className="h-5 w-5" />, roles: ['super_admin', 'billing'] },
-  { label: 'Role Management', key: 'roles', href: '/roles', icon: <Shield className="h-5 w-5" />, roles: ['super_admin'] },
-  { label: 'Settings', key: 'settings', href: '/settings', icon: <Settings className="h-5 w-5" />, roles: ['super_admin'] },
-  { label: 'Profile', key: 'profile', href: '/profile', icon: <User className="h-5 w-5" />, roles: ['super_admin', 'billing', 'support', 'technician'] },
+  { label: 'Dashboard', key: 'dashboard', href: '/dashboard', icon: <LayoutDashboard className="h-5 w-5" />, roles: ['super_admin', 'billing', 'support', 'technician', 'noc_operator'], permission: 'dashboard' },
+  { label: 'Frontend CMS', key: 'cms', href: '/cms', icon: <Globe className="h-5 w-5" />, roles: ['super_admin', 'billing', 'support'], permission: 'cms' },
+  { label: 'User Details', key: 'subscribers', href: '/users', icon: <Users className="h-5 w-5" />, roles: ['super_admin', 'billing', 'support'], permission: 'subscribers' },
+  { label: 'Packages', key: 'packages', href: '/packages', icon: <Package className="h-5 w-5" />, roles: ['super_admin'], permission: 'packages' },
+  { label: 'Package Orders', key: 'orders', href: '/orders', icon: <PackageCheck className="h-5 w-5" />, roles: ['super_admin', 'billing', 'support'], permission: 'billing' },
+  { label: 'Billing', key: 'billing', href: '/billing', icon: <Receipt className="h-5 w-5" />, roles: ['super_admin', 'billing'], permission: 'billing' },
+  { label: 'Billing Engine', key: 'billing_engine', href: '/billing-engine', icon: <Bot className="h-5 w-5" />, roles: ['super_admin', 'billing'], permission: 'billing' },
+  { label: 'Operations', key: 'operations', href: '/operations', icon: <ClipboardList className="h-5 w-5" />, roles: ['super_admin', 'billing', 'support'], permission: 'subscribers' },
+  { label: 'Tickets', key: 'tickets', href: '/tickets', icon: <Ticket className="h-5 w-5" />, roles: ['super_admin', 'support', 'technician', 'noc_operator'], permission: 'tickets' },
+  { label: 'Technicians', key: 'technicians', href: '/technicians', icon: <Wrench className="h-5 w-5" />, roles: ['super_admin', 'support', 'technician', 'noc_operator'], permission: 'technicians' },
+  { label: 'Referral Rewards', key: 'referral_rewards', href: '/referrals', icon: <Gift className="h-5 w-5" />, roles: ['super_admin', 'billing', 'support'], permission: 'referral_rewards' },
+  { label: 'Boost Bandwidth', key: 'boost_bandwidth', href: '/boost', icon: <Zap className="h-5 w-5" />, roles: ['super_admin', 'support', 'technician'], permission: 'boost_bandwidth' },
+  { label: 'Live Latency & Ping', key: 'live_latency', href: '/latency', icon: <Radio className="h-5 w-5" />, roles: ['super_admin', 'support', 'technician', 'noc_operator'], permission: 'live_latency' },
+  { label: 'Bandwidth & Traffic', key: 'interface_traffic', href: '/traffic', icon: <Activity className="h-5 w-5" />, roles: ['super_admin', 'support', 'technician', 'noc_operator'], permission: 'interface_traffic' },
+  { label: 'Cloud Peering Hubs', key: 'peering_hubs', href: '/peering', icon: <Network className="h-5 w-5" />, roles: ['super_admin', 'support', 'noc_operator'], permission: 'peering_hubs' },
+  { label: 'Reports', key: 'reports', href: '/reports', icon: <BarChart3 className="h-5 w-5" />, roles: ['super_admin', 'billing', 'noc_operator'], permission: 'reports' },
+  { label: 'Role Management', key: 'roles', href: '/roles', icon: <Shield className="h-5 w-5" />, roles: ['super_admin'], permission: 'roles' },
+  { label: 'Settings', key: 'settings', href: '/settings', icon: <Settings className="h-5 w-5" />, roles: ['super_admin'], permission: 'settings' },
+  { label: 'Profile', key: 'profile', href: '/profile', icon: <User className="h-5 w-5" />, roles: ['super_admin', 'billing', 'support', 'technician', 'noc_operator'], permission: 'dashboard' },
 ];
 
 interface SidebarProps {
@@ -53,9 +56,24 @@ export function Sidebar({ mobileOpen, onMobileClose }: SidebarProps) {
   const { user, logout } = useAuthStore();
   const { t } = useAdminTranslation();
 
-  const allowedItems = navItems.filter(item =>
-    !user || item.roles.includes(user.role as UserRole)
-  );
+  // The sidebar is filtered by the role's permission matrix (the same matrix
+  // the Role Management page edits and persists). Editing the matrix there
+  // changes what the sidebar shows.
+  const roles = useAdminDataStore((state) => state.roles);
+
+  const activeRole = roles.find((role: any) => role.key === user?.role);
+  const allowedPermissions: string[] = activeRole?.permissions || [];
+
+  const allowedItems = navItems.filter(item => {
+    if (!user) return false;
+    const roleAllowed = item.roles.includes(user.role as UserRole);
+    if (!roleAllowed) return false;
+    // When the matrix is loaded, the permission gate is authoritative.
+    if (allowedPermissions.length > 0) {
+      return allowedPermissions.includes(item.permission);
+    }
+    return true;
+  });
 
   const sidebarContent = (
     <div className="flex h-full flex-col">

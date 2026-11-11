@@ -1,7 +1,8 @@
 import { NextResponse } from 'next/server';
-import { getAdminStore, saveAdminSection } from '@/lib/db';
+import { getAdminStore, saveAdminSection, getDbPool } from '@/lib/db';
 import { Subscriber } from '@/lib/mockData';
 import crypto from 'crypto';
+import bcrypt from 'bcryptjs';
 
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
@@ -17,12 +18,9 @@ export async function OPTIONS() {
 }
 
 function generateMac(): string {
-  const hex = '0123456789ABCDEF';
-  const pairs = [];
-  for (let i = 0; i < 6; i++) {
-    pairs.push(hex[Math.floor(Math.random() * 16)] + hex[Math.floor(Math.random() * 16)]);
-  }
-  return pairs.join(':');
+  return Array.from({ length: 6 }, () =>
+    crypto.randomBytes(1).toString('hex').toUpperCase().padStart(2, '0'),
+  ).join(':');
 }
 
 const DISPOSABLE_EMAIL_DOMAINS = [
@@ -60,6 +58,16 @@ export async function POST(request: Request) {
       );
     }
 
+    // The server enforces the same rule as the form: a password with at least
+    // six characters. A weaker account must never be created.
+    const passwordValue = String(password || '');
+    if (passwordValue.length < 6) {
+      return NextResponse.json(
+        { success: false, error: 'Password must be at least 6 characters' },
+        { status: 400, headers: corsHeaders }
+      );
+    }
+
     // Telemetry & IP Detection
     const forwarded = request.headers.get('x-forwarded-for');
     const realIp = request.headers.get('x-real-ip');
@@ -67,9 +75,15 @@ export async function POST(request: Request) {
     let clientIp = cfIp || realIp || (forwarded ? forwarded.split(',')[0].trim() : '');
 
     if (!clientIp || clientIp === '::1' || clientIp === '127.0.0.1' || clientIp.startsWith('192.168.')) {
-      // Realistic public IP for local dev testing
-      const randomHost = Math.floor(10 + Math.random() * 240);
-      clientIp = `103.147.218.${randomHost}`;
+      if (process.env.NODE_ENV === 'production') {
+        // A fabricated address in production is a false record — keep what the
+        // request actually reported.
+        clientIp = clientIp || '';
+      } else {
+        // Realistic public IP for local dev testing
+        const randomHost = Math.floor(10 + Math.random() * 240);
+        clientIp = `103.147.218.${randomHost}`;
+      }
     }
 
     // Fraud, VPN, Spam & Scam Heuristic Engine
@@ -160,13 +174,19 @@ export async function POST(request: Request) {
         )
       : null;
 
+    // The password is hashed before it is stored anywhere. The hash lives in
+    // subscriber_credentials — the table the billing API reads — so the new
+    // customer can sign in at once. The plain password is never persisted.
+    const usernameValue = username || email.split('@')[0];
+    const passwordHash = await bcrypt.hash(passwordValue, 10);
+
     const newSubscriber: Subscriber = {
       id: newId,
       name: fullName,
-      username: username || email.split('@')[0],
+      username: usernameValue,
       phone: phone,
       email: email,
-      password: password || 'NextLink@2026',
+      password: '',
       address: address || 'Optical Distribution Hub, Core Network',
       zone: 'Dhaka Metro',
       packageId: matchedPackage?.id || 'PKG-002',
@@ -187,17 +207,100 @@ export async function POST(request: Request) {
       riskReason,
     };
 
+    // The username and email must be unique before any record is created —
+    // the registration fails with a clear reason instead of producing a
+    // half-account that can never sign in.
+    const pool = getDbPool();
+    const usernameValueResolved = usernameValue;
+    const clash = await pool.query(
+      `SELECT 1 FROM subscriber_credentials WHERE LOWER(username) = LOWER($1)
+       UNION
+       SELECT 1 FROM subscribers WHERE LOWER(email) = LOWER($2)
+       LIMIT 1`,
+      [usernameValueResolved, email],
+    );
+    if (clash.rows.length > 0) {
+      return NextResponse.json(
+        { success: false, error: 'That username or email is already registered. Try signing in instead.' },
+        { status: 409, headers: corsHeaders }
+      );
+    }
+
     // Prepend new subscriber to top of list
     const updatedSubscribers = [newSubscriber, ...currentSubscribers.filter(s => s.id !== newId && s.email !== email)];
 
     // Persist to PostgreSQL and disk fallback
     await saveAdminSection('subscribers', updatedSubscribers);
 
+    // The credential lives in subscriber_credentials, hashed. The unique
+    // index is the backstop for a race between two registrations at the same
+    // time — the account fails with a clear reason rather than one quietly
+    // replacing the other.
+    try {
+      await pool.query(
+        `INSERT INTO subscriber_credentials
+           (subscriber_id, username, password_hash, raw_data)
+         VALUES ($1, $2, $3, $4)
+         ON CONFLICT (subscriber_id) DO UPDATE SET
+           username = EXCLUDED.username,
+           password_hash = EXCLUDED.password_hash,
+           updated_at = NOW()`,
+        [newId, usernameValue, passwordHash, JSON.stringify({ source: 'registration' })],
+      );
+    } catch (credentialError: any) {
+      // A unique-violation means a race lost to a concurrent registration —
+      // the subscriber record was already written, so the account must be
+      // removed again to avoid an orphan account that can never sign in.
+      if (String(credentialError?.code || '') === '23505') {
+        // The subscriber row and the JSON mirror entry both have to go —
+        // otherwise the mirror would resurrect the account on restore.
+        try {
+          await getDbPool().query('DELETE FROM subscribers WHERE id = $1', [newId]);
+        } catch (rollbackError) {
+          console.error('Could not delete the raced account from the database:', rollbackError);
+        }
+        try {
+          const fs = require('fs');
+          const path = require('path');
+          const dataDir = fs.existsSync(path.join(process.cwd(), 'data'))
+            ? path.join(process.cwd(), 'data')
+            : path.join(process.cwd(), '..', 'data');
+          const storePath = path.join(dataDir, 'adminStore.json');
+          if (fs.existsSync(storePath)) {
+            const disk = JSON.parse(fs.readFileSync(storePath, 'utf-8'));
+            disk.subscribers = (disk.subscribers || []).filter((s: any) => s.id !== newId);
+            disk.lastUpdated = new Date().toISOString();
+            fs.writeFileSync(storePath, JSON.stringify(disk, null, 2), 'utf-8');
+          }
+        } catch (mirrorError) {
+          console.error('Could not fix the JSON mirror after a username race:', mirrorError);
+        }
+        return NextResponse.json(
+          { success: false, error: 'That username was just registered. Please choose another one.' },
+          { status: 409, headers: corsHeaders }
+        );
+      }
+
+      // The credential insert must not silently fail — the account would be
+      // impossible to sign into. Surface the problem.
+      console.error('Could not create the credential for the new subscriber:', credentialError);
+      return NextResponse.json(
+        {
+          success: false,
+          error: 'The account was created but the credential could not be stored. Please contact support.',
+        },
+        { status: 500, headers: corsHeaders }
+      );
+    }
+
+    // The password never leaves this route in plain text or as a hash.
+    const { password: _discarded, ...safeUser } = newSubscriber as any;
+
     return NextResponse.json(
       {
         success: true,
         message: 'Registration successful and recorded in NextLink core directory',
-        user: newSubscriber,
+        user: safeUser,
       },
       { headers: corsHeaders }
     );

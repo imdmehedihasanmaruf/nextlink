@@ -352,6 +352,11 @@ async function handleCallback(gatewayName, req) {
 /**
  * POST|GET /api/payments/:gateway/callback
  * Gateway settlement callbacks.
+ *
+ * The handler is shared by the server-to-server callback and the browser
+ * redirect. When the customer's browser is sent back to us (GET with an HTML
+ * Accept header) the response is a redirect to the client portal with the
+ * settled invoice id, instead of a bare JSON payload.
  */
 router.all(
   '/:gateway/callback',
@@ -361,6 +366,14 @@ router.all(
       return res.status(404).json({ success: false, error: `Unknown gateway: ${gatewayName}` });
     }
     const result = await handleCallback(gatewayName, req);
+
+    const acceptsHtml = String(req.headers.accept || '').includes('text/html');
+    const invoiceId = result.body?.invoiceId;
+    if (req.method === 'GET' && acceptsHtml && invoiceId) {
+      const portal = require('../config').portalPublicUrl;
+      return res.redirect(`${portal}/dashboard?paid=${encodeURIComponent(invoiceId)}`);
+    }
+
     return res.status(result.status).json(result.body);
   }),
 );
@@ -374,6 +387,7 @@ router.get(
   '/mock/checkout/:transactionId',
   asyncHandler(async (req, res) => {
     const config = require('../config');
+    const portal = config.portalPublicUrl;
     if (config.payments.mode !== 'mock') {
       return res.status(404).json({ success: false, error: 'Mock checkout is disabled' });
     }
@@ -386,7 +400,6 @@ router.get(
       return res.status(404).json({ success: false, error: 'Transaction not found' });
     }
 
-    const invoice = await db.queryOne('SELECT * FROM invoices WHERE id = $1', [transaction.invoice_id]);
     const amount = transaction.amount;
 
     // Simulate the customer paying (GET) or cancelling (GET ?cancel=1).
@@ -404,7 +417,7 @@ router.get(
     });
 
     const settled = result.body && result.body.success;
-
+    const invoiceId = transaction.invoice_id;
     return res.send(
       `<!doctype html><html><head><meta charset="utf-8"><title>NextLink Mock Checkout</title>
        <style>body{font-family:system-ui;background:#0b1220;color:#e6edf7;display:grid;place-items:center;height:100vh;margin:0}
@@ -413,14 +426,18 @@ router.get(
        .muted{color:#8fa3c0;font-size:13px;margin-bottom:18px}
        .ok{color:#38d39f}.bad{color:#ff7b72}
        a{display:inline-block;margin:6px;padding:10px 18px;border-radius:8px;text-decoration:none;font-weight:600}
-       .pay{background:#2563eb;color:#fff}.cancel{background:#1f2b45;color:#cbd5e1}</style></head>
+       .pay{background:#2563eb;color:#fff}.cancel{background:#1f2b45;color:#cbd5e1}
+       .done{background:#16a34a;color:#052e16}</style></head>
        <body><div class="card">
        <h1>Mock ${transaction.gateway.toUpperCase()} Checkout</h1>
        <div class="amt">BDT ${utils.formatAmount(amount)}</div>
        <div class="muted">Invoice ${transaction.invoice_id} · Txn ${transaction.gateway_txn_id}</div>
        <p class="${settled ? 'ok' : 'bad'}">${settled ? 'Payment completed successfully.' : 'Payment was not completed.'}</p>
-       <a class="pay" href="/api/payments/mock/checkout/${encodeURIComponent(transaction.gateway_txn_id)}">Pay now</a>
-       <a class="cancel" href="/api/payments/mock/checkout/${encodeURIComponent(transaction.gateway_txn_id)}?cancel=1">Cancel</a>
+       ${settled
+         ? `<a class="done" href="${portal}/dashboard?paid=${encodeURIComponent(invoiceId)}">Return to your dashboard</a>`
+         : `<a class="pay" href="/api/payments/mock/checkout/${encodeURIComponent(transaction.gateway_txn_id)}">Pay now</a>
+            <a class="cancel" href="/api/payments/mock/checkout/${encodeURIComponent(transaction.gateway_txn_id)}?cancel=1">Cancel</a>`
+       }
        </div></body></html>`,
     );
   }),

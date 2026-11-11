@@ -21,6 +21,7 @@ const db = require('../src/lib/db');
 const logger = require('../src/lib/logger');
 const mikrotik = require('../src/services/mikrotik');
 const sms = require('../src/services/sms');
+const settings = require('../src/services/settings');
 
 const LIVE = process.argv.includes('--live');
 
@@ -39,6 +40,32 @@ function warn(label, detail) {
 function fail(label, detail) {
   problems += 1;
   console.log(`  \u2717 ${label}${detail ? ` — ${detail}` : ''}`);
+}
+
+/**
+ * The effective settings: the database row wins for connection details, and
+ * the environment wins for an explicitly requested live mode — the same
+ * resolution the service code uses. Reporting only the environment used to
+ * tell the operator their configuration was broken when it was fine.
+ */
+async function effectiveSettings() {
+  const stored = await settings
+    .getAll()
+    .catch(() => ({ mikrotik: {}, payments: {}, sms: {}, billing: {} }));
+
+  const mode = config.mikrotik.mode === 'live' ? 'live' : stored.mikrotik.mode || config.mikrotik.mode;
+  const envIsLive = config.payments.mode === 'live';
+  const paymentMode = envIsLive ? 'live' : stored.payments.mode || config.payments.mode;
+  const smsMode = config.sms.mode === 'live' ? 'live' : stored.sms.mode || config.sms.mode;
+
+  return { mikrotik: { ...stored.mikrotik, mode }, payments: { ...stored.payments, mode: paymentMode }, sms: { ...stored.sms, mode: smsMode } };
+}
+
+/**
+ * Hide the password in a connection URL before it is printed.
+ */
+function redactUrl(url) {
+  return String(url || '').replace(/^([a-z][a-z0-9+.-]*:\/\/)[^@/]*@/i, '$1***@');
 }
 
 /**
@@ -90,10 +117,12 @@ async function run() {
   console.log(`Environment : ${config.env}`);
   console.log(`Live checks : ${LIVE ? 'enabled' : 'disabled (pass --live to connect)'}\n`);
 
+  const stored = await effectiveSettings();
+
   // -----------------------------------------------------------------------
   console.log('Database');
   const database = await db.healthCheck();
-  if (database.ok) ok('PostgreSQL reachable', config.db.connectionString.replace(/:[^:@]*@/, ':***@'));
+  if (database.ok) ok('PostgreSQL reachable', redactUrl(config.db.connectionString));
   else fail('PostgreSQL unreachable', database.error);
 
   // -----------------------------------------------------------------------
@@ -102,26 +131,35 @@ async function run() {
     warn('Redis disabled', 'the job queue falls back to the in-process queue');
   } else {
     const tcp = await checkTcp(
-      config.redis.url.replace(/^redis:\/\//, '').split('@').pop().split(':')[0],
-      Number(config.redis.url.split(':').pop()) || 6379,
+      redactUrl(config.redis.url).replace(/^redis:\/\//, '').split('@').pop().split(':')[0],
+      Number(redactUrl(config.redis.url).split(':').pop()) || 6379,
     );
-    if (tcp.ok) ok('Redis reachable', config.redis.url.replace(/:[^:@]*@/, ':***@'));
+    if (tcp.ok) ok('Redis reachable', redactUrl(config.redis.url));
     else fail('Redis unreachable', tcp.error);
   }
 
   // -----------------------------------------------------------------------
   console.log('\nMikroTik RouterOS');
-  if (config.mikrotik.mode === 'simulator') {
-    warn('running in simulator mode', 'set MIKROTIK_MODE=live to use a real router');
+  const mt = {
+    mode: stored.mikrotik.mode,
+    host: stored.mikrotik.host,
+    port: Number(stored.mikrotik.apiPort || stored.mikrotik.port || 8728),
+    user: stored.mikrotik.username || 'admin',
+    password: stored.mikrotik.password || '',
+    timeoutMs: Number(stored.mikrotik.timeoutMs || 8000),
+  };
+
+  if (mt.mode === 'simulator') {
+    warn('running in simulator mode', 'set MIKROTIK_MODE=live or switch the admin panel to live mode to use a real router');
   } else {
-    if (!config.mikrotik.password) {
-      fail('MIKROTIK_PASSWORD is empty', 'the router will reject the login');
+    if (!mt.password) {
+      fail('the router password is empty', 'the router will reject the login — set it in the admin panel (System Settings → MikroTik)');
     } else {
-      ok('credentials present', `${config.mikrotik.user}@${config.mikrotik.host}:${config.mikrotik.port}`);
+      ok('credentials present', `${mt.user}@${mt.host}:${mt.port}`);
     }
 
     if (LIVE) {
-      const tcp = await checkTcp(config.mikrotik.host, config.mikrotik.port, config.mikrotik.timeoutMs);
+      const tcp = await checkTcp(mt.host, mt.port, mt.timeoutMs);
       if (tcp.ok) ok('router API port open');
       else fail('router API port unreachable', tcp.error);
 
@@ -136,51 +174,41 @@ async function run() {
 
   // -----------------------------------------------------------------------
   console.log('\nPayment gateways');
+  const gw = stored.payments;
   const gateways = [
     {
       id: 'bkash',
       label: 'bKash',
-      mode: config.payments.mode,
-      configured: Boolean(
-        config.payments.bkash.appKey &&
-          config.payments.bkash.appSecret &&
-          config.payments.bkash.username &&
-          config.payments.bkash.password,
-      ),
+      configured: Boolean(gw.bkash.appKey && gw.bkash.appSecret && gw.bkash.username && gw.bkash.password),
       baseUrl: config.payments.bkash.baseUrl,
     },
     {
       id: 'nagad',
       label: 'Nagad',
-      mode: config.payments.mode,
-      configured: Boolean(config.payments.nagad.merchantId && config.payments.nagad.apiKey),
+      configured: Boolean(gw.nagad.merchantId && gw.nagad.apiKey),
       baseUrl: config.payments.nagad.baseUrl,
     },
     {
       id: 'sslcommerz',
       label: 'SSLCommerz',
-      mode: config.payments.mode,
-      configured: Boolean(
-        config.payments.sslcommerz.storeId && config.payments.sslcommerz.storePassword,
-      ),
+      configured: Boolean(gw.sslcommerz.storeId && gw.sslcommerz.storePassword),
       baseUrl: config.payments.sslcommerz.baseUrl,
     },
     {
       id: 'rocket',
       label: 'Rocket',
-      mode: config.payments.mode,
-      configured: Boolean(config.payments.rocket.merchantId && config.payments.rocket.apiKey),
+      configured: Boolean(gw.rocket.merchantId && gw.rocket.apiKey),
       baseUrl: config.payments.rocket.baseUrl,
     },
   ];
 
   for (const gateway of gateways) {
-    if (gateway.mode !== 'live') {
-      warn(`${gateway.label} in mock mode`, 'set PAYMENT_MODE=live to use the real gateway');
+    if (gw.mode !== 'live') {
+      warn(`${gateway.label} in mock mode`, 'set PAYMENT_MODE=live or switch the admin panel to live mode to use the real gateway');
       continue;
     }
     if (!gateway.configured) {
-      fail(`${gateway.label} is not fully configured`, 'merchant credentials are missing');
+      fail(`${gateway.label} is not fully configured`, 'merchant credentials are missing — set them in the admin panel (System Settings → Payment Gateways)');
       continue;
     }
     ok(`${gateway.label} configured`, gateway.baseUrl);
@@ -195,14 +223,15 @@ async function run() {
 
   // -----------------------------------------------------------------------
   console.log('\nSMS gateway');
-  if (config.sms.mode !== 'live') {
-    warn('running in mock mode', 'set SMS_MODE=live to send real messages');
-  } else if (!config.sms.providerUrl) {
-    fail('SMS_PROVIDER_URL is empty');
+  const smsCfg = stored.sms;
+  if (smsCfg.mode !== 'live') {
+    warn('running in mock mode', 'set SMS_MODE=live or switch the admin panel to live mode to send real messages');
+  } else if (!smsCfg.providerUrl) {
+    fail('the SMS provider URL is empty', 'set it in the admin panel (System Settings → SMS)');
   } else {
-    ok('provider configured', config.sms.providerUrl);
+    ok('provider configured', smsCfg.providerUrl);
     if (LIVE) {
-      const reach = await checkHttp(config.sms.providerUrl, { method: 'POST' });
+      const reach = await checkHttp(smsCfg.providerUrl, { method: 'POST' });
       if (reach.ok) ok('SMS provider reachable');
       else if (reach.status) warn(`SMS provider answered ${reach.status}`);
       else fail('SMS provider unreachable', reach.error);

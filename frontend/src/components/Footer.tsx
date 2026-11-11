@@ -7,16 +7,19 @@ import { Wifi, Phone, Mail, MapPin, Facebook, Youtube } from 'lucide-react'
 import { useTranslation } from '@/store/settingsStore'
 import { useContentStore } from '@/store/contentStore'
 import { useAuthStore } from '@/store/authStore'
+import { useMounted } from '@/lib/useMounted'
 
 export function Footer() {
   const router = useRouter()
   const { t } = useTranslation()
   const { brand } = useContentStore()
   const { isAuthenticated } = useAuthStore()
+  const mounted = useMounted()
+  const authed = mounted && isAuthenticated
 
   const handleProtectedAction = (e: React.MouseEvent, targetHref: string = '/dashboard') => {
     e.preventDefault()
-    if (!isAuthenticated) {
+    if (!authed) {
       router.push('/login')
     } else {
       router.push(targetHref)
@@ -85,7 +88,7 @@ export function Footer() {
               {subscriberServices.map((item) => (
                 <li key={item.label}>
                   <a
-                    href={!isAuthenticated ? '/login' : item.href}
+                    href={!authed ? '/login' : item.href}
                     onClick={(e) => handleProtectedAction(e, item.href)}
                     className="text-muted-foreground hover:text-primary text-sm transition-colors block py-0.5 cursor-pointer"
                   >
@@ -103,7 +106,7 @@ export function Footer() {
               {helpdeskTools.map((item) => (
                 <li key={item.label}>
                   <a
-                    href={!isAuthenticated ? '/login' : item.href}
+                    href={!authed ? '/login' : item.href}
                     onClick={(e) => handleProtectedAction(e, item.href)}
                     className="text-muted-foreground hover:text-primary text-sm transition-colors block py-0.5 cursor-pointer"
                   >

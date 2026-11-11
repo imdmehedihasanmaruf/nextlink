@@ -42,6 +42,7 @@ import { Label } from '@/components/ui/label'
 import { useAuthStore } from '@/store/authStore'
 import { useContentStore, PackageItem } from '@/store/contentStore'
 import { subscriberAuthHeader } from '@/lib/portalApi'
+import { useModalA11y } from '@/lib/useModalA11y'
 
 type PurchaseType = 'UPGRADE' | 'ADDITIONAL'
 type PaymentGateway = 'card' | 'payoneer' | 'applepay' | 'bkash' | 'upi'
@@ -57,6 +58,13 @@ interface OrderCalculation {
   discount: number
   totalPayable: number
   nextBillingDate: string
+  calculation?: {
+    monthlySubscriptionPrice?: number
+    remainingCurrentSubscriptionValue?: number
+    totalPayableToday?: number
+    daysRemainingInCycle?: number
+    purchaseType?: string
+  }
 }
 
 interface ConfirmedOrder {
@@ -137,6 +145,9 @@ function PurchaseContent() {
   // Confirmation State
   const [confirmedOrder, setConfirmedOrder] = useState<ConfirmedOrder | null>(null)
   const [invoiceModalOpen, setInvoiceModalOpen] = useState(false)
+
+  // Escape closes the invoice modal and the page does not scroll behind it.
+  useModalA11y(invoiceModalOpen, () => setInvoiceModalOpen(false))
 
   // Real-time purchase session: Date (DD/MM/YYYY), Time (00:00AM/PM), Location (city, postal code, state, country)
   const [purchaseLocation, setPurchaseLocation] = useState<{
@@ -268,21 +279,26 @@ function PurchaseContent() {
     verifyCustomer()
   }, [isAuthenticated, user])
 
-  // Handle pre-selected package query parameter
+  // Handle pre-selected package query parameter — only once, and never
+  // overwrite a plan the visitor picked manually.
+  const preselectionApplied = React.useRef(false)
+
   useEffect(() => {
-    if (packages && packages.length > 0) {
-      if (preselectedPkgId) {
-        const matched = packages.find(p => p.id === preselectedPkgId || p.name.toLowerCase() === preselectedPkgId.toLowerCase())
-        if (matched) {
-          setSelectedPackage(matched)
-        } else {
-          setSelectedPackage(packages[0])
-        }
-      } else if (!selectedPackage) {
-        setSelectedPackage(packages[0])
-      }
+    if (preselectionApplied.current) return
+    if (!packages || packages.length === 0) return
+    preselectionApplied.current = true
+
+    if (preselectedPkgId) {
+      const matched = packages.find(
+        (p) => p.id === preselectedPkgId || p.name.toLowerCase() === preselectedPkgId.toLowerCase(),
+      )
+      setSelectedPackage(matched || packages[0])
+    } else if (!selectedPackage) {
+      setSelectedPackage(packages[0])
     }
-  }, [packages, preselectedPkgId])
+    // Only the catalogue arriving triggers the one-time preselection.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [packages])
 
   // Network compatibility check when selectedPackage changes
   useEffect(() => {
@@ -996,17 +1012,49 @@ function PurchaseContent() {
                   </CardHeader>
                   <CardContent className="space-y-5 pt-4">
                     {/* Itemized lines */}
+                    {calculatingOrder && (
+                      <div className="flex items-center gap-2 text-xs text-muted-foreground py-2">
+                        <Loader2 className="h-4 w-4 animate-spin" />
+                        Verifying the order with the billing engine…
+                      </div>
+                    )}
+                    {!calculatingOrder && !orderCalculation && (
+                      <div className="p-2 rounded-lg bg-amber-500/10 border border-amber-500/30 text-[11px] text-amber-900 dark:text-amber-300">
+                        The order has not been verified with the billing engine yet.
+                        The totals below are the plan prices — the exact amount will be confirmed before payment.
+                      </div>
+                    )}
                     <div className="space-y-3 text-xs">
-                      {/* Package Fee (Same fee as plan package) */}
+                      {/* Selected plan — the recurring monthly price */}
                       <div className="flex justify-between items-center py-1">
                         <div>
                           <p className="font-bold text-foreground text-sm">{selectedPackage?.name} ({selectedPackage?.speed} Mbps)</p>
                           <p className="text-muted-foreground text-[11px]">Monthly Package Recurring Subscription Fee</p>
                         </div>
                         <span className="font-mono font-black text-base text-foreground">
-                          ${(selectedPackage?.price ?? 0).toFixed(2)} USD
+                          {(orderCalculation ? orderCalculation.newPrice : Number(selectedPackage?.price ?? 0)).toFixed(2)}
                         </span>
                       </div>
+
+                      {/* Remaining days of the old plan are credited (upgrades only) */}
+                      {purchaseType === 'UPGRADE' && (
+                        <div className="flex justify-between items-center py-1 border-t border-border/50">
+                          <div>
+                            <p className="font-medium text-foreground">Unused Days of Current Plan (credited)</p>
+                            <p className="text-muted-foreground text-[11px]">
+                              {orderCalculation?.calculation?.daysRemainingInCycle !== undefined
+                                ? `${orderCalculation.calculation.daysRemainingInCycle} of 30 days remaining in the current cycle`
+                                : 'Credit for the unused days of the plan you are leaving'}
+                            </p>
+                          </div>
+                          <span className="font-mono font-semibold text-emerald-600 dark:text-emerald-400">
+                            −{Number(
+                              orderCalculation?.calculation?.remainingCurrentSubscriptionValue ??
+                              Math.abs(orderCalculation?.proratedAdjustment ?? 0),
+                            ).toFixed(2)}
+                          </span>
+                        </div>
+                      )}
 
                       {/* Optical Provisioning Fee */}
                       <div className="flex justify-between items-center py-1 border-t border-border/50">
@@ -1016,8 +1064,8 @@ function PurchaseContent() {
                             {purchaseType === 'UPGRADE' ? 'Waived for existing customer upgrade' : 'Secondary optical line drop setup'}
                           </p>
                         </div>
-                        <span className="font-mono font-semibold text-emerald-600 dark:text-emerald-400">
-                          $0.00 (Free / Included)
+                        <span className="font-mono font-semibold text-foreground">
+                          {Number(orderCalculation?.installationFee ?? 0).toFixed(2)}
                         </span>
                       </div>
 
@@ -1027,24 +1075,31 @@ function PurchaseContent() {
                           <p className="font-medium text-foreground">Applicable Telecommunications Tax &amp; Regulatory Surcharge</p>
                           <p className="text-muted-foreground text-[11px]">100% Symmetrical Fiber Regulatory Clearance</p>
                         </div>
-                        <span className="font-mono font-semibold text-emerald-600 dark:text-emerald-400">
-                          $0.00 (Included in Plan)
+                        <span className="font-mono font-semibold text-foreground">
+                          {Number(orderCalculation?.taxes ?? 0).toFixed(2)}
                         </span>
                       </div>
 
-                      {/* Total Payable Amount Today - EXACT SAME FEE AS PLAN PACKAGE */}
+                      {/* Total Payable — the server-verified amount */}
                       <div className="flex justify-between items-center py-3 border-t-2 border-border text-sm">
                         <div>
                           <p className="font-black text-foreground text-base">Total Payable Amount Now</p>
                           <p className="text-muted-foreground text-xs">
-                            Package Subscription Price · Due on renewal cycle
+                            {orderCalculation ? 'Verified by the billing engine · due on the next cycle' : 'Plan price — verification pending'}
                           </p>
                         </div>
                         <div className="text-right">
                           <p className="text-2xl font-black text-primary font-mono">
-                            ${(selectedPackage?.price ?? 0).toFixed(2)}
+                            {orderCalculation
+                              ? Number(
+                                  orderCalculation.calculation?.totalPayableToday ??
+                                  orderCalculation.totalPayable,
+                                ).toFixed(2)
+                              : Number(selectedPackage?.price ?? 0).toFixed(2)}
                           </p>
-                          <p className="text-[10px] text-muted-foreground uppercase font-semibold">USD Currency</p>
+                          <p className="text-[10px] text-muted-foreground uppercase font-semibold">
+                            {orderCalculation ? 'Billing Engine Verified' : 'Plan Price'}
+                          </p>
                         </div>
                       </div>
                     </div>
@@ -1209,7 +1264,12 @@ function PurchaseContent() {
                     <div className="pt-3 border-t flex justify-between items-center text-xs">
                       <span className="font-semibold text-muted-foreground">Final Charged Amount:</span>
                       <span className="font-mono font-black text-lg text-primary">
-                        ${(selectedPackage?.price ?? 0).toFixed(2)} USD
+                        {orderCalculation
+                          ? Number(
+                              orderCalculation.calculation?.totalPayableToday ??
+                              orderCalculation.totalPayable,
+                            ).toFixed(2)
+                          : Number(selectedPackage?.price ?? 0).toFixed(2)}
                       </span>
                     </div>
                   </CardContent>
@@ -1239,7 +1299,15 @@ function PurchaseContent() {
                     ) : (
                       <>
                         <Lock className="h-3.5 w-3.5" />
-                        <span>Confirm &amp; Authorize ${(selectedPackage?.price ?? 0).toFixed(2)} USD</span>
+                        <span>
+                          Confirm &amp; Authorize{' '}
+                          {orderCalculation
+                            ? Number(
+                                orderCalculation.calculation?.totalPayableToday ??
+                                orderCalculation.totalPayable,
+                              ).toFixed(2)
+                            : Number(selectedPackage?.price ?? 0).toFixed(2)}
+                        </span>
                       </>
                     )}
                   </Button>
@@ -1287,7 +1355,7 @@ function PurchaseContent() {
                       <div className="flex justify-between">
                         <span className="text-muted-foreground">Total Paid:</span>
                         <span className="font-black text-emerald-600 dark:text-emerald-400 text-sm">
-                          ${confirmedOrder.totalPayable.toFixed(2)} USD
+                          BDT {confirmedOrder.totalPayable.toFixed(2)}
                         </span>
                       </div>
                       <div className="flex justify-between">
@@ -1351,7 +1419,12 @@ function PurchaseContent() {
           PRINTABLE INVOICE MODAL
       ───────────────────────────────────────────────────────────── */}
       {invoiceModalOpen && confirmedOrder && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm p-4 overflow-y-auto">
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm p-4 overflow-y-auto"
+          role="dialog"
+          aria-modal="true"
+          aria-label="Order invoice"
+        >
           <Card className="w-full max-w-2xl bg-card border shadow-2xl animate-in zoom-in-95 my-8">
             <CardHeader className="border-b pb-4 flex flex-row items-center justify-between">
               <div className="flex items-center gap-2.5">
@@ -1413,7 +1486,7 @@ function PurchaseContent() {
                         {confirmedOrder.purchaseType}
                       </td>
                       <td className="p-3 text-right font-bold text-foreground">
-                        ${confirmedOrder.totalPayable.toFixed(2)}
+                        BDT {confirmedOrder.totalPayable.toFixed(2)}
                       </td>
                     </tr>
                   </tbody>
@@ -1427,7 +1500,7 @@ function PurchaseContent() {
                 </div>
                 <div className="text-right">
                   <span className="text-[11px] text-muted-foreground">Grand Total:</span>
-                  <p className="text-xl font-black text-foreground font-mono">${confirmedOrder.totalPayable.toFixed(2)} USD</p>
+                  <p className="text-xl font-black text-foreground font-mono">BDT {confirmedOrder.totalPayable.toFixed(2)}</p>
                 </div>
               </div>
 

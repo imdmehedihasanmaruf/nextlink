@@ -302,4 +302,6 @@ CREATE INDEX IF NOT EXISTS idx_ticket_details_sla       ON ticket_details (sla_d
 
 CREATE INDEX IF NOT EXISTS idx_ticket_messages_ticket ON ticket_messages (ticket_id);
 
-CREATE INDEX IF NOT EXISTS idx_subscriber_credentials_username ON subscriber_credentials (username);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_subscriber_credentials_username_unique
+  ON subscriber_credentials (username)
+  WHERE username IS NOT NULL;

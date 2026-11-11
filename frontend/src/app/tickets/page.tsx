@@ -36,7 +36,20 @@ export default function TicketsPage() {
   const [tickets, setTickets] = useState<Ticket[]>(initialTickets)
   const [showForm, setShowForm] = useState(false)
   const [subject, setSubject] = useState('')
-  const [category, setCategory] = useState('Connection Issue')
+  // The initial category must be one of the options — the previous value,
+  // 'Connection Issue', matched none of them, so the browser posted an
+  // invalid category and the CRM routing never matched.
+  const TICKET_CATEGORIES = [
+    'Fiber / Optical Issue',
+    'Slow Speed',
+    'Billing & Plan',
+    'Configuration',
+    'Other',
+  ]
+  const categoryOrDefault = (value: any) =>
+    TICKET_CATEGORIES.includes(String(value)) ? String(value) : TICKET_CATEGORIES[0]
+
+  const [category, setCategory] = useState(TICKET_CATEGORIES[0])
   const [priority, setPriority] = useState<'low' | 'medium' | 'high' | 'critical'>('medium')
   const [description, setDescription] = useState('')
   const [submittedMessage, setSubmittedMessage] = useState('')
@@ -95,7 +108,7 @@ export default function TicketsPage() {
         try {
           const parsed = JSON.parse(saved)
           setSubject(parsed.subject || '')
-          setCategory(parsed.category || 'Connection Issue')
+          setCategory(categoryOrDefault(parsed.category))
           setPriority(parsed.priority || 'medium')
           setDescription(parsed.description || '')
         } catch (e) {}

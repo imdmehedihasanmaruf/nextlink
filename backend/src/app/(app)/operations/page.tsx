@@ -19,6 +19,7 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { apiGet, apiPost, apiFetch, getApiToken } from '@/lib/apiClient';
+import { useAdminDataStore } from '@/store/adminDataStore';
 import { formatDateTime } from '@/lib/utils';
 
 interface ConnectionRequest {
@@ -76,11 +77,19 @@ export default function OperationsPage() {
   const [coverageAreas, setCoverageAreas] = useState<CoverageArea[]>([]);
   const [tickets, setTickets] = useState<TicketRow[]>([]);
   const [stats, setStats] = useState<TicketStats | null>(null);
-  const [technicians, setTechnicians] = useState<Array<{ id: string; name: string }>>([]);
+  const adminTechnicians = useAdminDataStore((state) => state.technicians);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState<string | null>(null);
   const [hasToken, setHasToken] = useState(false);
   const [search, setSearch] = useState('');
+
+  // The assignable technicians come from the admin store. The previous code
+  // asked the Express API for a route that does not exist, so the dropdown
+  // was always empty.
+  const technicians = (adminTechnicians || []).map((technician: any) => ({
+    id: String(technician.id),
+    name: String(technician.name || technician.id),
+  }));
 
   const loadAll = useCallback(async () => {
     setLoading(true);
@@ -97,15 +106,13 @@ export default function OperationsPage() {
     if (ticketRes.success) setTickets(ticketRes.tickets || []);
     if (statRes.success) setStats(statRes as any);
 
-    // Technicians live in the admin store.
-    const store = await apiGet<{ technicians: Array<{ id: string; name: string }> }>('/api/data');
-    if (store.success) setTechnicians(store.technicians || []);
-
     setLoading(false);
   }, []);
 
   useEffect(() => {
     setHasToken(Boolean(getApiToken()));
+    // The technician list for the assign dropdown comes from the admin store.
+    useAdminDataStore.getState().fetchData().catch(() => {});
     loadAll();
   }, [loadAll]);
 

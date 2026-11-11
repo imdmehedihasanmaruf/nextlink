@@ -62,6 +62,10 @@ function start() {
 /**
  * Compare the last completed cycle with the current period and enqueue the
  * difference.
+ *
+ * Every month between the last completed cycle and the current one is billed —
+ * the previous version only queued the current period, so a period that
+ * became due while the API was down was skipped forever.
  */
 async function catchUpMissedCycle() {
   const db = require('../lib/db');
@@ -74,12 +78,33 @@ async function catchUpMissedCycle() {
 
   if (lastPeriod === currentPeriod) return;
 
-  logger.info('scheduler: checking for a missed billing cycle', {
-    currentPeriod,
-    lastPeriod: lastPeriod || 'none',
-  });
+  if (!lastPeriod) {
+    // No cycle has ever run — bill only the current period, not the whole
+    // history.
+    logger.info('scheduler: no completed cycle found, billing the current period', {
+      currentPeriod,
+    });
+    await queue.enqueue('billing.cycle.run', { period: currentPeriod });
+    return;
+  }
 
-  await queue.enqueue('billing.cycle.run', { period: currentPeriod });
+  // The next period after the last completed one.
+  const [lastYear, lastMonth] = lastPeriod.split('-').map(Number);
+  let nextYear = lastYear;
+  let nextMonth = lastMonth + 1;
+  if (nextMonth > 12) {
+    nextMonth = 1;
+    nextYear += 1;
+  }
+  const fromPeriod = `${nextYear}-${String(nextMonth).padStart(2, '0')}`;
+
+  const periods = dates.periodRange(fromPeriod, currentPeriod);
+  if (periods.length === 0) return;
+
+  logger.info('scheduler: billing the missed periods', { periods });
+  for (const period of periods) {
+    await queue.enqueue('billing.cycle.run', { period });
+  }
 }
 
 function stop() {

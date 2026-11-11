@@ -11,7 +11,8 @@ import {
   CreditCard, 
   CheckCircle2, 
   Clock, 
-  AlertCircle, 
+  AlertCircle,
+  AlertTriangle,
   Download, 
   ExternalLink, 
   RefreshCw,
@@ -24,6 +25,7 @@ import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { useAuthStore } from '@/store/authStore'
 import { subscriberAuthHeader } from '@/lib/portalApi'
+import { useModalA11y } from '@/lib/useModalA11y'
 
 interface OrderItem {
   id: string
@@ -61,8 +63,12 @@ export default function CustomerOrdersPage() {
 
   const [orders, setOrders] = useState<OrderItem[]>([])
   const [loading, setLoading] = useState(true)
+  const [fetchError, setFetchError] = useState<string | null>(null)
   const [selectedOrder, setSelectedOrder] = useState<OrderItem | null>(null)
   const [invoiceModalOpen, setInvoiceModalOpen] = useState(false)
+
+  // Escape closes the invoice modal and the page does not scroll behind it.
+  useModalA11y(invoiceModalOpen, () => setInvoiceModalOpen(false))
 
   // Redirect visitors
   useEffect(() => {
@@ -75,16 +81,20 @@ export default function CustomerOrdersPage() {
   const fetchCustomerOrders = async () => {
     if (!user?.id) return
     setLoading(true)
+    setFetchError(null)
     try {
       const res = await fetch(`/api/customer/orders?customerId=${encodeURIComponent(user.id)}`, {
         headers: subscriberAuthHeader(),
       })
       const data = await res.json()
-      if (data.success && data.orders) {
-        setOrders(data.orders)
+      if (!res.ok || !data.success) {
+        setFetchError(data?.error || `Your orders could not be loaded (${res.status}).`)
+        return
       }
+      setOrders(data.orders || [])
     } catch (err) {
       console.error('Failed to load orders:', err)
+      setFetchError('Your orders could not be loaded. Please try again.')
     } finally {
       setLoading(false)
     }
@@ -177,6 +187,12 @@ export default function CustomerOrdersPage() {
           </CardHeader>
 
           <CardContent className="p-0">
+            {fetchError && (
+              <div className="m-4 p-3 rounded-lg bg-destructive/10 border border-destructive/30 text-destructive text-xs flex items-center gap-2">
+                <AlertTriangle size={14} className="shrink-0" />
+                <span>{fetchError}</span>
+              </div>
+            )}
             {loading ? (
               <div className="py-16 text-center text-muted-foreground flex items-center justify-center gap-2">
                 <RefreshCw className="h-4 w-4 animate-spin text-primary" />
@@ -289,7 +305,12 @@ export default function CustomerOrdersPage() {
           PRINTABLE INVOICE MODAL
       ───────────────────────────────────────────────────────────── */}
       {invoiceModalOpen && selectedOrder && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm p-4 overflow-y-auto">
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm p-4 overflow-y-auto"
+          role="dialog"
+          aria-modal="true"
+          aria-label="Order invoice"
+        >
           <Card className="w-full max-w-2xl bg-card border shadow-2xl animate-in zoom-in-95 my-8">
             <CardHeader className="border-b pb-4 flex flex-row items-center justify-between">
               <div className="flex items-center gap-2.5">

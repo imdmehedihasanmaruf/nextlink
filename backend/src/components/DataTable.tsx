@@ -41,6 +41,10 @@ export function DataTable<TData, TValue>({
     onSortingChange: setSorting,
     onColumnFiltersChange: setColumnFilters,
     state: { sorting, columnFilters },
+    // The parent usually passes a freshly filtered array on every render.
+    // Without this, the table jumps back to page 1 on every keystroke or
+    // poll.
+    autoResetPageIndex: false,
     initialState: { pagination: { pageSize } },
   });
 

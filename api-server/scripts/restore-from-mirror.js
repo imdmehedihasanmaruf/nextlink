@@ -8,13 +8,19 @@
  * PostgreSQL. This script replays the mirror into the tables with an upsert,
  * so nothing is lost.
  *
- * Run with:  node scripts/restore-from-mirror.js
+ * Run with:  node scripts/restore-from-mirror.js           (dry run — reports only)
+ *            node scripts/restore-from-mirror.js --apply    (actually restores)
+ *
+ * SAFETY: no row is written unless `--apply` is passed. A mirror row can never
+ * downgrade a paid invoice back to unpaid or overwrite a newer database row.
  */
 
 const fs = require('fs');
 const path = require('path');
 const db = require('../src/lib/db');
 const logger = require('../src/lib/logger');
+
+const APPLY = process.argv.includes('--apply');
 
 const MIRROR = path.resolve(__dirname, '..', '..', 'backend', 'data', 'adminStore.json');
 
@@ -62,25 +68,32 @@ async function restoreInvoices(invoices) {
     const status = entry.status || record.status || 'unpaid';
     const raw = JSON.stringify({ ...record, id: invoiceNumber, status });
 
-    await db.query(
-      `INSERT INTO invoices (id, subscriber_id, amount, status, due_date, raw_data, created_at, updated_at)
-       VALUES ($1, $2, $3, $4, $5, $6, COALESCE((SELECT created_at FROM invoices WHERE id = $1::varchar), NOW()), NOW())
-       ON CONFLICT (id) DO UPDATE SET
-         subscriber_id = EXCLUDED.subscriber_id,
-         amount = EXCLUDED.amount,
-         status = EXCLUDED.status,
-         due_date = EXCLUDED.due_date,
-         raw_data = EXCLUDED.raw_data,
-         updated_at = NOW()`,
-      [
-        id,
-        subscriberId,
-        Number(entry.amount ?? record.amount ?? 0),
-        status,
-        entry.dueDate || record.dueDate || record.due_date || '',
-        raw,
-      ],
-    );
+    // The mirror is a historical snapshot. It must never downgrade a paid
+    // invoice, and it must never overwrite a row that was created after the
+    // mirror was written.
+    if (APPLY) {
+      await db.query(
+        `INSERT INTO invoices (id, subscriber_id, amount, status, due_date, raw_data, created_at, updated_at)
+         VALUES ($1, $2, $3, $4, $5, $6, COALESCE((SELECT created_at FROM invoices WHERE id = $1::varchar), NOW()), NOW())
+         ON CONFLICT (id) DO UPDATE SET
+           subscriber_id = COALESCE(invoices.subscriber_id, EXCLUDED.subscriber_id),
+           amount = CASE WHEN invoices.status = 'paid' THEN invoices.amount ELSE EXCLUDED.amount END,
+           status = CASE WHEN invoices.status = 'paid' THEN invoices.status ELSE EXCLUDED.status END,
+           due_date = CASE WHEN invoices.status = 'paid' THEN invoices.due_date ELSE EXCLUDED.due_date END,
+           raw_data = invoices.raw_data || (EXCLUDED.raw_data - 'status'),
+           updated_at = NOW()`,
+        [
+          id,
+          subscriberId,
+          Number(entry.amount ?? record.amount ?? 0),
+          status,
+          entry.dueDate || record.dueDate || record.due_date || '',
+          raw,
+        ],
+      );
+    } else {
+      console.log(`  would restore invoice ${id} (subscriber ${subscriberId || 'unknown'}, ${status})`);
+    }
     restored += 1;
   }
   return restored;
@@ -98,27 +111,37 @@ async function restoreSubscribers(subscribers) {
     // The plain-text password never comes back through the mirror.
     delete raw.password;
 
-    await db.query(
-      `INSERT INTO subscribers (id, name, email, phone, package_id, status, raw_data, created_at, updated_at)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, COALESCE((SELECT created_at FROM subscribers WHERE id = $1::varchar), NOW()), NOW())
-       ON CONFLICT (id) DO UPDATE SET
-         name = EXCLUDED.name,
-         email = EXCLUDED.email,
-         phone = EXCLUDED.phone,
-         package_id = EXCLUDED.package_id,
-         status = EXCLUDED.status,
-         raw_data = EXCLUDED.raw_data,
-         updated_at = NOW()`,
-      [
-        id,
-        record.name || '',
-        record.email || '',
-        record.phone || '',
-        record.packageId || record.package_id || '',
-        status,
-        JSON.stringify({ ...raw, status }),
-      ],
-    );
+    // A suspended account is never turned back into an active one by an old
+    // snapshot of the mirror.
+    if (APPLY) {
+      await db.query(
+        `INSERT INTO subscribers (id, name, email, phone, package_id, status, raw_data, created_at, updated_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, COALESCE((SELECT created_at FROM subscribers WHERE id = $1::varchar), NOW()), NOW())
+         ON CONFLICT (id) DO UPDATE SET
+           name = EXCLUDED.name,
+           email = EXCLUDED.email,
+           phone = EXCLUDED.phone,
+           package_id = EXCLUDED.package_id,
+           status = CASE
+             WHEN LOWER(COALESCE(subscribers.status, '')) IN ('suspended', 'disconnected', 'deactivated')
+             THEN subscribers.status
+             ELSE EXCLUDED.status
+           END,
+           raw_data = EXCLUDED.raw_data,
+           updated_at = NOW()`,
+        [
+          id,
+          record.name || '',
+          record.email || '',
+          record.phone || '',
+          record.packageId || record.package_id || '',
+          status,
+          JSON.stringify({ ...raw, status }),
+        ],
+      );
+    } else {
+      console.log(`  would restore subscriber ${id} (${record.name || 'unnamed'}, ${status})`);
+    }
     restored += 1;
   }
   return restored;
@@ -136,6 +159,13 @@ async function run() {
   const subscribers = Array.isArray(mirror.subscribers) ? mirror.subscribers : [];
   const tickets = Array.isArray(mirror.tickets) ? mirror.tickets : [];
 
+  if (!APPLY) {
+    console.log('');
+    console.log('DRY RUN — nothing is written. Re-run with --apply to restore.');
+    console.log(`  ${invoices.length} invoice(s), ${subscribers.length} subscriber(s), ${tickets.length} ticket(s) in the mirror`);
+    console.log('');
+  }
+
   const restoredInvoices = await restoreInvoices(invoices);
   logger.info('invoices restored from the mirror', { count: restoredInvoices });
 
@@ -146,23 +176,27 @@ async function run() {
   for (const item of tickets) {
     const id = String(item.id);
     const status = item.status || 'open';
-    await db.query(
-      `INSERT INTO tickets (id, title, status, priority, raw_data, created_at, updated_at)
-       VALUES ($1, $2, $3, $4, $5, COALESCE((SELECT created_at FROM tickets WHERE id = $1::varchar), NOW()), NOW())
-       ON CONFLICT (id) DO UPDATE SET
-         title = EXCLUDED.title,
-         status = EXCLUDED.status,
-         priority = EXCLUDED.priority,
-         raw_data = EXCLUDED.raw_data,
-         updated_at = NOW()`,
-      [
-        id,
-        item.title || item.subject || '',
-        status,
-        item.priority || 'medium',
-        JSON.stringify(withStatus(item.raw_data || item, status)),
-      ],
-    );
+    if (APPLY) {
+      await db.query(
+        `INSERT INTO tickets (id, title, status, priority, raw_data, created_at, updated_at)
+         VALUES ($1, $2, $3, $4, $5, COALESCE((SELECT created_at FROM tickets WHERE id = $1::varchar), NOW()), NOW())
+         ON CONFLICT (id) DO UPDATE SET
+           title = EXCLUDED.title,
+           status = EXCLUDED.status,
+           priority = EXCLUDED.priority,
+           raw_data = EXCLUDED.raw_data,
+           updated_at = NOW()`,
+        [
+          id,
+          item.title || item.subject || '',
+          status,
+          item.priority || 'medium',
+          JSON.stringify(withStatus(item.raw_data || item, status)),
+        ],
+      );
+    } else {
+      console.log(`  would restore ticket ${id} (${item.title || item.subject || 'untitled'})`);
+    }
     restoredTickets += 1;
   }
   logger.info('tickets restored from the mirror', { count: restoredTickets });

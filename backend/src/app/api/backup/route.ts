@@ -1,20 +1,53 @@
 import { NextResponse } from 'next/server';
 import { getAdminStore, getSiteContent, saveAdminSection, saveSiteContent } from '@/lib/db';
+import { requireAdmin } from '@/lib/requireAdmin';
 
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
 
+const ALLOWED_ORIGINS = (process.env.ADMIN_CORS_ORIGINS ||
+  'http://localhost:8000,http://localhost:8001,http://localhost:3000').split(',');
+
 const corsHeaders = {
-  'Access-Control-Allow-Origin': '*',
+  'Access-Control-Allow-Origin': ALLOWED_ORIGINS[0],
   'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
-  'Access-Control-Allow-Headers': 'Content-Type',
+  'Access-Control-Allow-Headers': 'Content-Type, Authorization',
+  'Vary': 'Origin',
 };
 
 export async function OPTIONS() {
   return NextResponse.json({}, { headers: corsHeaders });
 }
 
-export async function GET() {
+/**
+ * Strip credentials from every record before it is exported or returned.
+ */
+function redactCredentials(record: any) {
+  if (!record || typeof record !== 'object') return record;
+  const copy = { ...record };
+  for (const key of Object.keys(copy)) {
+    if (/pass(word)?(_hash)?|legacy_password|api_?key|secret/i.test(key)) {
+      delete copy[key];
+    }
+  }
+  // A raw_data blob may carry the same keys.
+  if (copy.raw_data && typeof copy.raw_data === 'object') {
+    copy.raw_data = { ...copy.raw_data };
+    for (const key of Object.keys(copy.raw_data)) {
+      if (/pass(word)?(_hash)?|legacy_password|api_?key|secret/i.test(key)) {
+        delete copy.raw_data[key];
+      }
+    }
+  }
+  return copy;
+}
+
+export async function GET(request: Request) {
+  const auth = await requireAdmin(request);
+  if (!auth.ok) {
+    return NextResponse.json({ error: auth.error }, { status: 401, headers: corsHeaders });
+  }
+
   try {
     const [siteContent, adminData] = await Promise.all([
       getSiteContent(),
@@ -26,14 +59,19 @@ export async function GET() {
       exportedAt: new Date().toISOString(),
       system: 'NextLink ISP Management (PostgreSQL)',
       siteContent,
-      subscribers: adminData.subscribers || [],
+      // Credentials never leave the server, even for a break-glass export.
+      subscribers: (adminData.subscribers || []).map(redactCredentials),
       invoices: adminData.invoices || [],
       tickets: adminData.tickets || [],
       packages: adminData.packages || [],
       technicians: adminData.technicians || [],
-      adminUsers: adminData.adminUsers || [],
+      adminUsers: (adminData.adminUsers || []).map(redactCredentials),
       roles: adminData.roles || [],
-      adminStore: adminData,
+      adminStore: {
+        ...adminData,
+        subscribers: (adminData.subscribers || []).map(redactCredentials),
+        adminUsers: (adminData.adminUsers || []).map(redactCredentials),
+      },
     };
 
     return new Response(JSON.stringify(fullBackup, null, 2), {
@@ -49,30 +87,54 @@ export async function GET() {
 }
 
 export async function POST(request: Request) {
+  const auth = await requireAdmin(request);
+  if (!auth.ok) {
+    return NextResponse.json({ error: auth.error }, { status: 401, headers: corsHeaders });
+  }
+
   try {
     const payload = await request.json();
     if (!payload || typeof payload !== 'object') {
       return NextResponse.json({ error: 'Invalid backup file format' }, { status: 400, headers: corsHeaders });
     }
 
-    // Restore adminStore data if present
+    // Validate everything BEFORE touching the database. The previous version
+    // wrote the collections one by one, so a half-valid file left the store
+    // half-restored with the live data already replaced.
+    const collections: Record<string, any[]> = {};
     if (payload.adminStore && typeof payload.adminStore === 'object') {
       for (const [key, val] of Object.entries(payload.adminStore)) {
-        if (key !== 'demoMode' && key !== 'lastUpdated') {
-          await saveAdminSection(key, val);
-        }
+        if (key === 'demoMode' || key === 'lastUpdated') continue;
+        if (Array.isArray(val)) collections[key] = val;
       }
     } else {
       const keys = ['packages', 'subscribers', 'invoices', 'tickets', 'technicians', 'adminUsers', 'roles'];
       for (const key of keys) {
-        if (Array.isArray(payload[key])) {
-          await saveAdminSection(key, payload[key]);
-        }
+        if (Array.isArray(payload[key])) collections[key] = payload[key];
       }
     }
 
+    if (Object.keys(collections).length === 0) {
+      return NextResponse.json(
+        { error: 'The backup file contains no recognised collections.' },
+        { status: 400, headers: corsHeaders },
+      );
+    }
+
+    // The restore runs collection by collection. An empty collection is never
+    // restored — an empty subscribers array would delete every customer.
+    const restored: string[] = [];
+    for (const [key, data] of Object.entries(collections)) {
+      if (data.length === 0) {
+        console.warn(`[backup] skipping the empty "${key}" collection in the restore`);
+        continue;
+      }
+      await saveAdminSection(key, data);
+      restored.push(key);
+    }
+
     // If backup has siteContent, restore it
-    if (payload.siteContent) {
+    if (payload.siteContent && typeof payload.siteContent === 'object') {
       await saveSiteContent(payload.siteContent);
     } else if (payload.brand && payload.packages && !payload.subscribers) {
       await saveSiteContent(payload);
@@ -80,7 +142,7 @@ export async function POST(request: Request) {
 
     return NextResponse.json({
       success: true,
-      message: 'Full backup restored successfully into PostgreSQL & Disk!',
+      message: `Backup restored successfully into PostgreSQL & Disk (${restored.join(', ')}).`,
       timestamp: new Date().toISOString(),
     }, { headers: corsHeaders });
   } catch (error: any) {

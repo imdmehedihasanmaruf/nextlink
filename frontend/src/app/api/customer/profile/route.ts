@@ -1,0 +1,97 @@
+import { NextResponse } from 'next/server';
+import { getDbPool } from '@/lib/db';
+import { authenticate, authError } from '@/lib/customerAuth';
+
+export const dynamic = 'force-dynamic';
+export const revalidate = 0;
+
+const corsHeaders = {
+  'Access-Control-Allow-Origin': '*',
+  'Access-Control-Allow-Methods': 'POST, OPTIONS',
+  'Access-Control-Allow-Headers': 'Content-Type, Authorization',
+};
+
+export async function OPTIONS() {
+  return NextResponse.json({}, { headers: corsHeaders });
+}
+
+/**
+ * Save the contact details the subscriber is allowed to edit.
+ *
+ * The subscriber's own account is updated — the id comes from the token, not
+ * from the payload, so one customer can never edit another customer's record.
+ */
+export async function POST(request: Request) {
+  const auth = await authenticate(request);
+  if (!auth.ok) {
+    return authError(auth);
+  }
+
+  try {
+    const body = await request.json();
+    const name = typeof body?.name === 'string' ? body.name.trim() : '';
+    const email = typeof body?.email === 'string' ? body.email.trim() : '';
+    const phone = typeof body?.phone === 'string' ? body.phone.trim() : '';
+    const address = typeof body?.address === 'string' ? body.address.trim() : '';
+
+    if (name.length < 2) {
+      return NextResponse.json(
+        { success: false, error: 'A name with at least 2 characters is required.' },
+        { status: 400, headers: corsHeaders },
+      );
+    }
+
+    const pool = getDbPool();
+    const row = await pool.query('SELECT raw_data FROM subscribers WHERE id = $1', [
+      auth.subscriber!.id,
+    ]);
+    if (row.rows.length === 0) {
+      return NextResponse.json(
+        { success: false, error: 'Subscriber not found.' },
+        { status: 404, headers: corsHeaders },
+      );
+    }
+
+    const raw = row.rows[0].raw_data || {};
+    const updated = {
+      ...raw,
+      id: auth.subscriber!.id,
+      name,
+      email,
+      phone,
+      address,
+    };
+
+    await pool.query(
+      `UPDATE subscribers
+          SET name = $1,
+              email = $2,
+              phone = $3,
+              raw_data = $4,
+              updated_at = NOW()
+        WHERE id = $5`,
+      [name, email, phone, JSON.stringify(updated), auth.subscriber!.id],
+    );
+
+    return NextResponse.json(
+      {
+        success: true,
+        message: 'Profile saved.',
+        user: {
+          id: auth.subscriber!.id,
+          name,
+          email,
+          phone,
+          address,
+        },
+      },
+      { headers: corsHeaders },
+    );
+  } catch (error: any) {
+    console.error('Error saving the customer profile:', error);
+    return NextResponse.json(
+      { success: false, error: error?.message || 'The profile could not be saved.' },
+      { status: 500, headers: corsHeaders },
+    );
+  }
+}

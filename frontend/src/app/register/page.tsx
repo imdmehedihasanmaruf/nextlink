@@ -15,6 +15,7 @@ import { Select } from '@/components/ui/select'
 import { useTranslation } from '@/store/settingsStore'
 import { useAuthStore } from '@/store/authStore'
 import { useContentStore } from '@/store/contentStore'
+import { subscriberLogin } from '@/lib/portalApi'
 
 const schema = z.object({
   fullName: z.string().min(3, 'Full name must be at least 3 characters'),
@@ -85,6 +86,9 @@ export default function RegisterPage() {
             address: result.user.address,
             joinDate: result.user.joinDate || new Date().toISOString().slice(0, 10),
           });
+          // Obtain the billing token as well — without it the dashboard shows
+          // "Billing Offline" until a full sign-in.
+          subscriberLogin(data.username.trim(), data.password).catch(() => undefined);
           setSuccess(true);
           setTimeout(() => {
             router.push('/dashboard');

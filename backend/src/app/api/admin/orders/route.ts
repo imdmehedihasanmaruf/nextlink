@@ -1,21 +1,32 @@
 import { NextResponse } from 'next/server';
+import crypto from 'crypto';
 import { getAllOrders, updateOrderStatus } from '@/lib/db';
 import { apiPost, getApiToken } from '@/lib/apiClient';
+import { requireAdmin } from '@/lib/requireAdmin';
 
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
 
+const ALLOWED_ORIGINS = (process.env.ADMIN_CORS_ORIGINS ||
+  'http://localhost:8000,http://localhost:8001,http://localhost:3000').split(',');
+
 const corsHeaders = {
-  'Access-Control-Allow-Origin': '*',
+  'Access-Control-Allow-Origin': ALLOWED_ORIGINS[0],
   'Access-Control-Allow-Methods': 'GET, PUT, OPTIONS',
   'Access-Control-Allow-Headers': 'Content-Type, Authorization',
+  'Vary': 'Origin',
 };
 
 export async function OPTIONS() {
   return NextResponse.json({}, { headers: corsHeaders });
 }
 
-export async function GET() {
+export async function GET(request: Request) {
+  const auth = await requireAdmin(request);
+  if (!auth.ok) {
+    return NextResponse.json({ error: auth.error }, { status: 401, headers: corsHeaders });
+  }
+
   try {
     const orders = await getAllOrders();
     return NextResponse.json(
@@ -35,6 +46,11 @@ export async function GET() {
 }
 
 export async function PUT(request: Request) {
+  const auth = await requireAdmin(request);
+  if (!auth.ok) {
+    return NextResponse.json({ error: auth.error }, { status: 401, headers: corsHeaders });
+  }
+
   try {
     const body = await request.json();
     const { orderId, status } = body;
@@ -57,7 +73,7 @@ export async function PUT(request: Request) {
     // Provisioning is a router operation, so it is performed by the billing
     // service — it owns the MikroTik client. The status is only reported as
     // provisioned when the router confirmed it.
-    let provisioning: { attempted: boolean; success: boolean; error?: string } = {
+    let provisioning: { attempted: boolean; success: boolean; error?: string; temporaryPassword?: string } = {
       attempted: false,
       success: false,
     };
@@ -69,15 +85,25 @@ export async function PUT(request: Request) {
         const order = orders.find((item: any) => item.id === orderId);
 
         if (order) {
+          // The password is random. The previous `NL-${orderId}` was
+          // predictable from the order id alone.
+          const provisionPassword = crypto.randomBytes(12).toString('base64url');
+
           const result = await apiPost('/api/mikrotik/provision', {
             subscriberId: order.customer_id,
             username: order.customer_id,
-            password: `NL-${orderId}`,
+            password: provisionPassword,
             // The profile is derived from the subscriber's plan by the API.
           });
 
           if (result.success) {
-            provisioning = { attempted: true, success: true };
+            provisioning = {
+              attempted: true,
+              success: true,
+              // Shown once to the operator, never stored in clear text and
+              // never logged.
+              temporaryPassword: provisionPassword,
+            };
           } else {
             provisioning = {
               attempted: true,

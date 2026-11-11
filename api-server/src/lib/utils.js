@@ -38,20 +38,26 @@ function hmacSha256(secret, payload) {
 
 /**
  * Build the billing period key for a given date, e.g. '2026-11'.
+ *
+ * This is a thin wrapper around `lib/dates.js`, which formats the date in the
+ * configured billing timezone. The previous implementation used the server's
+ * local timezone and produced a different month for six hours every day —
+ * the billing cycle then billed the wrong month.
  */
 function periodKey(date = new Date()) {
-  const year = date.getFullYear();
-  const month = String(date.getMonth() + 1).padStart(2, '0');
-  return `${year}-${month}`;
+  // Required lazily to avoid a circular import at module load.
+  // eslint-disable-next-line global-require
+  return require('./dates').periodKey(date);
 }
 
 /**
  * Add a number of days to a date, returning a YYYY-MM-DD string.
+ *
+ * Thin wrapper around `lib/dates.js` — see the note on `periodKey` above.
  */
 function addDays(date, days) {
-  const d = new Date(date);
-  d.setDate(d.getDate() + days);
-  return d.toISOString().slice(0, 10);
+  // eslint-disable-next-line global-require
+  return require('./dates').addDays(date, days);
 }
 
 /** Format a numeric amount as BDT string, e.g. 1500 -> '1,500'. */

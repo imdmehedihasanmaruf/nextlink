@@ -39,9 +39,14 @@ export default function CloudPeeringHubsPage() {
   const handleSave = async (updatedHubs?: any[]) => {
     setLoading(true);
     const activeList = updatedHubs !== undefined ? updatedHubs : hubs;
-    await saveItem('peeringHubs', activeList);
-    setLoading(false);
-    toast.success('Cloud Peering Hubs saved & synced to Frontend Portal!');
+    try {
+      await saveItem('peeringHubs', activeList);
+      toast.success('Cloud Peering Hubs saved & synced to Frontend Portal!');
+    } catch (error: any) {
+      toast.error(error?.message || 'The peering hubs could not be saved.');
+    } finally {
+      setLoading(false);
+    }
   };
 
   const handleAddHub = async (e: React.FormEvent) => {
@@ -82,7 +87,7 @@ export default function CloudPeeringHubsPage() {
     }
   };
 
-  const handleResetDefaults = () => {
+  const handleResetDefaults = async () => {
     if (confirm('Reset to default Cloud Peering Hubs?')) {
       const defaultHubs = [
         { id: 'HUB-1', name: 'Speedtest Diagnostic', url: 'https://speedtest.net', badge: 'Tier-1', category: 'speedtest', status: 'Active' },
@@ -91,7 +96,7 @@ export default function CloudPeeringHubsPage() {
         { id: 'HUB-4', name: 'Cloudflare IX Gateway', url: 'https://cloudflare.com', badge: 'Edge Anycast', category: 'peering', status: 'Active' },
       ];
       setHubs(defaultHubs);
-      handleSave(defaultHubs);
+      await handleSave(defaultHubs);
       toast.success('Default peering hubs restored!');
     }
   };

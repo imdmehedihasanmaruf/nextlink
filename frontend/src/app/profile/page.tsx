@@ -26,6 +26,8 @@ import { Textarea } from '@/components/ui/textarea'
 import { Badge } from '@/components/ui/badge'
 import { useAuthStore } from '@/store/authStore'
 import { useTranslation } from '@/store/settingsStore'
+import { subscriberAuthHeader } from '@/lib/portalApi'
+import { useModalA11y } from '@/lib/useModalA11y'
 
 export default function ProfilePage() {
   const router = useRouter()
@@ -37,7 +39,14 @@ export default function ProfilePage() {
   const [phone, setPhone] = useState('')
   const [address, setAddress] = useState('')
   const [savedSuccess, setSavedSuccess] = useState(false)
+  const [saveError, setSaveError] = useState<string | null>(null)
+  const [saving, setSaving] = useState(false)
   const [deleteModalOpen, setDeleteModalOpen] = useState(false)
+  const [deactivating, setDeactivating] = useState(false)
+  const [deactivateError, setDeactivateError] = useState<string | null>(null)
+
+  // Escape closes the confirmation and the page does not scroll behind it.
+  useModalA11y(deleteModalOpen, () => setDeleteModalOpen(false))
 
   useEffect(() => {
     if (hasHydrated && !isAuthenticated) {
@@ -54,21 +63,60 @@ export default function ProfilePage() {
     }
   }, [user])
 
-  const handleSaveProfile = (e: React.FormEvent) => {
+  const handleSaveProfile = async (e: React.FormEvent) => {
     e.preventDefault()
-    updateUser({
-      name,
-      email,
-      phone,
-      address,
-    })
-    setSavedSuccess(true)
-    setTimeout(() => setSavedSuccess(false), 3000)
+    setSaveError(null)
+    setSaving(true)
+    try {
+      // The server verifies the session and writes the account — one customer
+      // can never edit another customer's record.
+      const response = await fetch('/api/customer/profile', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...subscriberAuthHeader() },
+        body: JSON.stringify({ name, email, phone, address }),
+      })
+      const payload = await response.json()
+
+      if (!response.ok || !payload.success) {
+        setSaveError(payload.error || 'The profile could not be saved.')
+        return
+      }
+
+      // The local session is updated to match what the server stored.
+      updateUser({ name, email, phone, address })
+      setSavedSuccess(true)
+      setTimeout(() => setSavedSuccess(false), 3000)
+    } catch {
+      setSaveError('The profile could not be saved. Please try again.')
+    } finally {
+      setSaving(false)
+    }
   }
 
-  const handleConfirmDelete = () => {
-    logout()
-    router.push('/')
+  const handleConfirmDelete = async () => {
+    setDeactivateError(null)
+    setDeactivating(true)
+    try {
+      const response = await fetch('/api/customer/deactivate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...subscriberAuthHeader() },
+        body: JSON.stringify({ confirm: true }),
+      })
+      const payload = await response.json()
+
+      if (!response.ok || !payload.success) {
+        setDeactivateError(payload.error || 'The account could not be deactivated.')
+        return
+      }
+
+      // Signed out only after the server confirmed the deactivation.
+      logout()
+      router.push('/')
+    } catch {
+      setDeactivateError('The account could not be deactivated. Please try again.')
+    } finally {
+      setDeactivating(false)
+    }
   }
 
   if (!isAuthenticated || !user) {
@@ -96,6 +144,13 @@ export default function ProfilePage() {
         <div className="rounded-xl border border-emerald-500/50 bg-emerald-500/10 p-4 text-emerald-600 dark:text-emerald-400 flex items-center gap-2 animate-in fade-in">
           <Check className="h-5 w-5" />
           <span>{t('savedSuccess')}</span>
+        </div>
+      )}
+
+      {saveError && (
+        <div className="rounded-xl border border-destructive/50 bg-destructive/10 p-4 text-destructive flex items-center gap-2 animate-in fade-in">
+          <AlertTriangle className="h-5 w-5 shrink-0" />
+          <span>{saveError}</span>
         </div>
       )}
 
@@ -194,9 +249,9 @@ export default function ProfilePage() {
             </div>
 
             <div className="flex justify-end pt-2">
-              <Button type="submit" className="gap-2 font-bold shadow">
+              <Button type="submit" disabled={saving} className="gap-2 font-bold shadow">
                 <Save size={16} />
-                <span>{t('saveChanges')}</span>
+                <span>{saving ? 'Saving…' : t('saveChanges')}</span>
               </Button>
             </div>
           </CardContent>
@@ -216,7 +271,7 @@ export default function ProfilePage() {
         </CardHeader>
         <CardContent className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pt-2">
           <p className="text-xs text-muted-foreground">
-            Once confirmed, your PPPoE session will be disconnected from the optical switch and all auto-debits terminated.
+            Once confirmed, your account is deactivated and auto-debit billing stops. The deactivation is recorded; your billing history is kept.
           </p>
           <Button 
             variant="destructive" 
@@ -231,7 +286,12 @@ export default function ProfilePage() {
 
       {/* Confirmation Dialog */}
       {deleteModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4 animate-in fade-in">
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4 animate-in fade-in overflow-y-auto"
+          role="dialog"
+          aria-modal="true"
+          aria-label="Deactivate account"
+        >
           <Card className="w-full max-w-md shadow-2xl border-2 border-destructive animate-in zoom-in-95">
             <CardHeader className="text-center pb-2">
               <div className="h-14 w-14 rounded-full bg-destructive/10 text-destructive flex items-center justify-center mx-auto mb-2">
@@ -244,22 +304,29 @@ export default function ProfilePage() {
             </CardHeader>
             <CardContent className="space-y-4 pt-4">
               <p className="text-xs text-muted-foreground text-center">
-                This will delete your subscriber credentials, log you out immediately, and disable your optical drop.
+                Your account is marked deactivated and kept for the billing history. You are signed out immediately and the service stops. Your connectivity is not automatically removed from the router until the helpdesk confirms it.
               </p>
+              {deactivateError && (
+                <p className="text-[11px] text-destructive text-center">{deactivateError}</p>
+              )}
               <div className="flex gap-2">
-                <Button 
-                  variant="outline" 
-                  onClick={() => setDeleteModalOpen(false)}
+                <Button
+                  variant="outline"
+                  onClick={() => {
+                    setDeleteModalOpen(false)
+                    setDeactivateError(null)
+                  }}
                   className="flex-1 font-semibold"
                 >
                   Cancel
                 </Button>
-                <Button 
-                  variant="destructive" 
+                <Button
+                  variant="destructive"
                   onClick={handleConfirmDelete}
+                  disabled={deactivating}
                   className="flex-1 font-bold"
                 >
-                  Yes, Terminate Account
+                  {deactivating ? 'Deactivating…' : 'Yes, Deactivate Account'}
                 </Button>
               </div>
             </CardContent>

@@ -29,6 +29,12 @@ const config = {
   env: process.env.NODE_ENV || 'development',
   port: int(process.env.PORT, 3001),
   apiBaseUrl: process.env.API_BASE_URL || 'http://localhost:3001',
+  /**
+   * Where the customer's browser lands after a payment completes. The
+   * callback handler redirects the browser here so the portal can show the
+   * receipt for the settled invoice.
+   */
+  portalPublicUrl: process.env.PORTAL_PUBLIC_URL || 'http://localhost:3000',
 
   db: {
     connectionString:

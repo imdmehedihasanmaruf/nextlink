@@ -66,9 +66,14 @@ export default function BoostBandwidthPage() {
       history: activeList,
     };
 
-    await saveItem('boostBandwidth', payload);
-    setLoading(false);
-    toast.success('Boost Bandwidth parameters saved & synced to Frontend Portal!');
+    try {
+      await saveItem('boostBandwidth', payload);
+      toast.success('Boost Bandwidth parameters saved & synced to Frontend Portal!');
+    } catch (error: any) {
+      toast.error(error?.message || 'The settings could not be saved.');
+    } finally {
+      setLoading(false);
+    }
   };
 
   const handleAddBoost = async (e: React.FormEvent) => {
@@ -89,7 +94,7 @@ export default function BoostBandwidthPage() {
     setDialogOpen(false);
     setSubscriberInput('');
     await handleSave(updated);
-    toast.success(`Turbo boost granted to ${subscriberInput}!`);
+    toast.success(`Boost recorded for ${subscriberInput} — it applies on the subscriber's next renewal window.`);
   };
 
   const handleDeleteHistory = async (id: string) => {

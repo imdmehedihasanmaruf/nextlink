@@ -79,6 +79,49 @@ function dayOfMonth(date = new Date()) {
   return Number(formatDate(date).split('-')[2]);
 }
 
+/**
+ * The due date of a billing period.
+ *
+ * The day is clamped to the length of the month, so a due day of 31 gives
+ * 2026-02-28 instead of the invalid 2026-02-31.
+ *
+ * @param {string} period  Period key, YYYY-MM.
+ * @param {number} dueDay  Day of the month, 1-31.
+ * @returns {string} YYYY-MM-DD
+ */
+function dueDateForPeriod(period, dueDay) {
+  const [year, month] = String(period).split('-').map(Number);
+  const lastDay = new Date(Date.UTC(year, month, 0)).getUTCDate();
+  const day = Math.min(Math.max(Number(dueDay || 1), 1), lastDay);
+  return `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+}
+
+/**
+ * The period keys between two periods, inclusive.
+ *
+ * Used by the catch-up logic to bill every month that was missed instead of
+ * only the current one.
+ */
+function periodRange(fromPeriod, toPeriod) {
+  const [fromYear, fromMonth] = String(fromPeriod).split('-').map(Number);
+  const [toYear, toMonth] = String(toPeriod).split('-').map(Number);
+  if (!fromYear || !fromMonth || !toYear || !toMonth) return [];
+
+  const periods = [];
+  let year = fromYear;
+  let month = fromMonth;
+  // A hard limit keeps a bad input from looping forever.
+  while ((year < toYear || (year === toYear && month <= toMonth)) && periods.length < 240) {
+    periods.push(`${year}-${String(month).padStart(2, '0')}`);
+    month += 1;
+    if (month > 12) {
+      month = 1;
+      year += 1;
+    }
+  }
+  return periods;
+}
+
 module.exports = {
   formatDate,
   periodKey,
@@ -86,4 +129,6 @@ module.exports = {
   addDays,
   endOfPeriod,
   dayOfMonth,
+  dueDateForPeriod,
+  periodRange,
 };

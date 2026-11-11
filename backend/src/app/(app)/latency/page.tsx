@@ -18,7 +18,6 @@ import { useAdminDataStore } from '@/store/adminDataStore';
 export default function LiveLatencyPage() {
   const { liveLatency, saveItem, fetchData } = useAdminDataStore();
   const [loading, setLoading] = useState(false);
-  const [testingPing, setTestingPing] = useState(false);
 
   // Configuration State
   const [enabled, setEnabled] = useState(true);
@@ -56,9 +55,14 @@ export default function LiveLatencyPage() {
       targets: activeList,
     };
 
-    await saveItem('liveLatency', payload);
-    setLoading(false);
-    toast.success('Live Latency & Ping settings saved & synced to Frontend Portal!');
+    try {
+      await saveItem('liveLatency', payload);
+      toast.success('Live Latency & Ping settings saved & synced to Frontend Portal!');
+    } catch (error: any) {
+      toast.error(error?.message || 'The settings could not be saved.');
+    } finally {
+      setLoading(false);
+    }
   };
 
   const handleAddTarget = async (e: React.FormEvent) => {
@@ -98,7 +102,7 @@ export default function LiveLatencyPage() {
     }
   };
 
-  const handleResetDefaults = () => {
+  const handleResetDefaults = async () => {
     if (confirm('Reset to standard Tier-1 backbone targets?')) {
       const defaultTargets = [
         { id: 'LAT-1', name: 'Direct POP Peering', host: 'pop.nextlink.net', ping: '1.2 ms', status: 'optimal' },
@@ -110,25 +114,9 @@ export default function LiveLatencyPage() {
       setTitle('Realtime Ping & Latency');
       setDescription('Real-time response to Tier-1 international backbones');
       setTargets(defaultTargets);
-      handleSave(defaultTargets);
+      await handleSave(defaultTargets);
       toast.success('Standard Tier-1 targets restored!');
     }
-  };
-
-  const handleTestPings = () => {
-    setTestingPing(true);
-    setTimeout(() => {
-      const simulated = targets.map(t => {
-        const base = parseFloat(t.ping) || 2.0;
-        const jitter = (Math.random() * 0.6 - 0.3).toFixed(1);
-        const newPing = `${Math.max(0.8, base + parseFloat(jitter)).toFixed(1)} ms`;
-        return { ...t, ping: newPing };
-      });
-      setTargets(simulated);
-      setTestingPing(false);
-      handleSave(simulated);
-      toast.success('ICMP Ping diagnostics completed across all targets!');
-    }, 1000);
   };
 
   return (
@@ -145,10 +133,6 @@ export default function LiveLatencyPage() {
           </p>
         </div>
         <div className="flex items-center gap-2">
-          <Button variant="outline" size="sm" onClick={handleTestPings} disabled={testingPing} className="gap-1.5 text-xs">
-            <RefreshCw className={`h-3.5 w-3.5 ${testingPing ? 'animate-spin' : ''}`} />
-            Run ICMP Ping Now
-          </Button>
           <Button variant="outline" size="sm" onClick={handleResetDefaults} className="gap-1.5 text-xs text-rose-600 border-rose-200 hover:bg-rose-50">
             <Trash2 className="h-3.5 w-3.5" />
             Reset Defaults

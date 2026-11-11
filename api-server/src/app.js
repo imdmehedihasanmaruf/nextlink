@@ -63,6 +63,7 @@ function createApp() {
    */
   app.get('/health', async (req, res) => {
     const database = await db.healthCheck();
+    await queue.refreshPendingCount();
     res.status(database.ok ? 200 : 503).json({
       success: database.ok,
       service: 'nextlink-api',

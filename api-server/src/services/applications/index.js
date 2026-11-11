@@ -166,10 +166,19 @@ async function approveRequest(id, { activate = true } = {}) {
   );
 
   const subscriberId = `SUB-${crypto.randomUUID().slice(0, 8).toUpperCase()}`;
-  const username =
+  const preferredUsername =
     request.phone ||
     `user${crypto.randomUUID().slice(0, 6)}`;
   const temporaryPassword = `NL-${crypto.randomUUID().slice(0, 10).toUpperCase()}`;
+
+  // The username has to be unique across every subscriber — it is the login
+  // identifier. A second account activated from the same phone number would
+  // otherwise abort the whole activation transaction.
+  const taken = await db.queryOne(
+    'SELECT 1 AS taken FROM subscriber_credentials WHERE username = $1',
+    [preferredUsername],
+  );
+  const username = taken ? `${preferredUsername}-${subscriberId}` : preferredUsername;
 
   const rawData = {
     id: subscriberId,

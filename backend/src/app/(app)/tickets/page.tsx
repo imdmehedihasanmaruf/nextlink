@@ -92,7 +92,7 @@ export default function TicketsPage() {
       cell: ({ row }) => {
         const s = row.original.status;
         if (s === 'open') return <Badge className="bg-blue-500 text-white">Open</Badge>;
-        if (s === 'in-progress') return <Badge className="bg-purple-500 text-white">In Progress</Badge>;
+        if (s === 'in_progress') return <Badge className="bg-purple-500 text-white">In Progress</Badge>;
         if (s === 'resolved') return <Badge className="bg-emerald-600 text-white">Resolved</Badge>;
         return <Badge variant="outline">Closed</Badge>;
       },
@@ -120,8 +120,12 @@ export default function TicketsPage() {
             variant="ghost"
             onClick={async () => {
               if (confirm(`Delete support ticket #${row.original.id}?`)) {
-                await deleteTicket(row.original.id);
-                toast.success(`Ticket #${row.original.id} deleted`);
+                try {
+                  await deleteTicket(row.original.id);
+                  toast.success(`Ticket #${row.original.id} deleted`);
+                } catch (error: any) {
+                  toast.error(error?.message || 'The ticket could not be deleted');
+                }
               }
             }}
             className="h-8 w-8 p-0 text-rose-500 hover:text-rose-600 hover:bg-rose-50"
@@ -184,7 +188,7 @@ export default function TicketsPage() {
         <Card>
           <CardContent className="p-4">
             <p className="text-xs text-muted-foreground">{t('In Progress', 'চলমান কাজ')}</p>
-            <h3 className="text-2xl font-bold text-purple-600 mt-1">{tickets.filter(t => t.status === 'in-progress').length}</h3>
+            <h3 className="text-2xl font-bold text-purple-600 mt-1">{tickets.filter(t => t.status === 'in_progress').length}</h3>
           </CardContent>
         </Card>
         <Card>
@@ -244,7 +248,7 @@ export default function TicketsPage() {
                     </SelectTrigger>
                     <SelectContent>
                       <SelectItem value="open">Open</SelectItem>
-                      <SelectItem value="in-progress">In Progress</SelectItem>
+                      <SelectItem value="in_progress">In Progress</SelectItem>
                       <SelectItem value="resolved">Resolved</SelectItem>
                       <SelectItem value="closed">Closed</SelectItem>
                     </SelectContent>
@@ -314,9 +318,13 @@ export default function TicketsPage() {
                     size="sm"
                     onClick={async () => {
                       if (selectedTicket && confirm(`Delete ticket #${selectedTicket.id}?`)) {
-                        await deleteTicket(selectedTicket.id);
-                        setDetailsOpen(false);
-                        toast.success(`Ticket #${selectedTicket.id} deleted`);
+                        try {
+                          await deleteTicket(selectedTicket.id);
+                          setDetailsOpen(false);
+                          toast.success(`Ticket #${selectedTicket.id} deleted`);
+                        } catch (error: any) {
+                          toast.error(error?.message || 'The ticket could not be deleted');
+                        }
                       }
                     }}
                     className="gap-1.5"

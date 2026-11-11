@@ -78,11 +78,20 @@ async function listDistricts(zone) {
  * @param {string} query.area
  */
 async function checkArea({ zone, district, area }) {
+  // `position()` treats the query as a literal substring, so a `%` or `_` in
+  // the input cannot act as a LIKE wildcard — and it still matches an area
+  // that merely contains the typed text ("Gulshan" -> "Gulshan Avenue").
   const result = await db.query(
     `SELECT * FROM coverage_areas
       WHERE LOWER(zone) = LOWER($1)
         AND ($2::text IS NULL OR LOWER(district) = LOWER($2))
-        AND ($3::text IS NULL OR LOWER(areas::text) LIKE LOWER('%' || $3 || '%'))
+        AND (
+          $3::text IS NULL
+          OR EXISTS (
+            SELECT 1 FROM unnest(areas) AS a(area)
+            WHERE POSITION(LOWER($3) IN LOWER(a.area)) > 0
+          )
+        )
       LIMIT 5`,
     [zone, district || null, area || null],
   );

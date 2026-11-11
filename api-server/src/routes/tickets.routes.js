@@ -312,4 +312,42 @@ router.post(
   }),
 );
 
+/**
+ * DELETE /api/tickets/:id
+ * Permanently remove a ticket (admin action).
+ *
+ * Used when the admin panel deletes a ticket. The detail row, the message
+ * thread and the ticket itself are removed together, and the deletion is
+ * recorded in the audit log.
+ */
+router.delete(
+  '/:id',
+  requireAuth,
+  requireRole(ROLES.SUPER_ADMIN, ROLES.BILLING, ROLES.SUPPORT),
+  asyncHandler(async (req, res) => {
+    const ticket = await crm.getTicket(req.params.id);
+    if (!ticket) {
+      return res.status(404).json({ success: false, error: 'Ticket not found' });
+    }
+
+    await db.transaction(async (client) => {
+      await client.query('DELETE FROM ticket_messages WHERE ticket_id = $1', [req.params.id]);
+      await client.query('DELETE FROM ticket_details WHERE ticket_id = $1', [req.params.id]);
+      await client.query('DELETE FROM tickets WHERE id = $1', [req.params.id]);
+    });
+
+    await audit({
+      actorId: req.user.id,
+      actorRole: req.user.role,
+      action: 'ticket.deleted',
+      entityType: 'ticket',
+      entityId: req.params.id,
+      details: { title: ticket.title },
+      ip: req.ip,
+    });
+
+    res.json({ success: true, message: 'Ticket deleted' });
+  }),
+);
+
 module.exports = router;

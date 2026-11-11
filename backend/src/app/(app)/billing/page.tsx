@@ -154,9 +154,13 @@ export default function BillingPage() {
               size="sm" 
               variant="ghost" 
               onClick={async () => {
-                if (confirm(`Delete invoice ${inv.id} for ${inv.subscriberName}?`)) {
-                  await deleteInvoice(inv.id);
-                  toast.success(`Invoice ${inv.id} deleted`);
+                if (confirm(`Delete invoice ${inv.id} for ${inv.subscriberName}? A paid invoice cannot be deleted.`)) {
+                  try {
+                    await deleteInvoice(inv.id);
+                    toast.success(`Invoice ${inv.id} deleted`);
+                  } catch (error: any) {
+                    toast.error(error?.message || 'The invoice could not be deleted');
+                  }
                 }
               }} 
               className="h-8 w-8 p-0 text-rose-500 hover:text-rose-600 hover:bg-rose-50" 

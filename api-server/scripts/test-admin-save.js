@@ -70,13 +70,15 @@ async function run() {
   console.log('\n2. Perform a real admin save');
   // The admin panel reads the whole store and writes it back. This is the
   // exact payload shape the panel sends.
-  const storeResponse = await fetch(`${ADMIN}/api/data`);
+  const storeResponse = await fetch(`${ADMIN}/api/data`, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
   const store = await storeResponse.json();
   assert(storeResponse.ok && Array.isArray(store.invoices), 'the admin store was loaded', store.invoices?.length);
 
   const saveResponse = await fetch(`${ADMIN}/api/data`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
     body: JSON.stringify({ type: 'invoices', data: store.invoices }),
   });
   const saveResult = await saveResponse.json().catch(() => ({}));

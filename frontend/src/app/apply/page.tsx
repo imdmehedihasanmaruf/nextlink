@@ -67,14 +67,21 @@ export default function ApplyPage() {
   })
 
   const watchedValues = watch()
+  const watchedJson = JSON.stringify(watchedValues)
 
-  // Auto-fill package from URL query params (e.g. ?package=PKG-001)
+  const urlPackageApplied = React.useRef(false)
+
+  // Auto-fill package from URL query params (e.g. ?package=PKG-001) — once,
+  // only when the catalogue is ready. The visitor's later choice is never
+  // overwritten by this effect.
   useEffect(() => {
+    if (urlPackageApplied.current) return
     if (typeof window !== 'undefined') {
       const params = new URLSearchParams(window.location.search)
       const pkgParam = params.get('package') || params.get('plan')
       if (pkgParam) {
         setValue('package', pkgParam)
+        urlPackageApplied.current = true
       }
     }
   }, [setValue, livePackages])
@@ -95,9 +102,11 @@ export default function ApplyPage() {
 
   useEffect(() => {
     if (!autoSave) return
-    const { package: pkg, ontConfig, ...rest } = watchedValues
+    // The dependencies are the serialized values, not the object identity, so
+    // this only writes when something actually changed.
+    const { package: pkg, ontConfig, ...rest } = JSON.parse(watchedJson || '{}')
     localStorage.setItem(AUTO_SAVE_KEY, JSON.stringify({ ...rest, package: pkg, ontConfig }))
-  }, [watchedValues, autoSave])
+  }, [watchedJson, autoSave])
 
   const handleFormSubmit = (e: React.FormEvent) => {
     // If user is not authenticated, redirect to login page before submitting order
@@ -145,15 +154,36 @@ export default function ApplyPage() {
 
   const handleIdUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]
-    if (file) {
-      const reader = new FileReader()
-      reader.onload = (ev) => {
-        const dataUrl = ev.target?.result as string
-        setIdPreview(dataUrl)
-        setIdDocument(dataUrl)
-      }
-      reader.readAsDataURL(file)
+    if (!file) {
+      e.target.value = ''
+      return
     }
+
+    // Only PDF/JPEG/PNG, at most 5 MB — the data URL is sent to the server
+    // and stored on disk, so an unbounded file would exhaust memory and the
+    // payload limit.
+    const allowedTypes = ['application/pdf', 'image/jpeg', 'image/png']
+    const maxBytes = 5 * 1024 * 1024
+
+    if (!allowedTypes.includes(file.type)) {
+      setSubmitError('The identity document must be a PDF, JPEG or PNG file.')
+      e.target.value = ''
+      return
+    }
+    if (file.size > maxBytes) {
+      setSubmitError('The identity document must be smaller than 5 MB.')
+      e.target.value = ''
+      return
+    }
+
+    setSubmitError(null)
+    const reader = new FileReader()
+    reader.onload = (ev) => {
+      const dataUrl = ev.target?.result as string
+      setIdPreview(dataUrl)
+      setIdDocument(dataUrl)
+    }
+    reader.readAsDataURL(file)
   }
 
   if (submitted) {

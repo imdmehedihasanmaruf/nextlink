@@ -23,6 +23,12 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/com
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
+import { getApiToken } from '@/lib/apiClient';
+
+function authHeader(): Record<string, string> {
+  const token = getApiToken();
+  return token ? { Authorization: `Bearer ${token}` } : {};
+}
 
 interface AdminOrder {
   id: string;
@@ -64,7 +70,7 @@ export default function AdminOrdersPage() {
   const fetchOrders = async () => {
     setLoading(true);
     try {
-      const res = await fetch('/api/admin/orders');
+      const res = await fetch('/api/admin/orders', { headers: authHeader() });
       const data = await res.json();
       if (data.success && data.orders) {
         setOrders(data.orders);
@@ -86,7 +92,7 @@ export default function AdminOrdersPage() {
     try {
       const res = await fetch('/api/admin/orders', {
         method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...authHeader() },
         body: JSON.stringify({ orderId, status: newStatus }),
       });
       const data = await res.json();
@@ -126,7 +132,10 @@ export default function AdminOrdersPage() {
   const totalCount = orders.length;
   const pendingCount = orders.filter(o => o.order_status === 'Pending Activation').length;
   const activeCount = orders.filter(o => o.order_status === 'Active').length;
-  const totalRevenue = orders.reduce((sum, o) => sum + Number(o.total_payable || 0), 0);
+  // Cancelled orders never produced revenue — they are excluded.
+  const totalRevenue = orders
+    .filter((o) => String(o.order_status || '').toLowerCase() !== 'cancelled')
+    .reduce((sum, o) => sum + Number(o.total_payable || 0), 0);
 
   return (
     <div className="space-y-6">
