@@ -25,14 +25,24 @@ const BRAND = {
 const CURRENCY_LABEL = `${config.billing.currency} ${config.billing.currencySymbol}`;
 
 /**
+ * The brand block is configurable, so the invoice does not print a
+ * fictional contact address.
+ */
+function applyBrand(overrides = {}) {
+  return { ...BRAND, ...overrides };
+}
+
+/**
  * Draw the header band.
  */
 function drawHeader(doc, invoice) {
+  const brand = applyBrand(invoice.brand);
+
   doc.rect(0, 0, doc.page.width, 96).fill('#0f2f6b');
-  doc.fillColor('#ffffff').fontSize(22).font('Helvetica-Bold').text(BRAND.name, 50, 28);
-  doc.fontSize(9).font('Helvetica').text(BRAND.tagline, 50, 56);
-  doc.fontSize(9).text(`${BRAND.address}`, 50, 70);
-  doc.text(`${BRAND.email}  |  ${BRAND.phone}`, 50, 83);
+  doc.fillColor('#ffffff').fontSize(22).font('Helvetica-Bold').text(brand.name, 50, 28);
+  doc.fontSize(9).font('Helvetica').text(brand.tagline, 50, 56);
+  doc.fontSize(9).text(`${brand.address}`, 50, 70);
+  doc.text(`${brand.email}  |  ${brand.phone}`, 50, 83);
 
   doc.fontSize(16).font('Helvetica-Bold').text('INVOICE', 0, 32, { align: 'right', width: doc.page.width - 50 });
   doc.fontSize(9).font('Helvetica').text(`Invoice #${invoice.id}`, 0, 56, { align: 'right', width: doc.page.width - 50 });
@@ -111,6 +121,7 @@ function drawTable(doc, invoice, y) {
  * Draw the status / footer block.
  */
 function drawFooter(doc, invoice, y) {
+  const brand = applyBrand(invoice.brand);
   const status = String(invoice.status || 'unpaid').toUpperCase();
   const statusColor = status === 'PAID' ? '#137a3a' : status === 'OVERDUE' ? '#b3261e' : '#8a6d00';
 
@@ -129,7 +140,7 @@ function drawFooter(doc, invoice, y) {
     footerY + 12,
     { width: doc.page.width - 100, align: 'center' },
   );
-  doc.text(`${BRAND.name} — ${BRAND.email} — ${BRAND.phone}`, 50, footerY + 32, {
+  doc.text(`${brand.name} — ${brand.email} — ${brand.phone}`, 50, footerY + 32, {
     width: doc.page.width - 100,
     align: 'center',
   });
@@ -174,4 +185,4 @@ function invoicePdfPath(invoiceId) {
   return path.join(config.billing.pdfDir, `${safeId}.pdf`);
 }
 
-module.exports = { renderInvoicePdf, generateInvoicePdf, invoicePdfPath, BRAND, CURRENCY_LABEL };
+module.exports = { renderInvoicePdf, generateInvoicePdf, invoicePdfPath, BRAND, CURRENCY_LABEL, applyBrand };

@@ -5,7 +5,7 @@ const { z } = require('zod');
 const db = require('../lib/db');
 const { asyncHandler } = require('../middleware/error');
 const { validate } = require('../middleware/validate');
-const { requireAuth, optionalAuth, requireRole, ROLES, audit } = require('../middleware/auth');
+const { requireAuth, optionalAuth, requireRole, requireSelfOrRole, ROLES, audit } = require('../middleware/auth');
 const crm = require('../services/crm');
 
 const router = express.Router();
@@ -15,6 +15,8 @@ const router = express.Router();
  * Staff may pass ?subscriberId= to act on a specific account.
  */
 function resolveSubscriber(req) {
+  // The request may be anonymous, so the principal is checked first.
+  if (!req.user) return null;
   if (req.user.type === 'subscriber') return req.user.subscriberId || req.user.id;
   return req.query.subscriberId ? String(req.query.subscriberId) : null;
 }
@@ -41,14 +43,16 @@ router.post(
 
     let subscriberName = null;
     let subscriberPhone = null;
+    let subscriberZone = null;
     if (subscriberId) {
       const subscriber = await db.queryOne(
-        'SELECT id, name, phone FROM subscribers WHERE id = $1',
+        'SELECT id, name, phone, raw_data FROM subscribers WHERE id = $1',
         [subscriberId],
       );
       if (subscriber) {
         subscriberName = subscriber.name;
         subscriberPhone = subscriber.phone;
+        subscriberZone = (subscriber.raw_data || {}).zone || null;
       }
     }
 
@@ -56,6 +60,7 @@ router.post(
       subscriberId,
       subscriberName,
       subscriberPhone,
+      subscriberZone,
       subject: body.subject,
       category: body.category,
       priority: body.priority || 'medium',
@@ -93,6 +98,7 @@ router.post(
 router.get(
   '/',
   optionalAuth,
+  requireSelfOrRole(ROLES.SUPER_ADMIN, ROLES.BILLING, ROLES.SUPPORT, ROLES.TECHNICIAN),
   asyncHandler(async (req, res) => {
     if (!req.user) {
       return res.status(401).json({ success: false, error: 'Authentication required' });
@@ -100,6 +106,8 @@ router.get(
 
     const subscriberId = resolveSubscriber(req);
     const tickets = await crm.listTickets({
+      // A subscriber is always confined to their own tickets; staff may look
+      // at another account when they pass ?subscriberId=.
       subscriberId: req.user.type === 'subscriber' ? subscriberId : subscriberId,
       status: req.query.status ? String(req.query.status) : null,
       assignedTo: req.query.assignedTo ? String(req.query.assignedTo) : null,
@@ -174,6 +182,7 @@ router.get(
 router.patch(
   '/:id/status',
   optionalAuth,
+  requireRole(ROLES.SUPER_ADMIN, ROLES.BILLING, ROLES.SUPPORT),
   validate({
     body: z.object({
       status: z.enum(['open', 'in_progress', 'resolved', 'closed']),
@@ -184,6 +193,7 @@ router.patch(
       return res.status(401).json({ success: false, error: 'Authentication required' });
     }
 
+    // Only staff may change a ticket status.
     const isStaff = req.user.type !== 'subscriber';
     if (!isStaff) {
       return res.status(403).json({ success: false, error: 'Only staff can change a ticket status' });
@@ -251,6 +261,7 @@ router.post(
 router.post(
   '/:id/messages',
   optionalAuth,
+  requireSelfOrRole(ROLES.SUPER_ADMIN, ROLES.BILLING, ROLES.SUPPORT),
   validate({
     body: z.object({
       body: z.string().min(1, 'Message body is required'),

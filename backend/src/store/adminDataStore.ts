@@ -36,7 +36,6 @@ interface AdminDataState {
   fetchData: () => Promise<void>;
   saveCollection: (type: string, data: any) => Promise<void>;
   saveItem: (type: string, data: any) => Promise<void>;
-
   // Package actions
   addPackage: (pkg: Package) => Promise<void>;
   updatePackage: (pkg: Package) => Promise<void>;
@@ -114,25 +113,51 @@ export const useAdminDataStore = create<AdminDataState>()(
         }
       },
 
+      /**
+       * Send a collection to the API.
+       * The response is checked and the error is surfaced, so the panel never
+       * reports a successful save for a write that did not happen.
+       */
       saveCollection: async (type: string, data: any) => {
         try {
-          await fetch('/api/data', {
+          const response = await fetch('/api/data', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ type, data }),
           });
-        } catch (e) {}
+
+          if (!response.ok) {
+            const payload = await response.json().catch(() => ({}));
+            throw new Error(payload.error || `The server refused the save (${response.status})`);
+          }
+        } catch (error: any) {
+          console.error(`[admin] saving ${type} failed:`, error);
+          // The optimistic change is reverted by reloading from the server.
+          await get().fetchData();
+          throw error;
+        }
       },
 
       saveItem: async (type: string, data: any) => {
+        const previous = (get() as any)[type];
         try {
           set({ [type]: data } as any);
-          await fetch('/api/data', {
+          const response = await fetch('/api/data', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ type, data }),
           });
-        } catch (e) {}
+
+          if (!response.ok) {
+            const payload = await response.json().catch(() => ({}));
+            throw new Error(payload.error || `The server refused the save (${response.status})`);
+          }
+        } catch (error: any) {
+          console.error(`[admin] saving ${type} failed:`, error);
+          // Roll the optimistic change back.
+          if (previous !== undefined) set({ [type]: previous } as any);
+          throw error;
+        }
       },
 
       // Packages

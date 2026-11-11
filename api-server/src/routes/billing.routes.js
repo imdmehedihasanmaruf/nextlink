@@ -127,9 +127,28 @@ router.get(
   '/invoices/:id/pdf',
   requireAuth,
   asyncHandler(async (req, res) => {
-    const invoice = await db.queryOne('SELECT * FROM invoices WHERE id = $1', [req.params.id]);
+    const invoice = await db.queryOne(
+      `SELECT i.*, s.name AS subscriber_name, s.phone AS subscriber_phone, s.email AS subscriber_email
+         FROM invoices i
+         LEFT JOIN subscribers s ON s.id = i.subscriber_id
+        WHERE i.id = $1`,
+      [req.params.id],
+    );
     if (!invoice) {
       return res.status(404).json({ success: false, error: 'Invoice not found' });
+    }
+
+    // A subscriber may only download their own invoice. Staff need a role
+    // that is allowed to see the billing data.
+    if (req.user.type === 'subscriber') {
+      if (invoice.subscriber_id !== (req.user.subscriberId || req.user.id)) {
+        return res.status(403).json({ success: false, error: 'You can only view your own invoices' });
+      }
+    } else if (![ROLES.SUPER_ADMIN, ROLES.BILLING].includes(req.user.role)) {
+      return res.status(403).json({
+        success: false,
+        error: 'You are not allowed to view the billing documents',
+      });
     }
 
     const raw = invoice.raw_data || {};
@@ -137,9 +156,15 @@ router.get(
     const subscriberRaw = subscriber ? subscriber.raw_data || {} : {};
 
     const filePath = pdf.invoicePdfPath(invoice.id);
-    const alreadyExists = require('fs').existsSync(filePath);
+    const fs = require('fs');
 
-    if (!alreadyExists) {
+    // The PDF is regenerated whenever the invoice changed. A cached copy would
+    // keep saying "UNPAID" on an invoice that has already been paid.
+    const stamp = `${invoice.status}|${invoice.amount}|${invoice.due_date}|${raw.paidAt || ''}`;
+    const markerPath = `${filePath}.stamp`;
+    const currentStamp = fs.existsSync(markerPath) ? fs.readFileSync(markerPath, 'utf-8') : null;
+
+    if (currentStamp !== stamp) {
       await pdf.generateInvoicePdf({
         id: invoice.id,
         subscriberId: invoice.subscriber_id,
@@ -155,6 +180,7 @@ router.get(
         transactionId: raw.transactionId || '',
         issuedAt: (invoice.created_at || new Date()).toISOString().slice(0, 10),
       });
+      fs.writeFileSync(markerPath, stamp, 'utf-8');
     }
 
     await audit({

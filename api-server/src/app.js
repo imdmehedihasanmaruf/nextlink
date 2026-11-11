@@ -11,6 +11,11 @@ const logger = require('./lib/logger');
 const queue = require('./lib/queue');
 const { notFound, errorHandler } = require('./middleware/error');
 
+const int = (value, fallback) => {
+  const parsed = parseInt(value, 10);
+  return Number.isFinite(parsed) ? parsed : fallback;
+};
+
 const billingRoutes = require('./routes/billing.routes');
 const paymentRoutes = require('./routes/payments.routes');
 const mikrotikRoutes = require('./routes/mikrotik.routes');
@@ -26,17 +31,18 @@ const settingsRoutes = require('./routes/settings.routes');
 function createApp() {
   const app = express();
 
-  app.set('trust proxy', true);
+  // Only the first proxy hop is trusted. Trusting every peer would let a
+  // caller spoof the X-Forwarded-For header and corrupt the audit trail.
+  app.set('trust proxy', int(process.env.TRUST_PROXY_HOPS, 1));
   app.use(helmet({ crossOriginResourcePolicy: { policy: 'cross-origin' } }));
   app.use(
     cors({
       origin(origin, callback) {
-        // Allow same-origin/tooling requests (no Origin header) and the
-        // configured frontends.
+        // Same-origin requests (tools, curl) carry no Origin header.
         if (!origin) return callback(null, true);
-        if (config.cors.origins.includes(origin) || config.cors.origins.includes('*')) {
-          return callback(null, true);
-        }
+        // Only the configured frontends are allowed. A wildcard would let
+        // any website read the API responses.
+        if (config.cors.origins.includes(origin)) return callback(null, true);
         return callback(new Error(`Origin not allowed by CORS: ${origin}`));
       },
       credentials: true,

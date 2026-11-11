@@ -38,6 +38,7 @@ export default function RegisterPage() {
   const { login } = useAuthStore()
   const { packages } = useContentStore()
   const [success, setSuccess] = useState(false)
+  const [error, setError] = useState<string | null>(null)
 
   const {
     register,
@@ -90,26 +91,24 @@ export default function RegisterPage() {
           }, 1200);
           return;
         }
+        setError(result.error || 'The account could not be created. Please try again.');
+        return;
       }
+
+      // The server refused the registration — surface the reason instead of
+      // pretending an account exists.
+      const failure = await res.json().catch(() => ({}));
+      setError(failure.error || 'The account could not be created. Please try again.');
+      return;
     } catch (err) {
-      console.warn('Backend register sync fallback:', err);
+      // The service is unreachable. No account was created, so the visitor
+      // must not be signed in as one.
+      console.warn('Registration service unreachable:', err);
+      setError(
+        'The registration service is currently unavailable. Please try again in a moment or contact support.'
+      );
+      return;
     }
-
-    // Fallback if backend offline
-    login({
-      id: `NL-2026-${Math.floor(1000 + Math.random() * 9000)}`,
-      name: data.fullName,
-      username: data.username,
-      phone: data.phone,
-      package: data.package,
-      address: data.address,
-      joinDate: new Date().toISOString().slice(0, 10),
-    });
-
-    setSuccess(true);
-    setTimeout(() => {
-      router.push('/dashboard');
-    }, 1200);
   };
 
   return (
@@ -154,6 +153,12 @@ export default function RegisterPage() {
         ) : (
           <Card className="border-2 shadow-xl bg-card">
             <CardContent className="p-6">
+              {error && (
+                <div className="mb-4 rounded-lg border border-destructive/30 bg-destructive/10 p-3 text-sm text-destructive flex items-start gap-2">
+                  <AlertCircle size={16} className="shrink-0 mt-0.5" />
+                  <span>{error}</span>
+                </div>
+              )}
               <form onSubmit={handleSubmit(onSubmit)} className="space-y-4">
                 {/* Full Name & Username */}
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">

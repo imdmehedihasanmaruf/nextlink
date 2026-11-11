@@ -16,7 +16,10 @@
     "mock:routeros": "node scripts/mock-routeros-server.js",
     "mock:gateways": "node scripts/mock-gateway-server.js",
     "test": "node scripts/test-e2e.js && node scripts/test-portal.js && node scripts/test-automation.js && node scripts/test-phase12.js && node scripts/test-credentials.js",
-    "test:live": "node scripts/test-live-mode.js"
+    "test:admin-save": "node scripts/test-admin-save.js",
+    "test:live": "node scripts/test-live-mode.js",
+    "restore": "node scripts/restore-from-mirror.js",
+    "backfill:status": "node scripts/backfill-status.js"
   },
   "dependencies": {
     "bcryptjs": "^2.4.3",

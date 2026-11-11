@@ -394,7 +394,12 @@ class RouterOsClient {
 
   /** Update the max-limit of a simple queue. */
   async setQueueLimit(name, maxLimit) {
-    await this.send('/queue/simple/set', { name, 'max-limit': maxLimit });
+    // RouterOS addresses a record by its internal id, not by its name.
+    const rows = await this.send('/queue/simple/print', { '?name': name });
+    if (!rows || rows.length === 0) {
+      throw new RouterOsError(`Queue not found: ${name}`, 'QUEUE_NOT_FOUND');
+    }
+    await this.send('/queue/simple/set', { '.id': rows[0]['.id'], 'max-limit': maxLimit });
     return { name, maxLimit };
   }
 

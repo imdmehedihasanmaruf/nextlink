@@ -214,6 +214,52 @@ async function handleCallback(gatewayName, req) {
     return { status: 404, body: { success: false, error: 'No matching payment transaction found' } };
   }
 
+  // A callback may only settle the transaction it belongs to.
+  if (transaction.gateway !== gatewayName && gatewayName !== 'mock') {
+    await db.query(
+      `UPDATE payment_webhooks SET status = 'gateway_mismatch', processed_at = NOW() WHERE id = (
+         SELECT id FROM payment_webhooks WHERE gateway_txn_id = $1 ORDER BY created_at DESC LIMIT 1
+       )`,
+      [parsed.transactionId],
+    );
+    return {
+      status: 400,
+      body: {
+        success: false,
+        error: `This transaction belongs to ${transaction.gateway}, not ${gatewayName}`,
+      },
+    };
+  }
+
+  // The callback must be authentic. Each gateway verifies the callback in its
+  // own way — a signature for bKash, a server side lookup for the others.
+  let verification = { verified: true, reason: 'no verification available' };
+  try {
+    if (typeof gateway.verifyWebhook === 'function') {
+      verification = await gateway.verifyWebhook(body);
+    }
+  } catch (error) {
+    verification = { verified: false, reason: error.message };
+  }
+
+  if (!verification.verified) {
+    await db.query(
+      `UPDATE payment_webhooks SET status = 'unverified', error = $2, processed_at = NOW() WHERE id = (
+         SELECT id FROM payment_webhooks WHERE gateway_txn_id = $1 ORDER BY created_at DESC LIMIT 1
+       )`,
+      [parsed.transactionId, String(verification.reason || 'verification failed').slice(0, 500)],
+    );
+    logger.warn('payment callback rejected', {
+      gateway: gatewayName,
+      transactionId: parsed.transactionId,
+      reason: verification.reason,
+    });
+    return {
+      status: 401,
+      body: { success: false, error: `The callback could not be verified: ${verification.reason}` },
+    };
+  }
+
   if (parsed.status !== 'success') {
     await db.query(
       `UPDATE payment_transactions SET status = $2, updated_at = NOW() WHERE id = $1`,
@@ -231,11 +277,41 @@ async function handleCallback(gatewayName, req) {
     };
   }
 
+  // The settled amount has to match the invoice. A callback carrying a
+  // different amount must never mark the invoice as paid.
+  const settledAmount = Number(parsed.amount || verification.amount || transaction.amount || 0);
+  const expectedAmount = Number(transaction.amount || 0);
+
+  if (expectedAmount > 0 && Math.abs(settledAmount - expectedAmount) > 0.01) {
+    await db.query(
+      `UPDATE payment_webhooks SET status = 'amount_mismatch', error = $2, processed_at = NOW() WHERE id = (
+         SELECT id FROM payment_webhooks WHERE gateway_txn_id = $1 ORDER BY created_at DESC LIMIT 1
+       )`,
+      [
+        parsed.transactionId,
+        `settled ${settledAmount} but the invoice is for ${expectedAmount}`,
+      ],
+    );
+    logger.warn('payment callback amount mismatch', {
+      gateway: gatewayName,
+      transactionId: parsed.transactionId,
+      settledAmount,
+      expectedAmount,
+    });
+    return {
+      status: 400,
+      body: {
+        success: false,
+        error: `The settled amount (${settledAmount}) does not match the invoice (${expectedAmount})`,
+      },
+    };
+  }
+
   const result = await billing.applyPayment({
     invoiceId: transaction.invoice_id,
     transactionId: parsed.transactionId,
     gateway: transaction.gateway,
-    amount: parsed.amount || transaction.amount,
+    amount: settledAmount || transaction.amount,
     raw: parsed.raw,
   });
 

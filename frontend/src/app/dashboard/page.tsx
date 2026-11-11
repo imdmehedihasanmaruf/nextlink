@@ -109,7 +109,9 @@ export default function DashboardPage() {
   const dueYearStr = String(dueBillingCycle.year)
   const nextDueDateRangeFormatted = `05/${dueMonthNumStr}/${dueYearStr} - 10/${dueMonthNumStr}/${dueYearStr} of Every Month`
 
-  // Persistent loading from localStorage on mount
+  // The billing cycle anchor is read from the local storage, but the payment
+  // history is no longer kept there: it comes from the billing service so the
+  // portal can never show a payment the server did not record.
   useEffect(() => {
     if (typeof window !== 'undefined') {
       const savedCycle = localStorage.getItem('nextlink_due_billing_cycle')
@@ -120,29 +122,6 @@ export default function DashboardPage() {
             setDueBillingCycle(parsed)
           }
         } catch (e) {}
-      }
-
-      const savedHistory = localStorage.getItem('nextlink_payment_history')
-      if (savedHistory) {
-        try {
-          const parsedHistory = JSON.parse(savedHistory)
-          if (Array.isArray(parsedHistory) && parsedHistory.length > 0) {
-            setPaymentHistory(parsedHistory)
-          }
-        } catch (e) {}
-      } else {
-        const defaultAmt = `$${monthlyBillAmount.toFixed(2)}`
-        setPaymentHistory([
-          {
-            id: 'INV-2026-042',
-            month: 'October 2026',
-            date: '08 Oct 2026',
-            amount: defaultAmt,
-            method: 'Credit / Debit Card',
-            trxId: 'TRX-OCT9482',
-            status: 'Paid'
-          }
-        ])
       }
     }
   }, [])
@@ -159,8 +138,6 @@ export default function DashboardPage() {
 
   // Payment Modal & Gateway States (Step 5 Style)
   const [payModalOpen, setPayModalOpen] = useState(false)
-  type PaymentGateway = 'card' | 'payoneer' | 'applepay' | 'bkash' | 'upi'
-  const [paymentMethod, setPaymentMethod] = useState<PaymentGateway>('card')
   const [mobileWalletNumber, setMobileWalletNumber] = useState('')
   const [isProcessingPay, setIsProcessingPay] = useState(false)
   const [receiptModalOpen, setReceiptModalOpen] = useState(false)
@@ -173,7 +150,8 @@ export default function DashboardPage() {
     month?: string;
   } | null>(null)
 
-  // Payment History State
+  // Payment History State — derived from the billing service, never a local
+  // ledger, so the portal can never claim a payment the server did not make.
   const [paymentHistory, setPaymentHistory] = useState<PaymentRecord[]>([])
 
   // Live billing data from the NextLink billing service (Express API)
@@ -195,7 +173,27 @@ export default function DashboardPage() {
 
     const invoicesResult = await fetchMyInvoices()
     if (invoicesResult.success) {
-      setLiveInvoices(invoicesResult.invoices || [])
+      const invoices = invoicesResult.invoices || []
+      setLiveInvoices(invoices)
+
+      // The billing history table is built from the server invoices, so it
+      // always matches what the billing service actually recorded.
+      const history: PaymentRecord[] = invoices.map((invoice: PortalInvoice) => ({
+        id: invoice.id,
+        month: invoice.raw_data?.period || '',
+        date: new Date(invoice.created_at).toLocaleDateString('en-US', {
+          day: '2-digit',
+          month: 'short',
+          year: 'numeric',
+        }),
+        amount: Number(invoice.amount || 0).toFixed(2),
+        method: invoice.raw_data?.paidVia
+          ? String(invoice.raw_data.paidVia).toUpperCase()
+          : '—',
+        trxId: invoice.raw_data?.transactionId || '',
+        status: invoice.status === 'paid' ? 'Paid' : 'Unpaid',
+      }))
+      setPaymentHistory(history)
     }
   }, [])
 
@@ -221,11 +219,9 @@ export default function DashboardPage() {
     window.location.href = result.redirectUrl
   }
 
-  // Card form state
+  // Card form state — the gateway collects the card details itself, so the
+  // portal never handles a card number.
   const [cardHolder, setCardHolder] = useState('Alexander Wright')
-  const [cardNumber, setCardNumber] = useState('4242 •••• •••• 4242')
-  const [cardExpiry, setCardExpiry] = useState('12/28')
-  const [cardCvc, setCardCvc] = useState('888')
 
   // Resolve current active package and monthly subscription price
   const activePackage = React.useMemo(() => {
@@ -265,7 +261,14 @@ export default function DashboardPage() {
     setPayModalOpen(true)
   }
 
-  const handleProcessPayment = () => {
+  /**
+   * Pay the selected invoice through a real gateway.
+   *
+   * The invoice is settled by the billing service — the portal never marks
+   * an invoice as paid on its own, and a receipt is only shown once the
+   * gateway has confirmed the transaction.
+   */
+  const handleProcessPayment = async () => {
     // Requirement 2: Strict restriction check
     if (!isPaymentWindowOpen) {
       setWindowWarning(
@@ -274,67 +277,49 @@ export default function DashboardPage() {
       return
     }
 
+    // Pay the oldest unpaid invoice. The gateway decides the amount.
+    const targetInvoice = liveInvoices.find((invoice) => invoice.status !== 'paid')
+    if (!targetInvoice) {
+      setWindowWarning('You have no unpaid bill at the moment.')
+      return
+    }
+
     setIsProcessingPay(true)
-    setTimeout(() => {
-      const generatedTrx = 'TRX-' + Math.random().toString(36).substring(2, 9).toUpperCase()
-      const receiptNo = 'REC-' + Date.now().toString().slice(-6)
-      const now = new Date()
-      const dateStr = now.toLocaleDateString('en-US', { day: '2-digit', month: 'short', year: 'numeric' })
-      const paidMonthName = dueMonthName
-      const paidYear = dueBillingCycle.year
-      const invId = `INV-${paidYear}-${String(paymentHistory.length + 1).padStart(3, '0')}`
+    setBillingError(null)
 
-      const methodNames: Record<PaymentGateway, string> = {
-        card: 'Credit / Debit Card',
-        payoneer: 'Payoneer Wallet',
-        applepay: 'Apple / Google Pay',
-        bkash: 'bKash Merchant',
-        upi: 'UPI / Regional'
-      }
+    const result = await payInvoice(targetInvoice.id, gatewayChoice)
+    setIsProcessingPay(false)
 
-      const paidRecord: PaymentRecord = {
-        id: invId,
-        month: `${paidMonthName} ${paidYear}`,
-        date: dateStr,
-        amount: `$${monthlyBillAmount.toFixed(2)}`,
-        method: methodNames[paymentMethod],
-        trxId: generatedTrx,
-        status: 'Paid'
-      }
-
-      setLatestReceipt({
-        receiptNo,
-        trxId: generatedTrx,
-        date: `${dateStr} ${now.toLocaleTimeString()}`,
-        amount: `$${monthlyBillAmount.toFixed(2)}`,
-        method: methodNames[paymentMethod],
-        month: `${paidMonthName} ${paidYear}`
-      })
-
-      // Requirement 3: Roll over to NEXT month continuously (Nov -> Dec -> Jan -> Feb ...)
-      let nextMonth = dueBillingCycle.month + 1
-      let nextYear = dueBillingCycle.year
-      if (nextMonth > 11) {
-        nextMonth = 0
-        nextYear += 1
-      }
-      const nextCycle = { month: nextMonth, year: nextYear }
-      setDueBillingCycle(nextCycle)
-      if (typeof window !== 'undefined') {
-        localStorage.setItem('nextlink_due_billing_cycle', JSON.stringify(nextCycle))
-      }
-
-      const updatedHistory = [paidRecord, ...paymentHistory]
-      setPaymentHistory(updatedHistory)
-      if (typeof window !== 'undefined') {
-        localStorage.setItem('nextlink_payment_history', JSON.stringify(updatedHistory))
-      }
-
-      setBalance(0.00)
-      setIsProcessingPay(false)
+    if (!result.success || !result.redirectUrl) {
+      setBillingError(result.error || 'The payment could not be started. Please try again.')
       setPayModalOpen(false)
+      return
+    }
+
+    // The gateway confirms the payment; the receipt is read back from the
+    // billing service afterwards.
+    window.location.href = result.redirectUrl
+  }
+
+  /**
+   * Refresh the invoice list and show the receipt for a settled invoice.
+   */
+  const handleRefreshAfterPayment = async () => {
+    await loadLiveBilling()
+
+    const paid = liveInvoices.find((invoice) => invoice.status === 'paid')
+    if (paid) {
+      const now = new Date()
+      setLatestReceipt({
+        receiptNo: paid.id,
+        trxId: (paid.raw_data?.transactionId as string) || paid.id,
+        date: now.toLocaleString(),
+        amount: `${Number(paid.amount).toFixed(2)}`,
+        method: gatewayChoice.toUpperCase(),
+        month: paid.raw_data?.period || '',
+      })
       setReceiptModalOpen(true)
-    }, 1200)
+    }
   }
 
   const handleTurboBoost = () => {
@@ -1115,19 +1100,18 @@ export default function DashboardPage() {
                 </Label>
                 <div className="grid grid-cols-2 sm:grid-cols-3 gap-1.5">
                   {[
-                    { id: 'card', label: 'Credit / Debit Card', icon: CreditCard },
-                    { id: 'payoneer', label: 'Payoneer Wallet', icon: Globe2 },
-                    { id: 'applepay', label: 'Apple / Google Pay', icon: Smartphone },
-                    { id: 'bkash', label: 'bKash Merchant', icon: Smartphone },
-                    { id: 'upi', label: 'UPI / Regional', icon: RefreshCw },
+                    { id: 'bkash', label: 'bKash', icon: Smartphone },
+                    { id: 'nagad', label: 'Nagad', icon: Smartphone },
+                    { id: 'sslcommerz', label: 'SSLCommerz', icon: CreditCard },
+                    { id: 'rocket', label: 'Rocket', icon: Globe2 },
                   ].map((gw) => {
                     const Icon = gw.icon
-                    const isSelected = paymentMethod === gw.id
+                    const isSelected = gatewayChoice === gw.id
                     return (
                       <button
                         key={gw.id}
                         type="button"
-                        onClick={() => setPaymentMethod(gw.id as PaymentGateway)}
+                        onClick={() => setGatewayChoice(gw.id as typeof gatewayChoice)}
                         className={`p-2 rounded-lg border-2 text-left transition-all flex items-center gap-1.5 ${
                           isSelected
                             ? 'border-primary bg-primary/10 text-primary font-bold shadow-xs'
@@ -1144,84 +1128,39 @@ export default function DashboardPage() {
 
               {/* Form Input Fields */}
               <div className="border rounded-xl p-3 bg-card shadow-xs space-y-2.5">
-                {paymentMethod === 'card' && (
-                  <div className="space-y-2">
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                      <div>
-                        <Label className="text-[11px]">Cardholder Full Name</Label>
-                        <Input
-                          placeholder="e.g. Alexander Wright"
-                          value={cardHolder}
-                          onChange={(e) => setCardHolder(e.target.value)}
-                          className="mt-1 h-8 text-xs"
-                        />
-                      </div>
-                      <div>
-                        <Label className="text-[11px]">Card Number</Label>
-                        <Input
-                          placeholder="4242 •••• •••• 4242"
-                          value={cardNumber}
-                          onChange={(e) => setCardNumber(e.target.value)}
-                          className="mt-1 h-8 text-xs font-mono"
-                        />
-                      </div>
-                    </div>
-                    <div className="grid grid-cols-2 gap-2">
-                      <div>
-                        <Label className="text-[11px]">Expiration Date</Label>
-                        <Input
-                          placeholder="12/28"
-                          value={cardExpiry}
-                          onChange={(e) => setCardExpiry(e.target.value)}
-                          className="mt-1 h-8 text-xs font-mono"
-                        />
-                      </div>
-                      <div>
-                        <Label className="text-[11px]">Security CVV</Label>
-                        <Input
-                          placeholder="•••"
-                          type="password"
-                          value={cardCvc}
-                          onChange={(e) => setCardCvc(e.target.value)}
-                          className="mt-1 h-8 text-xs font-mono"
-                        />
-                      </div>
-                    </div>
-                  </div>
-                )}
-
-                {(paymentMethod === 'bkash' || paymentMethod === 'upi' || paymentMethod === 'payoneer') && (
-                  <div className="space-y-1.5">
-                    <Label className="text-[11px]">
-                      {paymentMethod === 'bkash' ? 'bKash Mobile Account Number' : paymentMethod === 'upi' ? 'UPI Virtual Payment Address (VPA)' : 'Payoneer Linked Email / ID'}
-                    </Label>
-                    <Input
-                      placeholder={paymentMethod === 'bkash' ? '+880 1700 000000' : paymentMethod === 'upi' ? 'subscriber@okaxis' : 'billing@company.com'}
-                      value={mobileWalletNumber}
-                      onChange={(e) => setMobileWalletNumber(e.target.value)}
-                      className="h-8 text-xs font-mono"
-                    />
-                    <p className="text-[10px] text-muted-foreground">
-                      Secure instant carrier authorization will challenge your registered mobile gateway.
-                    </p>
-                  </div>
-                )}
-
-                {paymentMethod === 'applepay' && (
-                  <div className="text-center py-3 space-y-1">
-                    <Smartphone className="h-6 w-6 text-primary mx-auto" />
-                    <p className="font-bold text-xs">One-Touch Device Authentication</p>
-                    <p className="text-[10px] text-muted-foreground max-w-xs mx-auto">
-                      Clicking confirm will trigger biometric Apple Pay / Google Wallet authentication sheet.
-                    </p>
-                  </div>
-                )}
+                <div className="space-y-1.5">
+                  <Label className="text-[11px]">
+                    {gatewayChoice === 'bkash'
+                      ? 'bKash Mobile Account Number'
+                      : gatewayChoice === 'nagad'
+                        ? 'Nagad Mobile Account Number'
+                        : gatewayChoice === 'sslcommerz'
+                          ? 'Cardholder Full Name'
+                          : 'Rocket Mobile Account Number'}
+                  </Label>
+                  <Input
+                    placeholder={
+                      gatewayChoice === 'sslcommerz'
+                        ? 'e.g. Alexander Wright'
+                        : '+880 1700 000000'
+                    }
+                    value={mobileWalletNumber}
+                    onChange={(e) => setMobileWalletNumber(e.target.value)}
+                    className="h-8 text-xs font-mono"
+                  />
+                  <p className="text-[10px] text-muted-foreground">
+                    You will be redirected to the {gatewayChoice === 'sslcommerz' ? 'SSLCommerz' : gatewayChoice.toUpperCase()} checkout to authorise the payment.
+                  </p>
+                </div>
 
                 {/* Final Charged Amount Line */}
                 <div className="pt-2 border-t flex justify-between items-center text-xs">
                   <span className="font-semibold text-muted-foreground">Final Charged Amount:</span>
                   <span className="font-mono font-black text-base text-primary">
-                    ${monthlyBillAmount.toFixed(2)} USD
+                    {(() => {
+                      const target = liveInvoices.find((invoice) => invoice.status !== 'paid')
+                      return `${Number(target?.amount ?? monthlyBillAmount).toFixed(2)} ${liveSummary ? 'BDT' : ''}`.trim()
+                    })()}
                   </span>
                 </div>
               </div>

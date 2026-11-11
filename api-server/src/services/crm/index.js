@@ -30,7 +30,7 @@ const SLA_HOURS = {
 /**
  * Create a ticket from the subscriber portal.
  */
-async function createTicket({ subscriberId, subscriberName, subscriberPhone, subject, category, priority, description }) {
+async function createTicket({ subscriberId, subscriberName, subscriberPhone, subscriberZone, subject, category, priority, description }) {
   const id = `TICK-${utils.randomToken(5).toUpperCase()}`;
   const now = new Date();
   const slaHours = SLA_HOURS[priority] ?? SLA_HOURS.medium;
@@ -75,8 +75,9 @@ async function createTicket({ subscriberId, subscriberName, subscriberPhone, sub
     );
   });
 
-  // Auto-assign to a technician (round-robin over the least loaded one).
-  const technician = await autoAssign(id, category);
+  // Auto-assign to a technician. A technician in the subscriber's own
+  // region is preferred, then the least loaded one.
+  const technician = await autoAssign(id, category, subscriberZone);
   if (technician) {
     rawData.assignedTo = technician.id;
     rawData.assignedToName = technician.name;
@@ -110,12 +111,19 @@ async function createTicket({ subscriberId, subscriberName, subscriberPhone, sub
 }
 
 /**
- * Pick the technician with the fewest open jobs.
+ * Pick the technician for a ticket.
+ *
+ * The admin panel stores the technician status as 'available', 'busy' or
+ * 'off-duty'. The previous filter looked for 'active', which no technician
+ * ever has, so a ticket was never assigned.
+ *
+ * The subscriber's zone is preferred when the technician records one, and
+ * the least loaded technician wins the tie.
  */
-async function autoAssign(ticketId, category) {
+async function autoAssign(ticketId, category, subscriberZone = null) {
   const technicians = await db.query(
     `SELECT id, name, status, raw_data FROM technicians
-      WHERE COALESCE(status, 'active') = 'active'
+      WHERE COALESCE(status, 'available') IN ('available', 'busy')
       ORDER BY id`,
   );
   if (technicians.rows.length === 0) return null;
@@ -129,16 +137,33 @@ async function autoAssign(ticketId, category) {
   );
   const loadMap = new Map(load.rows.map((row) => [row.assigned_to, row.open_jobs]));
 
-  let best = null;
-  let bestLoad = Infinity;
-  for (const technician of technicians.rows) {
-    const current = loadMap.get(technician.id) || 0;
-    if (current < bestLoad) {
-      best = technician;
-      bestLoad = current;
-    }
-  }
-  return best;
+  const zone = subscriberZone ? String(subscriberZone).toLowerCase() : null;
+
+  const candidates = technicians.rows.map((technician) => {
+    const raw = technician.raw_data || {};
+    const technicianZone = raw.zone ? String(raw.zone).toLowerCase() : null;
+    const skills = Array.isArray(raw.skills) ? raw.skills.map((s) => String(s).toLowerCase()) : [];
+    const categoryMatch = category && skills.length > 0
+      ? skills.includes(String(category).toLowerCase())
+      : false;
+
+    return {
+      technician,
+      openJobs: loadMap.get(technician.id) || 0,
+      // A technician in the same region comes first.
+      zoneMatch: Boolean(zone && technicianZone && technicianZone === zone),
+      categoryMatch,
+    };
+  });
+
+  candidates.sort((a, b) => {
+    if (a.zoneMatch !== b.zoneMatch) return a.zoneMatch ? -1 : 1;
+    if (a.categoryMatch !== b.categoryMatch) return a.categoryMatch ? -1 : 1;
+    if (a.openJobs !== b.openJobs) return a.openJobs - b.openJobs;
+    return a.technician.id.localeCompare(b.technician.id);
+  });
+
+  return candidates[0].technician;
 }
 
 /**
@@ -222,14 +247,20 @@ async function updateStatus(ticketId, status, actor = {}) {
   const resolvedAt = normalized === 'resolved' ? now : details?.resolved_at || null;
 
   await db.transaction(async (client) => {
-    await client.query('UPDATE tickets SET status = $2, updated_at = NOW() WHERE id = $1', [
-      ticketId,
-      normalized,
-    ]);
+    // The status is mirrored into raw_data: the legacy admin store rebuilds
+    // the tickets table from raw_data, so a mismatch there would undo it.
+    await client.query(
+      `UPDATE tickets
+          SET status = $2::text,
+              raw_data = COALESCE(raw_data, '{}'::jsonb) || jsonb_build_object('status', $2::text),
+              updated_at = NOW()
+        WHERE id = $1`,
+      [ticketId, normalized],
+    );
     await client.query(
       `UPDATE ticket_details
-          SET first_response_at = COALESCE($2, first_response_at),
-              resolved_at = $3,
+          SET first_response_at = COALESCE($2::timestamptz, first_response_at),
+              resolved_at = $3::timestamptz,
               updated_at = NOW()
         WHERE ticket_id = $1`,
       [ticketId, firstResponseAt, resolvedAt],

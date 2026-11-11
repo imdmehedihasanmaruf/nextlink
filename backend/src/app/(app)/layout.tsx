@@ -18,6 +18,21 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
     }
   }, [isAuthenticated, hasHydrated, router]);
 
+  // Until the persisted session has been rehydrated the auth state is
+  // unknown, so nothing is rendered. This prevents a flash of the console and
+  // avoids a server/client markup mismatch.
+  if (!hasHydrated) {
+    return (
+      <div className="flex h-screen items-center justify-center bg-background">
+        <div className="h-8 w-8 animate-spin rounded-full border-2 border-primary border-t-transparent" />
+      </div>
+    );
+  }
+
+  if (!isAuthenticated) {
+    return null;
+  }
+
   return (
     <div className="flex h-screen overflow-hidden bg-background">
       <Sidebar mobileOpen={mobileOpen} onMobileClose={() => setMobileOpen(false)} />

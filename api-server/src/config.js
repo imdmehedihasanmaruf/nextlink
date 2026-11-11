@@ -97,6 +97,13 @@ const config = {
     dueDay: int(process.env.BILLING_DUE_DAY, 10),
     lateGraceDays: int(process.env.BILLING_LATE_GRACE_DAYS, 5),
     suspendAfterDays: int(process.env.BILLING_SUSPEND_AFTER_DAYS, 10),
+    // The payment window is enforced on the server. It can be switched off
+    // for operators who accept payments at any time.
+    paymentWindow: {
+      enabled: bool(process.env.BILLING_PAYMENT_WINDOW_ENABLED, true),
+      startDay: int(process.env.BILLING_PAYMENT_WINDOW_START, 5),
+      endDay: int(process.env.BILLING_PAYMENT_WINDOW_END, 10),
+    },
     // Currency used for generated invoices. The existing `packages.price`
     // values are kept untouched, so this only labels the amount.
     currency: process.env.BILLING_CURRENCY || 'BDT',
@@ -122,6 +129,46 @@ const config = {
 
 if (!fs.existsSync(config.billing.pdfDir)) {
   fs.mkdirSync(config.billing.pdfDir, { recursive: true });
+}
+
+/**
+ * Refuse to start a production instance with an unsafe configuration.
+ *
+ * A default JWT secret would let anybody forge an admin token, and the mock
+ * modes would accept payments that were never made.
+ */
+if (config.env === 'production') {
+  const problems = [];
+
+  if (
+    !process.env.JWT_SECRET ||
+    config.jwt.secret === 'nextlink-dev-secret-change-me' ||
+    config.jwt.secret.length < 24
+  ) {
+    problems.push('JWT_SECRET must be set to a long random value (at least 24 characters)');
+  }
+
+  if (config.payments.mode !== 'live') {
+    problems.push('PAYMENT_MODE must be "live" — the mock gateway accepts payments that were never made');
+  }
+
+  if (config.mikrotik.mode !== 'live') {
+    problems.push('MIKROTIK_MODE must be "live" — the simulator never touches a real router');
+  }
+
+  if (config.sms.mode !== 'live') {
+    problems.push('SMS_MODE must be "live" — the mock mode only writes to the log');
+  }
+
+  if (config.cors.origins.includes('*')) {
+    problems.push('CORS_ORIGINS must list the real frontends instead of "*"');
+  }
+
+  if (problems.length > 0) {
+    throw new Error(
+      `Refusing to start in production with an unsafe configuration:\n  - ${problems.join('\n  - ')}`
+    );
+  }
 }
 
 module.exports = config;

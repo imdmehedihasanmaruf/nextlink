@@ -4,6 +4,7 @@ const config = require('../../config');
 const logger = require('../../lib/logger');
 const db = require('../../lib/db');
 const utils = require('../../lib/utils');
+const dates = require('../../lib/dates');
 const mikrotik = require('../mikrotik');
 const sms = require('../sms');
 
@@ -81,7 +82,7 @@ async function ensureBillingProfile(subscriber, packagePrice) {
       subscriber.packageId || null,
       Number(packagePrice || 0),
       config.billing.currency,
-      utils.addDays(new Date(), config.billing.dueDay),
+      dates.addDays(new Date(), config.billing.dueDay),
       subscriber.status === 'active' ? 'active' : 'inactive',
       JSON.stringify({ createdBy: 'billing-engine' }),
     ],
@@ -121,6 +122,10 @@ async function generateInvoice({ subscriber, period, amount, dueDate }) {
     amount: Number(amount),
     currency: config.billing.currency,
     dueDate,
+    // The legacy admin store rewrites the whole invoices table from
+    // `raw_data`, so the status has to live in both places. Without this the
+    // admin panel would reset every invoice to "unpaid" on the next save.
+    status: 'unpaid',
     generatedBy: 'billing-engine',
     generatedAt: utils.nowIso(),
     lateFee: 0,
@@ -130,12 +135,14 @@ async function generateInvoice({ subscriber, period, amount, dueDate }) {
   const inserted = await db.queryOne(
     `INSERT INTO invoices (id, subscriber_id, amount, status, due_date, raw_data, created_at, updated_at)
      VALUES ($1, $2, $3, 'unpaid', $4, $5, NOW(), NOW())
-     ON CONFLICT (id) DO NOTHING
+     ON CONFLICT (id) DO UPDATE SET
+        raw_data = invoices.raw_data || EXCLUDED.raw_data,
+        updated_at = NOW()
      RETURNING *`,
     [invoiceId, subscriber.id, Number(amount), dueDate, JSON.stringify(rawData)],
   );
 
-  if (inserted) {
+  if (inserted && !existing) {
     await db.query(
       `INSERT INTO billing_events (subscriber_id, invoice_id, event, amount, message)
        VALUES ($1, $2, 'invoice_generated', $3, $4)`,
@@ -147,7 +154,7 @@ async function generateInvoice({ subscriber, period, amount, dueDate }) {
     );
   }
 
-  return { invoice: inserted || existing, created: Boolean(inserted) };
+  return { invoice: inserted || existing, created: Boolean(inserted && !existing) };
 }
 
 /**
@@ -157,7 +164,7 @@ async function generateInvoice({ subscriber, period, amount, dueDate }) {
  * @param {string} [options.period]  Period key, defaults to the current month.
  * @param {boolean} [options.dryRun]  Generate nothing, only report what would happen.
  */
-async function runMonthlyCycle({ period = utils.periodKey(), dryRun = false } = {}) {
+async function runMonthlyCycle({ period = dates.currentPeriodKey(), dryRun = false } = {}) {
   const cycleId = `CYCLE-${period.replace('-', '')}`;
   const startedAt = new Date();
 
@@ -292,7 +299,7 @@ async function runMonthlyCycle({ period = utils.periodKey(), dryRun = false } = 
  * List invoices that are overdue and eligible for auto-suspension.
  */
 async function findSuspendableInvoices() {
-  const graceCutoff = utils.addDays(new Date(), -config.billing.lateGraceDays);
+  const graceCutoff = dates.addDays(new Date(), -config.billing.lateGraceDays);
   const result = await db.query(
     `SELECT * FROM invoices
       WHERE status = 'unpaid'
@@ -341,7 +348,16 @@ async function autoSuspendOverdue() {
     });
 
     if (routerResult.success) {
-      await db.query(`UPDATE subscribers SET status = 'suspended', updated_at = NOW() WHERE id = $1`, [subscriber.id]);
+      // The legacy admin store rewrites the subscribers table from raw_data,
+      // so the status has to be kept in both places.
+      await db.query(
+        `UPDATE subscribers
+            SET status = 'suspended',
+                raw_data = COALESCE(raw_data, '{}'::jsonb) || '{"status":"suspended"}'::jsonb,
+                updated_at = NOW()
+          WHERE id = $1`,
+        [subscriber.id],
+      );
       await db.query(
         `UPDATE subscriber_billing SET status = 'suspended', updated_at = NOW() WHERE subscriber_id = $1`,
         [subscriber.id],
@@ -407,17 +423,37 @@ async function applyPayment({ invoiceId, transactionId, gateway, amount, raw = {
     return { invoice, alreadyPaid: true };
   }
 
+  // The settled amount has to cover the invoice. A partial payment must not
+  // mark the invoice as paid.
+  const expectedAmount = Number(invoice.amount || 0);
+  const settledAmount = Number(amount || expectedAmount || 0);
+  if (expectedAmount > 0 && settledAmount + 0.01 < expectedAmount) {
+    const error = new Error(
+      `The settled amount (${settledAmount}) does not cover the invoice (${expectedAmount})`,
+    );
+    error.code = 'AMOUNT_MISMATCH';
+    throw error;
+  }
+
   const paidAt = utils.nowIso();
+
+  // The status lives in the column *and* in raw_data: the legacy admin store
+  // rewrites the whole table from raw_data, so a mismatch there would undo
+  // this payment on the next admin save.
   await db.query(
-    `UPDATE invoices SET status = 'paid', updated_at = NOW(), raw_data = $2 WHERE id = $1`,
+    `UPDATE invoices
+        SET status = 'paid',
+            updated_at = NOW(),
+            raw_data = COALESCE(raw_data, '{}'::jsonb) || $2::jsonb
+      WHERE id = $1`,
     [
       invoiceId,
       JSON.stringify({
-        ...(invoice.raw_data || {}),
+        status: 'paid',
         paidAt,
         paidVia: gateway,
         transactionId,
-        paidAmount: Number(amount || invoice.amount),
+        paidAmount: settledAmount,
       }),
     ],
   );
@@ -426,41 +462,83 @@ async function applyPayment({ invoiceId, transactionId, gateway, amount, raw = {
   const subscriber = subscriberRow ? readSubscriber(subscriberRow) : null;
 
   if (subscriber) {
-    const username = subscriber.pppoeUsername || subscriber.id;
-    const routerResult = await mikrotik.restoreSubscriber({
-      subscriberId: subscriber.id,
-      username,
-    });
+    // The service is only restored when the account has no other unpaid
+    // invoice. Otherwise the customer would be cut again the next morning.
+    const outstanding = await db.queryOne(
+      `SELECT COUNT(*)::int AS count, COALESCE(SUM(amount), 0) AS total
+         FROM invoices
+        WHERE subscriber_id = $1 AND status <> 'paid'`,
+      [subscriber.id],
+    );
+    const hasOutstanding = Number(outstanding?.count || 0) > 0;
 
-    if (routerResult.success && subscriber.status !== 'active') {
-      await db.query(`UPDATE subscribers SET status = 'active', updated_at = NOW() WHERE id = $1`, [subscriber.id]);
-      await db.query(
-        `UPDATE subscriber_billing SET status = 'active', updated_at = NOW() WHERE subscriber_id = $1`,
-        [subscriber.id],
-      );
+    if (!hasOutstanding) {
+      const username = subscriber.pppoeUsername || subscriber.id;
+      const routerResult = await mikrotik.restoreSubscriber({
+        subscriberId: subscriber.id,
+        username,
+      });
+
+      if (routerResult.success && subscriber.status !== 'active') {
+        await db.query(
+          `UPDATE subscribers
+              SET status = 'active',
+                  raw_data = COALESCE(raw_data, '{}'::jsonb) || '{"status":"active"}'::jsonb,
+                  updated_at = NOW()
+            WHERE id = $1`,
+          [subscriber.id],
+        );
+        await db.query(
+          `UPDATE subscriber_billing SET status = 'active', updated_at = NOW() WHERE subscriber_id = $1`,
+          [subscriber.id],
+        );
+        await db.query(
+          `INSERT INTO billing_events (subscriber_id, invoice_id, event, amount, message)
+           VALUES ($1, $2, 'service_restored', $3, $4)`,
+          [subscriber.id, invoiceId, settledAmount, 'Service restored after payment'],
+        );
+
+        await sms.sendTemplate(
+          'service_restored',
+          {
+            name: subscriber.name || 'Customer',
+            phone: subscriber.phone,
+            amount: utils.formatAmount(settledAmount),
+            invoiceId,
+          },
+          { subscriberId: subscriber.id },
+        );
+      }
+    } else {
       await db.query(
         `INSERT INTO billing_events (subscriber_id, invoice_id, event, amount, message)
-         VALUES ($1, $2, 'service_restored', $3, $4)`,
-        [subscriber.id, invoiceId, Number(amount || invoice.amount), 'Service restored after payment'],
-      );
-
-      await sms.sendTemplate(
-        'service_restored',
-        {
-          name: subscriber.name || 'Customer',
-          phone: subscriber.phone,
-          amount: utils.formatAmount(amount || invoice.amount),
+         VALUES ($1, $2, 'payment_received_outstanding', $3, $4)`,
+        [
+          subscriber.id,
           invoiceId,
-        },
-        { subscriberId: subscriber.id },
+          settledAmount,
+          `Payment received, but ${outstanding.count} invoice(s) worth ${utils.formatAmount(outstanding.total)} are still unpaid — the service stays suspended`,
+        ],
       );
     }
+
+    // The receipt is always sent, even when the service stays suspended.
+    await sms.sendTemplate(
+      'payment_success',
+      {
+        name: subscriber.name || 'Customer',
+        phone: subscriber.phone,
+        amount: utils.formatAmount(settledAmount),
+        invoiceId,
+      },
+      { subscriberId: subscriber.id },
+    );
   }
 
   await db.query(
     `INSERT INTO billing_events (subscriber_id, invoice_id, event, amount, message)
      VALUES ($1, $2, 'payment_received', $3, $4)`,
-    [invoice.subscriber_id, invoiceId, Number(amount || invoice.amount), `Payment via ${gateway} (${transactionId})`],
+    [invoice.subscriber_id, invoiceId, settledAmount, `Payment via ${gateway} (${transactionId})`],
   );
 
   const updated = await db.queryOne('SELECT * FROM invoices WHERE id = $1', [invoiceId]);

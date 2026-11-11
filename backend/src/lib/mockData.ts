@@ -83,6 +83,8 @@ export interface Invoice {
   dueDate: string;
   paidDate?: string;
   month: string;
+  /** The full record as stored by the billing service. */
+  raw_data?: Record<string, any>;
 }
 
 export interface Ticket {

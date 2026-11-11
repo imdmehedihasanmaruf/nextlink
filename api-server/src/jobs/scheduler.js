@@ -5,7 +5,7 @@ const config = require('../config');
 const logger = require('../lib/logger');
 const queue = require('../lib/queue');
 const billing = require('../services/billing/engine');
-const utils = require('../lib/utils');
+const dates = require('../lib/dates');
 
 /**
  * Scheduled jobs.
@@ -26,7 +26,11 @@ function start() {
   const monthly = cron.schedule(
     '0 2 1 * *',
     async () => {
-      const period = utils.periodKey(new Date(Date.now() + 30 * 24 * 3600 * 1000));
+      // The period is the month that is being billed. It has to be computed
+      // in the billing timezone, without any offset — the previous code
+      // added 30 days and therefore billed the wrong month for most of the
+      // year.
+      const period = dates.currentPeriodKey();
       logger.info('scheduler: monthly billing cycle triggered', { period });
       await queue.enqueue('billing.cycle.run', { period });
     },
@@ -46,7 +50,36 @@ function start() {
   scheduled = [monthly, overdue];
   logger.info('scheduler started', { jobs: scheduled.length, timezone: config.billing.timezone });
 
+  // Catch up on a cycle that was missed because the API was down when the
+  // cron fired. Without this the month would simply never be invoiced.
+  catchUpMissedCycle().catch((error) => {
+    logger.warn('scheduler: catch-up check failed', { message: error.message });
+  });
+
   return scheduled;
+}
+
+/**
+ * Compare the last completed cycle with the current period and enqueue the
+ * difference.
+ */
+async function catchUpMissedCycle() {
+  const db = require('../lib/db');
+  const currentPeriod = dates.currentPeriodKey();
+
+  const last = await db.queryOne(
+    `SELECT period FROM billing_cycles WHERE status = 'completed' ORDER BY period DESC LIMIT 1`,
+  );
+  const lastPeriod = last?.period || null;
+
+  if (lastPeriod === currentPeriod) return;
+
+  logger.info('scheduler: checking for a missed billing cycle', {
+    currentPeriod,
+    lastPeriod: lastPeriod || 'none',
+  });
+
+  await queue.enqueue('billing.cycle.run', { period: currentPeriod });
 }
 
 function stop() {

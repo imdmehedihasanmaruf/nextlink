@@ -159,6 +159,31 @@ function requireRole(...roles) {
 }
 
 /**
+ * Express middleware: allow a subscriber to act on their own data, and staff
+ * only when their role is listed.
+ *
+ * Used by the routes that subscribers and staff share, where the subscriber
+ * is confined to their own records and the staff side is role checked.
+ *
+ * @param {string[]} staffRoles  roles that may act on other accounts
+ */
+function requireSelfOrRole(...staffRoles) {
+  const allowed = staffRoles.flat();
+  return (req, res, next) => {
+    if (!req.user) {
+      return res.status(401).json({ success: false, error: 'Authentication required' });
+    }
+    if (req.user.role === ROLES.SUPER_ADMIN) return next();
+    if (req.user.role === ROLES.SUBSCRIBER) return next();
+    if (allowed.includes(req.user.role)) return next();
+    return res.status(403).json({
+      success: false,
+      error: `This action requires one of the following roles: ${allowed.join(', ')}`,
+    });
+  };
+}
+
+/**
  * Express middleware: require a specific permission.
  */
 function requirePermission(permission) {
@@ -227,6 +252,7 @@ module.exports = {
   authenticateStaff,
   requireAuth,
   requireRole,
+  requireSelfOrRole,
   requirePermission,
   optionalAuth,
   audit,

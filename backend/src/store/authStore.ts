@@ -25,15 +25,11 @@ interface AuthState {
 export const useAuthStore = create<AuthState>()(
   persist(
     (set) => ({
-      user: {
-        id: 'ADM-001',
-        name: 'Global NOC Director',
-        email: 'admin@nextlink.global',
-        role: 'super_admin',
-        phone: '+1 (800) 550-0001',
-        department: 'Global Operations & Routing',
-      },
-      isAuthenticated: true,
+      // The console starts signed out. A visitor must authenticate before any
+      // admin page is reachable — the initial state used to be an
+      // authenticated super admin, which left the whole panel open.
+      user: null,
+      isAuthenticated: false,
       hasHydrated: false,
       login: (user) => set({ user, isAuthenticated: true }),
       updateUser: (data) =>

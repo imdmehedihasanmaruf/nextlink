@@ -180,11 +180,15 @@ export async function saveAdminSection(type: string, data: any): Promise<void> {
         );
       }
     } else if (type === 'subscribers' && Array.isArray(data)) {
-      await p.query('DELETE FROM subscribers');
+      // The billing engine also writes to the subscribers table (it
+      // suspends and restores accounts), so this is an upsert instead of a
+      // delete-and-reinsert. A full rewrite would resurrect the suspended
+      // accounts and reset the creation date of every subscriber.
+      const subscriberIds = data.map((item: any) => String(item.id));
       for (const item of data) {
         await p.query(
-          `INSERT INTO subscribers (id, name, email, phone, package_id, status, raw_data, updated_at)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, NOW())
+          `INSERT INTO subscribers (id, name, email, phone, package_id, status, raw_data, created_at, updated_at)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, COALESCE((SELECT created_at FROM subscribers WHERE id = $1::varchar), NOW()), NOW())
            ON CONFLICT (id) DO UPDATE SET
              name = EXCLUDED.name,
              email = EXCLUDED.email,
@@ -204,12 +208,18 @@ export async function saveAdminSection(type: string, data: any): Promise<void> {
           ]
         );
       }
+      // The subscribers are not deleted here either — the billing engine
+      // suspends and restores accounts, and the admin panel may hold a
+      // partial list.
     } else if (type === 'invoices' && Array.isArray(data)) {
-      await p.query('DELETE FROM invoices');
+      // The invoices table is also written by the billing engine, so this is
+      // an upsert instead of a delete-and-reinsert. A full rewrite would
+      // reset every paid invoice to "unpaid" and reset the creation date.
+      const ids = data.map((item: any) => String(item.id));
       for (const item of data) {
         await p.query(
-          `INSERT INTO invoices (id, subscriber_id, amount, status, due_date, raw_data, updated_at)
-           VALUES ($1, $2, $3, $4, $5, $6, NOW())
+          `INSERT INTO invoices (id, subscriber_id, amount, status, due_date, raw_data, created_at, updated_at)
+           VALUES ($1, $2, $3, $4, $5, $6, COALESCE((SELECT created_at FROM invoices WHERE id = $1::varchar), NOW()), NOW())
            ON CONFLICT (id) DO UPDATE SET
              subscriber_id = EXCLUDED.subscriber_id,
              amount = EXCLUDED.amount,
@@ -227,12 +237,16 @@ export async function saveAdminSection(type: string, data: any): Promise<void> {
           ]
         );
       }
+      // Nothing is deleted here. The billing engine owns the invoices and may
+      // hold rows the admin panel has not loaded yet, so removing the rows
+      // that are missing from the payload would drop real billing records.
+      // A deletion goes through the billing API instead.
     } else if (type === 'tickets' && Array.isArray(data)) {
-      await p.query('DELETE FROM tickets');
+      const ticketIds = data.map((item: any) => String(item.id));
       for (const item of data) {
         await p.query(
-          `INSERT INTO tickets (id, title, status, priority, raw_data, updated_at)
-           VALUES ($1, $2, $3, $4, $5, NOW())
+          `INSERT INTO tickets (id, title, status, priority, raw_data, created_at, updated_at)
+           VALUES ($1, $2, $3, $4, $5, COALESCE((SELECT created_at FROM tickets WHERE id = $1::varchar), NOW()), NOW())
            ON CONFLICT (id) DO UPDATE SET
              title = EXCLUDED.title,
              status = EXCLUDED.status,
@@ -248,6 +262,8 @@ export async function saveAdminSection(type: string, data: any): Promise<void> {
           ]
         );
       }
+      // A ticket that the admin panel removed is deleted through the CRM API,
+      // so the ticket details and the message thread stay consistent.
     } else if (type === 'technicians' && Array.isArray(data)) {
       await p.query('DELETE FROM technicians');
       for (const item of data) {
@@ -319,7 +335,11 @@ export async function saveAdminSection(type: string, data: any): Promise<void> {
       );
     }
   } catch (error) {
+    // The error is re-thrown so the caller can report the failure. Swallowing
+    // it made the admin panel show "Saved successfully" even when nothing was
+    // written.
     console.error(`[PostgreSQL] Error updating ${type}:`, error);
+    throw error;
   }
 }
 

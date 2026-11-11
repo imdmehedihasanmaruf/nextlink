@@ -3,11 +3,13 @@
 const express = require('express');
 const { z } = require('zod');
 const db = require('../lib/db');
+const config = require('../config');
 const logger = require('../lib/logger');
 const utils = require('../lib/utils');
+const dates = require('../lib/dates');
 const { asyncHandler } = require('../middleware/error');
 const { validate } = require('../middleware/validate');
-const { requireAuth, requireRole, ROLES, audit } = require('../middleware/auth');
+const { requireAuth, requireRole, requireSelfOrRole, ROLES, audit } = require('../middleware/auth');
 const billing = require('../services/billing/engine');
 const gateways = require('../services/payments/gateways');
 
@@ -18,6 +20,8 @@ const router = express.Router();
  * Staff may pass ?subscriberId= to inspect a specific account.
  */
 function resolveSubscriberId(req) {
+  // The request may be anonymous, so the principal is checked first.
+  if (!req.user) return null;
   if (req.user.type === 'subscriber') return req.user.subscriberId || req.user.id;
   return req.query.subscriberId ? String(req.query.subscriberId) : null;
 }
@@ -29,6 +33,7 @@ function resolveSubscriberId(req) {
 router.get(
   '/my-invoices',
   requireAuth,
+  requireSelfOrRole(ROLES.SUPER_ADMIN, ROLES.BILLING, ROLES.SUPPORT),
   asyncHandler(async (req, res) => {
     const subscriberId = resolveSubscriberId(req);
     if (!subscriberId) {
@@ -68,6 +73,7 @@ router.get(
 router.get(
   '/my-summary',
   requireAuth,
+  requireSelfOrRole(ROLES.SUPER_ADMIN, ROLES.BILLING, ROLES.SUPPORT),
   asyncHandler(async (req, res) => {
     const subscriberId = resolveSubscriberId(req);
     if (!subscriberId) {
@@ -128,6 +134,7 @@ router.get(
 router.post(
   '/pay',
   requireAuth,
+  requireSelfOrRole(ROLES.SUPER_ADMIN, ROLES.BILLING, ROLES.SUPPORT),
   validate({
     body: z.object({
       invoiceId: z.string().min(1, 'invoiceId is required'),
@@ -143,13 +150,31 @@ router.post(
       return res.status(404).json({ success: false, error: 'Invoice not found' });
     }
 
-    // A subscriber may only pay their own invoice.
+    // A subscriber may only pay their own invoice. Staff are limited by
+    // requireSelfOrRole to the roles that may act on other accounts.
     if (req.user.type === 'subscriber' && invoice.subscriber_id !== principalSubscriberId) {
       return res.status(403).json({ success: false, error: 'You can only pay your own invoices' });
     }
 
     if (invoice.status === 'paid') {
       return res.status(409).json({ success: false, error: 'This invoice has already been paid' });
+    }
+
+    // The payment window is enforced here, on the server. The portal also
+    // hides the button outside the window, but that is only a convenience —
+    // the rule has to hold regardless of what the client sends.
+    const window = config.billing.paymentWindow;
+    if (window.enabled) {
+      const day = dates.dayOfMonth();
+      if (day < window.startDay || day > window.endDay) {
+        return res.status(400).json({
+          success: false,
+          error: `Payments are only accepted between the ${window.startDay}th and the ${window.endDay}th of each month. Today is the ${day}th.`,
+          code: 'PAYMENT_WINDOW_CLOSED',
+          windowStart: window.startDay,
+          windowEnd: window.endDay,
+        });
+      }
     }
 
     const subscriber = await db.queryOne('SELECT * FROM subscribers WHERE id = $1', [invoice.subscriber_id]);
@@ -229,6 +254,7 @@ router.post(
 router.get(
   '/my-events',
   requireAuth,
+  requireSelfOrRole(ROLES.SUPER_ADMIN, ROLES.BILLING, ROLES.SUPPORT),
   asyncHandler(async (req, res) => {
     const subscriberId = resolveSubscriberId(req);
     if (!subscriberId) {

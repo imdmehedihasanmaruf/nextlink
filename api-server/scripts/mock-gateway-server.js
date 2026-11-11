@@ -102,12 +102,18 @@ const server = http.createServer(async (request, response) => {
     }
     const paymentId = `PAYID${crypto.randomBytes(8).toString('hex').toUpperCase()}`;
     const trxId = `TRX${crypto.randomBytes(8).toString('hex').toUpperCase()}`;
+    // bKash signs the callback with the app secret.
+    const signature = crypto
+      .createHmac('sha256', 'demo-app-secret')
+      .update(`${paymentId}${body.amount}`)
+      .digest('hex');
     transactions.set(paymentId, {
       gateway: 'bkash',
       trxID: trxId,
       paymentID: paymentId,
       amount: body.amount,
       status: 'Completed',
+      signature,
       merchantInvoiceNumber: body.merchantInvoiceNumber,
     });
     return json(response, 200, {
@@ -138,12 +144,17 @@ const server = http.createServer(async (request, response) => {
   if (path.startsWith('/bkash/checkout/')) {
     const paymentId = path.split('/').pop();
     const record = transactions.get(paymentId);
+    // The checkout page shows the signed callback values, exactly like the
+    // real bKash checkout redirects back with them.
     return response.end(
       `<!doctype html><html><body style="font-family:system-ui;padding:40px">
        <h2>bKash checkout</h2>
        <p>Invoice: ${record ? record.merchantInvoiceNumber : paymentId}</p>
        <p>Amount: BDT ${record ? record.amount : '—'}</p>
        <p>Transaction: ${record ? record.trxID : '—'}</p>
+       <p>paymentID: ${paymentId}</p>
+       <p>status: Completed</p>
+       <p>signature: ${record ? record.signature : ''}</p>
        </body></html>`
     );
   }

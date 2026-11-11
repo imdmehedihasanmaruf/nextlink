@@ -15,8 +15,6 @@ const logger = require('../../lib/logger');
  * "configured / not configured" flag.
  */
 
-const SECRET_KEYS = ['password', 'apiKey', 'appSecret', 'api_key', 'secret'];
-
 const DEFAULTS = {
   mikrotik: {
     mode: 'simulator',
@@ -105,6 +103,14 @@ async function setGroup(group, value) {
 }
 
 /**
+ * Every key whose value is a credential.
+ *
+ * The list is matched case-insensitively and by suffix, so a field such as
+ * "storePassword" or "sslcommerz_api_key" is masked as well.
+ */
+const SECRET_KEY_PATTERN = /pass(word)?$|secret|api_?key|token|credential/i;
+
+/**
  * Mask every secret value so the admin UI never receives the raw credential.
  */
 function maskSecrets(settings) {
@@ -112,10 +118,9 @@ function maskSecrets(settings) {
   const walk = (node) => {
     if (!node || typeof node !== 'object') return;
     for (const [key, value] of Object.entries(node)) {
-      if (SECRET_KEYS.includes(key) && typeof value === 'string') {
-        node[key] = value
-          ? `${value.slice(0, 2)}${'•'.repeat(Math.max(6, Math.min(12, value.length - 2)))}`
-          : '';
+      if (typeof value === 'string' && SECRET_KEY_PATTERN.test(key)) {
+        // The value is replaced completely — no prefix is leaked.
+        node[key] = value ? '•'.repeat(12) : '';
         node[`${key}Configured`] = Boolean(value);
       } else {
         walk(value);

@@ -16,6 +16,7 @@
  */
 
 const crypto = require('crypto');
+const { hmacSha256, safeEqual } = require('../../lib/utils');
 
 class GatewayError extends Error {
   constructor(message, code = 'PAYMENT_ERROR', details = null) {
@@ -82,6 +83,17 @@ class MockGateway {
       amount: body.amount,
       raw: body,
     };
+  }
+
+  /**
+   * The mock gateway has no signature to check, but the caller still gets a
+   * consistent answer for every gateway.
+   */
+  verifyWebhook(body) {
+    if (!body.transactionId && !body.trx_id && !body.transaction_id) {
+      return { verified: false, reason: 'the callback carries no transaction id' };
+    }
+    return { verified: true, reason: 'mock mode' };
   }
 }
 
@@ -189,6 +201,42 @@ class BkashGateway {
       raw: body,
     };
   }
+
+  /**
+   * Verify the callback really came from bKash.
+   *
+   * bKash signs the callback with the app secret. The signature covers the
+   * payment id and the amount, so a forged callback without the secret is
+   * rejected before anything is written.
+   */
+  verifyWebhook(body) {
+    // The mock gateway is only reachable when the platform runs in mock mode.
+    if (this.config.payments.mode !== 'live') {
+      return { verified: true, reason: 'mock mode' };
+    }
+
+    const secret = this.config.payments.bkash.appSecret;
+    const paymentId = body.paymentID || body.trxID;
+    const amount = body.amount;
+
+    if (!secret) {
+      return { verified: false, reason: 'BKASH_APP_SECRET is not configured' };
+    }
+    if (!paymentId) {
+      return { verified: false, reason: 'the callback carries no payment id' };
+    }
+
+    const provided = body.signature || body.sign;
+    if (!provided) {
+      return { verified: false, reason: 'the callback carries no signature' };
+    }
+
+    const expected = hmacSha256(secret, `${paymentId}${amount}`);
+    return {
+      verified: safeEqual(expected, String(provided)),
+      reason: safeEqual(expected, String(provided)) ? 'signature matches' : 'signature mismatch',
+    };
+  }
 }
 
 /**
@@ -282,6 +330,33 @@ class NagadGateway {
       raw: body,
     };
   }
+
+  /**
+   * Nagad does not sign its callback, so the transaction is confirmed with
+   * the gateway itself before the invoice is settled.
+   */
+  async verifyWebhook(body) {
+    if (this.config.payments.mode !== 'live') {
+      return { verified: true, reason: 'mock mode' };
+    }
+
+    const transactionId = body.transactionId;
+    if (!transactionId) {
+      return { verified: false, reason: 'the callback carries no transaction id' };
+    }
+
+    try {
+      const result = await this.verifyPayment({ transactionId });
+      return {
+        verified: result.status === 'success',
+        reason: `gateway reports ${result.status}`,
+        amount: result.amount,
+        transactionId: result.transactionId,
+      };
+    } catch (error) {
+      return { verified: false, reason: `the gateway could not be reached: ${error.message}` };
+    }
+  }
 }
 
 /**
@@ -366,6 +441,33 @@ class SslCommerzGateway {
       raw: body,
     };
   }
+
+  /**
+   * SSLCommerz validates the transaction server side; the callback itself is
+   * only trusted after the validation endpoint confirms it.
+   */
+  async verifyWebhook(body) {
+    if (this.config.payments.mode !== 'live') {
+      return { verified: true, reason: 'mock mode' };
+    }
+
+    const valId = body.val_id || body.sessionkey;
+    if (!valId) {
+      return { verified: false, reason: 'the callback carries no validation id' };
+    }
+
+    try {
+      const result = await this.verifyPayment({ transactionId: valId, payload: body });
+      return {
+        verified: result.status === 'success',
+        reason: `the validator reports ${result.status}`,
+        amount: result.amount,
+        transactionId: result.transactionId,
+      };
+    } catch (error) {
+      return { verified: false, reason: `the validator could not be reached: ${error.message}` };
+    }
+  }
 }
 
 /**
@@ -446,6 +548,32 @@ class RocketGateway {
       amount: Number(body.amount || 0),
       raw: body,
     };
+  }
+
+  /**
+   * Rocket is confirmed by asking the gateway about the transaction.
+   */
+  async verifyWebhook(body) {
+    if (this.config.payments.mode !== 'live') {
+      return { verified: true, reason: 'mock mode' };
+    }
+
+    const transactionId = body.transaction_id || body.transactionId;
+    if (!transactionId) {
+      return { verified: false, reason: 'the callback carries no transaction id' };
+    }
+
+    try {
+      const result = await this.verifyPayment({ transactionId });
+      return {
+        verified: result.status === 'success',
+        reason: `the gateway reports ${result.status}`,
+        amount: result.amount,
+        transactionId: result.transactionId,
+      };
+    } catch (error) {
+      return { verified: false, reason: `the gateway could not be reached: ${error.message}` };
+    }
   }
 }
 

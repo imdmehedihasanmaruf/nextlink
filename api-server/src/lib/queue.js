@@ -31,6 +31,13 @@ let failed = 0;
 /**
  * Try to connect to Redis. Failure is not fatal — we fall back to memory.
  */
+/**
+ * Hide the password in a Redis URL before it is logged.
+ */
+function redactUrl(url) {
+  return String(url || '').replace(/\/\/([^:@/]+):([^@/]+)@/, '//$1:***@');
+}
+
 async function init() {
   if (!config.redis.enabled) {
     logger.info('queue: using in-process queue (REDIS_ENABLED=false)');
@@ -57,7 +64,7 @@ async function init() {
     await redisClient.connect();
     await redisClient.ping();
     useRedis = true;
-    logger.info('queue: connected to redis', { url: config.redis.url });
+    logger.info('queue: connected to redis', { url: redactUrl(config.redis.url) });
     return { mode: 'redis' };
   } catch (error) {
     logger.warn('queue: redis unavailable, using in-process queue', { message: error.message });

@@ -133,23 +133,27 @@ async function run() {
   const noAuth = await api('/api/portal/my-invoices');
   assert(noAuth.status === 401, 'portal requires authentication', noAuth.body);
 
-  // Pay an own invoice (if one is unpaid) through the gateway.
-  let ownUnpaid = mine.body.invoices.find((inv) => inv.status !== 'paid');
+  // Pay an own invoice through the gateway. A fresh invoice is generated for
+  // a dedicated period so the check always runs.
+  const ownPeriod = '2019-03';
 
-  // If everything is already settled, bill an old period so a fresh unpaid
-  // invoice exists for this subscriber and the test stays repeatable.
-  if (!ownUnpaid) {
-    console.log('  (no unpaid invoice — generating one via the billing cycle)');
-    const cycle = await api('/api/billing/cycle/run', {
-      method: 'POST',
-      token: staffToken,
-      body: { period: '2019-03' },
-    });
-    assert(cycle.status === 200, 'backdated billing cycle ran', cycle.body);
-
-    const refreshed = await api('/api/portal/my-invoices', { token });
-    ownUnpaid = (refreshed.body.invoices || []).find((inv) => inv.status !== 'paid');
+  const listForOwn = await api('/api/billing/invoices?limit=200', { token: staffToken });
+  for (const leftover of listForOwn.body.invoices.filter((i) => i.raw_data?.period === ownPeriod)) {
+    await api(`/api/billing/invoices/${leftover.id}`, { method: 'DELETE', token: staffToken });
   }
+
+  const ownCycle = await api('/api/billing/cycle/run', {
+    method: 'POST',
+    token: staffToken,
+    body: { period: ownPeriod },
+  });
+  assert(ownCycle.status === 200, 'billing cycle ran for the payment test', ownCycle.body);
+
+  const ownInvoices = await api('/api/portal/my-invoices', { token });
+  const ownUnpaid = (ownInvoices.body.invoices || []).find(
+    (inv) => inv.raw_data?.period === ownPeriod && inv.status !== 'paid',
+  );
+  assert(Boolean(ownUnpaid), 'an unpaid invoice is available for the payment test', ownUnpaid?.id);
 
   if (ownUnpaid) {
     const pay = await api('/api/portal/pay', {
@@ -167,8 +171,6 @@ async function run() {
     const after = await api('/api/portal/my-invoices', { token });
     const settled = after.body.invoices.find((inv) => inv.id === ownUnpaid.id);
     assert(settled && settled.status === 'paid', 'invoice settled after gateway callback', settled?.status);
-  } else {
-    console.log('  SKIP  subscriber has no unpaid invoice to pay');
   }
 
   // Restore the invoice to unpaid so the test stays repeatable.

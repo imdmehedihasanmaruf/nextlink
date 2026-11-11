@@ -11,6 +11,7 @@ import { Badge } from '@/components/ui/badge';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { type Invoice } from '@/lib/mockData';
 import { formatDate } from '@/lib/utils';
+import { apiPost, openPdf } from '@/lib/apiClient';
 import { useAdminDataStore } from '@/store/adminDataStore';
 
 export default function BillingPage() {
@@ -22,17 +23,47 @@ export default function BillingPage() {
   }, [fetchData]);
 
   const handleMarkPaid = async (id: string) => {
-    await updateInvoiceStatus(id, 'paid');
-    toast.success('Payment marked as paid & synced with MikroTik router');
+    try {
+      await updateInvoiceStatus(id, 'paid');
+      toast.success('Payment marked as paid');
+    } catch (error: any) {
+      toast.error(error?.message || 'The invoice could not be updated');
+    }
   };
 
   const handleMarkUnpaid = async (id: string) => {
-    await updateInvoiceStatus(id, 'unpaid');
-    toast.success('Payment marked as unpaid');
+    try {
+      await updateInvoiceStatus(id, 'unpaid');
+      toast.success('Payment marked as unpaid');
+    } catch (error: any) {
+      toast.error(error?.message || 'The invoice could not be updated');
+    }
   };
 
-  const handleSendReminder = (inv: Invoice) => {
-    toast.success(`SMS reminder sent to ${inv.phone}`);
+  /**
+   * Send a real SMS reminder through the billing service. The phone number
+   * comes from the invoice record.
+   */
+  const handleSendReminder = async (inv: Invoice) => {
+    const phone = inv.phone || inv.raw_data?.subscriberPhone;
+    if (!phone) {
+      toast.error('This invoice has no phone number to remind');
+      return;
+    }
+    try {
+      const result = await apiPost('/api/sms/send', {
+        phone,
+        body: `Dear ${inv.subscriberName || 'customer'}, your NextLink bill of ${inv.amount} for invoice ${inv.id} is due on ${inv.dueDate}. Please pay through the client portal. Thank you.`,
+        subscriberId: inv.subscriberId,
+      });
+      if (result.success) {
+        toast.success(`SMS reminder sent to ${phone}`);
+      } else {
+        toast.error(result.error || 'The reminder could not be sent');
+      }
+    } catch (error: any) {
+      toast.error(error?.message || 'The reminder could not be sent');
+    }
   };
 
   const filtered = invoices.filter(inv => {
@@ -107,7 +138,16 @@ export default function BillingPage() {
                 <Send className="h-3.5 w-3.5 text-blue-500" />
               </Button>
             )}
-            <Button size="sm" variant="ghost" onClick={() => toast.success('Downloading Invoice PDF...')} className="h-8 w-8 p-0" title="PDF">
+            <Button
+              size="sm"
+              variant="ghost"
+              onClick={async () => {
+                const opened = await openPdf(`/api/billing/invoices/${inv.id}/pdf`);
+                if (!opened) toast.error('The invoice PDF could not be opened');
+              }}
+              className="h-8 w-8 p-0"
+              title="PDF"
+            >
               <Download className="h-3.5 w-3.5" />
             </Button>
             <Button 

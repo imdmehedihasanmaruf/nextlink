@@ -127,7 +127,7 @@ router.patch(
 router.get(
   '/:id/document',
   requireAuth,
-  requireRole(ROLES.SUPER_ADMIN, ROLES.BILLING),
+  requireRole(ROLES.SUPER_ADMIN),
   asyncHandler(async (req, res) => {
     const request = await db.queryOne(
       'SELECT id_document_path FROM connection_requests WHERE id = $1',

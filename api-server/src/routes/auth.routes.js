@@ -188,7 +188,7 @@ router.post(
 router.post(
   '/admin/reset-password',
   requireAuth,
-  requireRole(ROLES.SUPER_ADMIN, ROLES.BILLING, ROLES.SUPPORT),
+  requireRole(ROLES.SUPER_ADMIN),
   validate({
     body: z.object({
       subscriberId: z.string().min(1, 'subscriberId is required'),
@@ -326,38 +326,6 @@ router.get(
           ? 'Plain-text passwords are migrated to bcrypt on the next successful login.'
           : 'All subscriber passwords are hashed.',
     });
-  }),
-);
-
-/**
- * POST /api/auth/subscriber-token
- * Issue a scoped JWT for a subscriber (used by the client portal).
- */
-router.post(
-  '/subscriber-token',
-  validate({
-    body: z.object({
-      subscriberId: z.string().min(1, 'subscriberId is required'),
-    }),
-  }),
-  asyncHandler(async (req, res) => {
-    const subscriber = await db.queryOne(
-      'SELECT id, name FROM subscribers WHERE id = $1',
-      [req.validatedBody.subscriberId],
-    );
-    if (!subscriber) {
-      return res.status(404).json({ success: false, error: 'Subscriber not found' });
-    }
-
-    const token = signToken({
-      id: subscriber.id,
-      name: subscriber.name,
-      role: ROLES.SUBSCRIBER,
-      type: 'subscriber',
-      subscriberId: subscriber.id,
-    });
-
-    return res.json({ success: true, token, subscriber: { id: subscriber.id, name: subscriber.name } });
   }),
 );
 

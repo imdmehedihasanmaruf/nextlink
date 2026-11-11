@@ -109,8 +109,14 @@ router.post(
     });
 
     if (result.success) {
+      // The status is mirrored into raw_data because the legacy admin store
+      // rebuilds the subscribers table from raw_data.
       await db.query(
-        `UPDATE subscribers SET status = 'suspended', updated_at = NOW() WHERE id = $1`,
+        `UPDATE subscribers
+            SET status = 'suspended',
+                raw_data = COALESCE(raw_data, '{}'::jsonb) || '{"status":"suspended"}'::jsonb,
+                updated_at = NOW()
+          WHERE id = $1`,
         [body.subscriberId],
       );
       await db.query(
@@ -163,7 +169,11 @@ router.post(
 
     if (result.success) {
       await db.query(
-        `UPDATE subscribers SET status = 'active', updated_at = NOW() WHERE id = $1`,
+        `UPDATE subscribers
+            SET status = 'active',
+                raw_data = COALESCE(raw_data, '{}'::jsonb) || '{"status":"active"}'::jsonb,
+                updated_at = NOW()
+          WHERE id = $1`,
         [body.subscriberId],
       );
       await db.query(
@@ -274,7 +284,7 @@ router.post(
 router.post(
   '/provision',
   requireAuth,
-  requireRole(ROLES.SUPER_ADMIN, ROLES.BILLING),
+  requireRole(ROLES.SUPER_ADMIN, ROLES.SUPPORT, ROLES.TECHNICIAN),
   validate({
     body: z.object({
       subscriberId: z.string().min(1, 'subscriberId is required'),

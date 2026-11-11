@@ -23,6 +23,7 @@
 const { spawn } = require('child_process');
 const path = require('path');
 const fs = require('fs');
+const crypto = require('crypto');
 const os = require('os');
 
 const ROUTEROS_PORT = 18728;
@@ -164,7 +165,7 @@ async function run() {
     MIKROTIK_PASSWORD: 'nextlink',
     PAYMENT_MODE: 'live',
     BKASH_APP_KEY: 'bkash-app-key',
-    BKASH_APP_SECRET: 'bkash-app-secret',
+    BKASH_APP_SECRET: 'demo-app-secret',
     BKASH_USERNAME: 'bkash-user',
     BKASH_PASSWORD: 'bkash-pass',
     BKASH_BASE_URL: `http://127.0.0.1:${GATEWAY_PORT}`,
@@ -374,18 +375,29 @@ async function run() {
     });
     assert(initiate.status === 200, 'settlement payment initiated', initiate.body);
 
-    // bKash calls back with the payment id and the final status, exactly
-    // like the real gateway does.
+    // bKash calls back with the payment id, the final status and a signature
+    // over the payment id and the amount — exactly like the real gateway.
     const transactionId = initiate.body.gatewayTransactionId;
+    const signature = crypto
+      .createHmac('sha256', 'demo-app-secret')
+      .update(`${transactionId}${fresh.amount}`)
+      .digest('hex');
     const callback = await api(
-      `/api/payments/bkash/callback?paymentID=${transactionId}&status=Completed&amount=${fresh.amount}`,
+      `/api/payments/bkash/callback?paymentID=${transactionId}&status=Completed&amount=${fresh.amount}&signature=${signature}`,
       { method: 'POST' },
     );
     assert(
       callback.status === 200 && callback.body.success === true,
-      'the gateway callback settled the invoice',
+      'the signed gateway callback settled the invoice',
       callback.body,
     );
+
+    // A callback without a valid signature must be rejected.
+    const forged = await api(
+      `/api/payments/bkash/callback?paymentID=${transactionId}&status=Completed&amount=${fresh.amount}&signature=forged`,
+      { method: 'POST' },
+    );
+    assert(forged.status === 401, 'a forged callback is rejected', forged.body);
 
     const afterPay = await api(`/api/billing/invoices/${fresh.id}`, { token });
     assert(afterPay.body.invoice.status === 'paid', 'invoice marked paid in live mode', afterPay.body.invoice?.status);
