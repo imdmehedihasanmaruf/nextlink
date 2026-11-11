@@ -76,6 +76,15 @@ export default function DashboardPage() {
     fetchContent()
   }, [fetchContent])
 
+  // Redirect unauthenticated visitors to login — never render the portal
+  // empty/hydrated-less on a public URL. Use `hasHydrated` so the server
+  // render matches the first client render.
+  useEffect(() => {
+    if (hasHydrated && !isAuthenticated) {
+      router.push('/login')
+    }
+  }, [hasHydrated, isAuthenticated, router])
+
   // Mounted state for SSR Portal safety
   const [mounted, setMounted] = useState(false)
   useEffect(() => {

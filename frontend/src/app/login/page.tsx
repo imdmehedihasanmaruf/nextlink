@@ -73,10 +73,17 @@ function LoginForm() {
       // Successful login
       login(result.user)
 
-      // Obtain a token for the billing service so real invoice payment and
-      // auto-reconnection work. The billing service may be offline during
-      // local development — that must never block the portal sign-in.
-      subscriberLogin(data.username.trim(), data.password.trim()).catch(() => undefined)
+      // Await the billing-service token so the dashboard can call authenticated
+      // endpoints (referral, tier-1 billing, boost). Offline must not block portal
+      // sign-in — but wait up to a short time before giving up.
+      try {
+        await Promise.race([
+          subscriberLogin(data.username.trim(), data.password.trim()),
+          new Promise((resolve) => setTimeout(resolve, 5000)),
+        ]);
+      } catch {
+        // token may be absent — portal still works, billing routes will fail closed
+      }
 
       const target = redirectParam || '/dashboard'
       router.push(target)
