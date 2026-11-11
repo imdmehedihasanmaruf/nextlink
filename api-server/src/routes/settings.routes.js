@@ -5,6 +5,7 @@ const { z } = require('zod');
 const { asyncHandler } = require('../middleware/error');
 const { validate } = require('../middleware/validate');
 const { requireAuth, requireRole, ROLES, audit } = require('../middleware/auth');
+const db = require('../lib/db');
 const settings = require('../services/settings');
 
 const router = express.Router();
@@ -95,6 +96,81 @@ router.post(
       ip: req.ip,
     });
     res.json({ success: true, ...result });
+  }),
+);
+
+/**
+ * GET /api/settings/staff
+ * The live list of staff accounts (the table the login verifies against) —
+ * super_admin only. Anything the admin panel shows as "staff" must come
+ * from here; the admin panel's own admin_users table is a stale seed.
+ */
+router.get(
+  '/staff',
+  requireAuth,
+  requireRole(ROLES.SUPER_ADMIN),
+  asyncHandler(async (req, res) => {
+    const { rows } = await db.query(
+      `SELECT id, email, name, role, status, last_login_at, created_at
+         FROM api_users
+        ORDER BY created_at ASC`,
+    );
+    res.json({ success: true, staff: rows });
+  }),
+);
+
+/**
+ * DELETE /api/settings/staff/:id
+ * Remove a staff account — super_admin only. Refuses to remove the last
+ * super_admin or the caller's own account (lockout protection).
+ */
+router.delete(
+  '/staff/:id',
+  requireAuth,
+  requireRole(ROLES.SUPER_ADMIN),
+  asyncHandler(async (req, res) => {
+    const targetId = String(req.params.id);
+
+    if (targetId === String(req.user.id)) {
+      return res.status(400).json({
+        success: false,
+        error: 'You cannot delete the account you are signed in with.',
+      });
+    }
+
+    const target = await db.queryOne(
+      'SELECT id, email, role FROM api_users WHERE id = $1',
+      [targetId],
+    );
+    if (!target) {
+      return res.status(404).json({ success: false, error: 'Staff account not found.' });
+    }
+
+    if (String(target.role) === 'super_admin') {
+      const { rows } = await db.query(
+        `SELECT count(*)::int AS count FROM api_users WHERE role = 'super_admin' AND status = 'active'`,
+      );
+      if (rows[0].count <= 1) {
+        return res.status(400).json({
+          success: false,
+          error: 'Refusing to delete the last active super_admin.',
+        });
+      }
+    }
+
+    await db.query('DELETE FROM api_users WHERE id = $1', [targetId]);
+
+    await audit({
+      actorId: req.user.id,
+      actorRole: req.user.role,
+      action: 'settings.staff_deleted',
+      entityType: 'staff_user',
+      entityId: targetId,
+      details: { email: target.email },
+      ip: req.ip,
+    });
+
+    return res.json({ success: true, message: `Staff account ${target.email} deleted.` });
   }),
 );
 

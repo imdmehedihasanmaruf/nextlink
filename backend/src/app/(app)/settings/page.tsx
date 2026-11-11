@@ -15,7 +15,6 @@ import { Switch } from '@/components/ui/switch';
 import { Badge } from '@/components/ui/badge';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { useSettingsStore, SUPPORTED_LANGUAGES, ThemeColor, FontSize, ThemeMode, Language } from '@/store/settingsStore';
-import { mockAdminUsers } from '@/lib/mockData';
 import { apiGet, apiFetch, apiPost, getApiToken } from '@/lib/apiClient';
 
 const colors: { name: ThemeColor; label: string; bg: string }[] = [
@@ -25,6 +24,15 @@ const colors: { name: ThemeColor; label: string; bg: string }[] = [
   { name: 'red', label: 'Red', bg: 'bg-rose-500' },
   { name: 'orange', label: 'Orange', bg: 'bg-amber-500' },
 ];
+
+interface StaffUser {
+  id: string;
+  email: string;
+  name: string | null;
+  role: string;
+  status: string | null;
+  last_login_at: string | null;
+}
 
 interface SystemSettings {
   mikrotik: {
@@ -77,6 +85,10 @@ export default function SettingsPage() {
   const [hasToken, setHasToken] = useState(false);
   const [mikrotikPassword, setMikrotikPassword] = useState('');
   const [smsApiKey, setSmsApiKey] = useState('');
+  // The live staff accounts — the same table the login verifies against.
+  const [staff, setStaff] = useState<StaffUser[]>([]);
+  const [staffLoading, setStaffLoading] = useState(true);
+  const [deletingStaffId, setDeletingStaffId] = useState<string | null>(null);
 
   const loadSettings = useCallback(async () => {
     setLoading(true);
@@ -94,6 +106,36 @@ export default function SettingsPage() {
     setHasToken(Boolean(getApiToken()));
     loadSettings();
   }, [loadSettings]);
+
+  const loadStaff = useCallback(async () => {
+    setStaffLoading(true);
+    const result = await apiGet<{ staff: StaffUser[] }>('/api/settings/staff');
+    setStaffLoading(false);
+    if (result.success && Array.isArray(result.staff)) {
+      setStaff(result.staff);
+    } else {
+      setStaff([]);
+    }
+  }, []);
+
+  useEffect(() => {
+    loadStaff();
+  }, [loadStaff]);
+
+  const handleDeleteStaff = async (member: StaffUser) => {
+    if (!confirm(`Delete the staff account ${member.email}? This cannot be undone.`)) return;
+    setDeletingStaffId(member.id);
+    const result = await apiFetch<{ success: boolean; error?: string }>(`/api/settings/staff/${encodeURIComponent(member.id)}`, {
+      method: 'DELETE',
+    });
+    setDeletingStaffId(null);
+    if (!result.success) {
+      toast.error(result.error || 'The staff account could not be deleted.');
+      return;
+    }
+    toast.success(`Staff account ${member.email} deleted.`);
+    setStaff((prev) => prev.filter((item) => item.id !== member.id));
+  };
 
   const updateSystem = (patch: Partial<SystemSettings>) => {
     setSystem((prev) => (prev ? { ...prev, ...patch } : prev));
@@ -674,58 +716,71 @@ export default function SettingsPage() {
           )}
         </TabsContent>
 
-        {/* TAB 3: Admin User Roles (from SRS Matrix) */}
+        {/* TAB 3: Staff Accounts — the same api_users table the login uses */}
         <TabsContent value="users" className="space-y-6">
           <Card>
             <CardHeader className="flex flex-row items-center justify-between pb-2">
               <div>
                 <CardTitle className="text-base flex items-center gap-2">
                   <ShieldCheck className="h-5 w-5 text-primary" />
-                  Role & Permissions Matrix (SRS Section 2)
+                  Staff Accounts
                 </CardTitle>
                 <CardDescription>
-                  Configured administrative personnel and granular permission levels
+                  The live staff list, read from the server on every load. Role permissions are managed on the Role Management page.
                 </CardDescription>
               </div>
-              <div className="flex items-center gap-2">
-                <Link href="/roles">
-                  <Button size="sm" variant="outline" className="gap-1.5 h-8 text-xs">
-                    <Shield className="h-3.5 w-3.5" /> Manage & Create Roles
-                  </Button>
-                </Link>
-                <Button size="sm" onClick={() => toast.success(t('User roles and permissions matrix saved!', 'ইউজার রোলস ও পারমিশন ম্যাট্রিক্স সংরক্ষিত হয়েছে!'))} className="gap-1.5 h-8 text-xs">
-                  <Save className="h-3.5 w-3.5" /> Save Roles
+              <Link href="/roles">
+                <Button size="sm" variant="outline" className="gap-1.5 h-8 text-xs">
+                  <Shield className="h-3.5 w-3.5" /> Manage & Create Roles
                 </Button>
-              </div>
+              </Link>
             </CardHeader>
             <CardContent>
-              <div className="divide-y">
-                {mockAdminUsers.map((u) => (
-                  <div key={u.id} className="py-3 flex items-center justify-between">
-                    <div>
-                      <div className="flex items-center gap-2">
-                        <span className="font-semibold">{u.name}</span>
-                        <Badge variant="outline" className="text-xs capitalize">{u.role.replace('_', ' ')}</Badge>
+              {staffLoading ? (
+                <p className="text-sm text-muted-foreground py-6 text-center">Loading staff accounts…</p>
+              ) : staff.length === 0 ? (
+                <p className="text-sm text-muted-foreground py-6 text-center">
+                  Staff accounts could not be loaded. Check that the API is reachable and you are signed in as a super admin.
+                </p>
+              ) : (
+                <div className="divide-y">
+                  {staff.map((member) => (
+                    <div key={member.id} className="py-3 flex items-center justify-between">
+                      <div>
+                        <div className="flex items-center gap-2">
+                          <span className="font-semibold">{member.name || member.email}</span>
+                          <Badge variant="outline" className="text-xs capitalize">{member.role.replace('_', ' ')}</Badge>
+                        </div>
+                        <p className="text-xs text-muted-foreground">
+                          {member.email}
+                          {member.last_login_at ? ` • Last login ${new Date(member.last_login_at).toLocaleString()}` : ' • Never signed in'}
+                        </p>
                       </div>
-                      <p className="text-xs text-muted-foreground">{u.email} • {u.phone}</p>
+                      <div className="flex items-center gap-2">
+                        <Badge className={member.status === 'active'
+                          ? 'bg-emerald-500/10 text-emerald-600 border-emerald-500/30'
+                          : 'bg-rose-500/10 text-rose-600 border-rose-500/30'}>
+                          {member.status || 'unknown'}
+                        </Badge>
+                        {member.role !== 'super_admin' && (
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            onClick={() => handleDeleteStaff(member)}
+                            disabled={deletingStaffId === member.id}
+                            className="h-7 w-7 p-0 text-rose-500 hover:text-rose-600 hover:bg-rose-50"
+                            title="Delete staff account"
+                          >
+                            {deletingStaffId === member.id
+                              ? <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                              : <Trash2 className="h-3.5 w-3.5" />}
+                          </Button>
+                        )}
+                      </div>
                     </div>
-                    <div className="flex items-center gap-2">
-                      <Badge className="bg-emerald-500/10 text-emerald-600 border-emerald-500/30">Active</Badge>
-                      {u.role !== 'super_admin' && (
-                        <Button
-                          size="sm"
-                          variant="ghost"
-                          onClick={() => toast.success(`Staff account ${u.name} deleted`)}
-                          className="h-7 w-7 p-0 text-rose-500 hover:text-rose-600 hover:bg-rose-50"
-                          title="Delete User"
-                        >
-                          <Trash2 className="h-3.5 w-3.5" />
-                        </Button>
-                      )}
-                    </div>
-                  </div>
-                ))}
-              </div>
+                  ))}
+                </div>
+              )}
             </CardContent>
           </Card>
         </TabsContent>

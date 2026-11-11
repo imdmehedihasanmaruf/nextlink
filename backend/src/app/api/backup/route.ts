@@ -73,6 +73,28 @@ export async function GET(request: Request) {
       getAdminStore(),
     ]);
 
+    // The real staff list lives in the API's api_users table. The admin
+    // panel's admin_users mirror is a stale seed, so the backup carries the
+    // live list alongside it. (Server-to-server call with the caller's own
+    // token, the same pattern requireAdmin uses.)
+    let staffUsers: any[] | null = null;
+    try {
+      const API_BASE =
+        process.env.NEXT_PUBLIC_BILLING_API_URL?.replace(/\/api$/, '') ||
+        'http://localhost:3001';
+      const headerToken = request.headers.get('authorization') || '';
+      const staffRes = await fetch(`${API_BASE}/api/settings/staff`, {
+        headers: { Authorization: headerToken },
+        cache: 'no-store',
+      });
+      if (staffRes.ok) {
+        const payload = await staffRes.json();
+        if (Array.isArray(payload?.staff)) staffUsers = payload.staff;
+      }
+    } catch {
+      staffUsers = null; // The mirror is included either way; report it as unavailable.
+    }
+
     const fullBackup = {
       version: '2.0.0',
       exportedAt: new Date().toISOString(),
@@ -84,7 +106,10 @@ export async function GET(request: Request) {
       tickets: adminData.tickets || [],
       packages: adminData.packages || [],
       technicians: adminData.technicians || [],
+      staffUsers,
       adminUsers: (adminData.adminUsers || []).map(redactCredentials),
+      adminUsersMirrorNote:
+        'admin_users in the admin panel is a stale seed; the authoritative staff list is staffUsers (from the auth service).',
       roles: adminData.roles || [],
       adminStore: {
         ...adminData,
