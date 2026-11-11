@@ -40,8 +40,8 @@ import { useAuthStore } from '@/store/authStore'
 export default function HomePage() {
   const router = useRouter()
   const { t } = useTranslation()
-  const { isAuthenticated } = useAuthStore()
-  const { 
+  const { isAuthenticated, hasHydrated } = useAuthStore()
+  const {
     brand, 
     hero,
     mediaHubs, 
@@ -63,6 +63,14 @@ export default function HomePage() {
   useEffect(() => {
     fetchContent()
   }, [fetchContent])
+
+  // Logged-in users land on their dashboard, not on the public marketing
+  // page. `hasHydrated` keeps the first render consistent on the server.
+  useEffect(() => {
+    if (hasHydrated && isAuthenticated) {
+      router.push('/dashboard')
+    }
+  }, [hasHydrated, isAuthenticated, router])
 
   // Redirect to login page if user is not authenticated when clicking/submitting any option
   const handleProtectedAction = (e?: React.FormEvent, targetPath: string = '/login') => {
