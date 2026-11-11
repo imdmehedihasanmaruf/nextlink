@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import crypto from 'crypto';
-import { getSubscriberById, getSiteContent, createOrderRecord } from '@/lib/db';
+import { getSubscriberById, getSiteContent, createOrderRecord, countOverdueInvoices } from '@/lib/db';
 import { authenticate, authError, ownsAccount } from '@/lib/customerAuth';
 
 export const dynamic = 'force-dynamic';
@@ -109,16 +109,18 @@ export async function POST(request: Request) {
     const type = pTypeStr.includes('add') ? 'ADDITIONAL' : 'UPGRADE';
 
     // The operator's pricing rule: every package purchase is charged the plan
-    // price PLUS a fixed $18 installation fee PLUS a fixed $5 late fee. No
-    // proration credit is subtracted — the plan price is always the base.
+    // price PLUS a fixed $18 installation fee. The $5 late fee is only added
+    // when the running-month bill is still unpaid past the grace days — it is
+    // counted on the next cycle, matching recurring billing semantics.
     const INSTALLATION_FEE = 18;
     const LATE_FEE = 5;
+    const overdueInvoices = await countOverdueInvoices(auth.subscriber!.id, 5);
+    const lateFee = overdueInvoices > 0 ? LATE_FEE : 0;
 
     const daysRemaining = 0;
     const currentDaily = 0;
     const proratedAdjustment = 0;
     const installationFee = INSTALLATION_FEE;
-    const lateFee = LATE_FEE;
     const taxes = 0;
     const totalPayable = Number((targetPrice + installationFee + lateFee).toFixed(2));
 

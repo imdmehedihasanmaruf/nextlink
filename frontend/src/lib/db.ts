@@ -159,6 +159,28 @@ export async function findSubscriber(identifier: string): Promise<any | null> {
 }
 
 /**
+ * Count a subscriber's overdue unpaid invoices (past the grace days).
+ *
+ * The billing engine carries the flat late fee into the NEXT bill when the
+ * running month's bill stayed unpaid past the grace days. The same rule
+ * applies to a one-off package purchase, so the wizard is consistent with
+ * recurring billing.
+ */
+export async function countOverdueInvoices(subscriberId: string, graceDays = 5): Promise<number> {
+  const p = getDbPool();
+  const result = await p.query(
+    `SELECT COUNT(*)::int AS count
+       FROM invoices
+      WHERE subscriber_id = $1
+        AND status = 'unpaid'
+        AND due_date <> ''
+        AND due_date::date < (NOW() - ($2 || ' days')::interval)::date`,
+    [subscriberId, graceDays],
+  );
+  return Number(result.rows[0]?.count || 0);
+}
+
+/**
  * Get subscriber by primary ID
  */
 export async function getSubscriberById(id: string): Promise<any | null> {

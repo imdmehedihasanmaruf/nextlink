@@ -1049,16 +1049,18 @@ function PurchaseContent() {
                         </span>
                       </div>
 
-                      {/* Late fee — fixed for every package purchase */}
-                      <div className="flex justify-between items-center py-1 border-t border-border/50">
-                        <div>
-                          <p className="font-medium text-foreground">Late Payment Fee</p>
-                          <p className="text-muted-foreground text-[11px]">Fixed fee applied to the plan price</p>
+                      {/* Late fee — only when the running-month bill is overdue past the grace days */}
+                      {Number(orderCalculation?.lateFee ?? 0) > 0 && (
+                        <div className="flex justify-between items-center py-1 border-t border-border/50">
+                          <div>
+                            <p className="font-medium text-foreground">Late Payment Fee</p>
+                            <p className="text-muted-foreground text-[11px]">The running month bill was not paid in time</p>
+                          </div>
+                          <span className="font-mono font-semibold text-foreground">
+                            +{Number(orderCalculation?.lateFee).toFixed(2)}
+                          </span>
                         </div>
-                        <span className="font-mono font-semibold text-foreground">
-                          +{Number(orderCalculation?.lateFee ?? 5).toFixed(2)}
-                        </span>
-                      </div>
+                      )}
 
                       {/* Regulatory note */}
                       <div className="flex justify-between items-center py-1 border-t border-border/50">
