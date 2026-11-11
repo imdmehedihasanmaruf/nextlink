@@ -19,14 +19,15 @@ export default function ReferralRewardsPage() {
   const { referralRewards, saveItem, fetchData } = useAdminDataStore();
   const [loading, setLoading] = useState(false);
 
-  // Local config state
-  const [enabled, setEnabled] = useState(true);
+  // Local config state — the initial values are honest empties; the stored
+  // CMS configuration (synced on load) overwrites them.
+  const [enabled, setEnabled] = useState(false);
   const [bonusAmount, setBonusAmount] = useState(25);
   const [discountPercent, setDiscountPercent] = useState(10);
-  const [defaultCode, setDefaultCode] = useState('NL-GLOBAL-REF');
-  const [title, setTitle] = useState('Earn $25 on Your Next Invoice');
-  const [description, setDescription] = useState('Share your unique invite link with colleagues or neighbors worldwide');
-  const [tierName, setTierName] = useState('Platinum Tier');
+  const [defaultCode, setDefaultCode] = useState('');
+  const [title, setTitle] = useState('Refer a friend');
+  const [description, setDescription] = useState('Share your invite link with a friend — you both receive billing credit when they activate.');
+  const [tierName, setTierName] = useState('');
   const [referrals, setReferrals] = useState<any[]>([]);
 
   // Add modal state
@@ -41,13 +42,13 @@ export default function ReferralRewardsPage() {
 
   useEffect(() => {
     if (referralRewards) {
-      setEnabled(referralRewards.enabled ?? true);
+      setEnabled(referralRewards.enabled ?? false);
       setBonusAmount(referralRewards.bonusAmount ?? 25);
       setDiscountPercent(referralRewards.discountPercent ?? 10);
-      setDefaultCode(referralRewards.defaultCode || 'NL-GLOBAL-REF');
-      setTitle(referralRewards.title || 'Earn $25 on Your Next Invoice');
-      setDescription(referralRewards.description || 'Share your unique invite link with colleagues or neighbors worldwide');
-      setTierName(referralRewards.tierName || 'Platinum Tier');
+      setDefaultCode(referralRewards.defaultCode || '');
+      setTitle(referralRewards.title || 'Refer a friend');
+      setDescription(referralRewards.description || 'Share your invite link with a friend — you both receive billing credit when they activate.');
+      setTierName(referralRewards.tierName || '');
       setReferrals(Array.isArray(referralRewards.referrals) ? referralRewards.referrals : []);
     }
   }, [referralRewards]);
@@ -112,14 +113,14 @@ export default function ReferralRewardsPage() {
   };
 
   const handleResetSettings = async () => {
-    if (confirm('Reset Referral Rewards to system defaults?')) {
-      setEnabled(true);
+    if (confirm('Reset Referral Rewards to the neutral defaults?')) {
+      setEnabled(false);
       setBonusAmount(25);
       setDiscountPercent(10);
-      setDefaultCode('NL-GLOBAL-REF');
-      setTitle('Earn $25 on Your Next Invoice');
-      setDescription('Share your unique invite link with colleagues or neighbors worldwide');
-      setTierName('Platinum Tier');
+      setDefaultCode('');
+      setTitle('Refer a friend');
+      setDescription('Share your invite link with a friend — you both receive billing credit when they activate.');
+      setTierName('');
       toast.success('Settings reset. Remember to click Save Changes.');
     }
   };
@@ -136,7 +137,7 @@ export default function ReferralRewardsPage() {
             Referral Rewards Management
           </h1>
           <p className="text-sm text-muted-foreground mt-1">
-            Configure subscriber referral incentives, bill credits, and referral code tracking (Live sync with Frontend Card).
+            Configure the referral card shown on the subscriber dashboard. This is CMS content only — no referrals are tracked and no credits are applied automatically while the tracking backend does not exist yet.
           </p>
         </div>
         <div className="flex items-center gap-2">
@@ -254,7 +255,7 @@ export default function ReferralRewardsPage() {
               <Input
                 value={tierName}
                 onChange={(e) => setTierName(e.target.value)}
-                placeholder="e.g. Platinum Tier"
+                placeholder="e.g. Silver Tier (optional)"
                 className="mt-1"
               />
             </div>

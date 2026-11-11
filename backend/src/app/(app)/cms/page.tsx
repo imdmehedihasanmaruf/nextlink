@@ -185,7 +185,7 @@ export default function CMSPage() {
           <TabsTrigger value="hero">Hero & Notice</TabsTrigger>
           <TabsTrigger value="brand">Brand & Info</TabsTrigger>
           <TabsTrigger value="packages">Packages</TabsTrigger>
-          <TabsTrigger value="retention">Retention & Perks</TabsTrigger>
+          <TabsTrigger value="retention">Retention (unused)</TabsTrigger>
           <TabsTrigger value="media">Media & TV</TabsTrigger>
           <TabsTrigger value="coverage">Coverage Map</TabsTrigger>
           <TabsTrigger value="navigation">Nav & Footer</TabsTrigger>
@@ -684,7 +684,7 @@ export default function CMSPage() {
                   Customer Retention & Loyalty Incentives
                 </CardTitle>
                 <CardDescription>
-                  Configure subscriber rewards, turbo speed boost, and loyalty programs
+                  NOT WIRED TO THE PORTAL: these referral/turbo/VIP fields are stored in site content but the public site and client dashboard never read them. Use Referral Rewards (/referrals) and Boost Bandwidth (/boost) — those sync to keys the portal actually renders.
                 </CardDescription>
               </div>
               <Button size="sm" onClick={() => handleSaveSection('Customer Retention Settings')} className="gap-1.5 shadow-sm">
@@ -725,7 +725,7 @@ export default function CMSPage() {
               <div className="rounded-xl border p-4 bg-muted/20 space-y-4">
                 <h4 className="font-semibold text-sm flex items-center gap-2 border-b pb-2">
                   <Zap className="h-4 w-4 text-amber-500" />
-                  1-Click Turbo Speed Boost
+                  Turbo Boost (unused CMS fields)
                 </h4>
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   <div>

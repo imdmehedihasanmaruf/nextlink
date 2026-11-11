@@ -361,7 +361,7 @@ export default function DashboardPage() {
   }
 
   const handleCopyReferral = async () => {
-    const code = referralRewards?.defaultCode || 'NL-GLOBAL-REF'
+    const code = referralRewards?.defaultCode || '—'
     try {
       await navigator.clipboard.writeText(`https://nextlink.global/apply?ref=${code}`)
       setCopiedReferral(true)
@@ -389,16 +389,23 @@ export default function DashboardPage() {
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-6 relative z-10">
           <div>
             <div className="flex flex-wrap items-center gap-2 mb-3">
-              <div className="inline-flex items-center gap-1.5 rounded-full bg-white/20 px-3 py-1 text-xs font-semibold backdrop-blur-sm">
-                <span className="h-2 w-2 rounded-full bg-emerald-400 animate-pulse"></span>
-                {t('connectionActive')}
-              </div>
-              <Badge className="bg-amber-500 text-white font-bold border-none">
-                ⭐ Platinum Tier Member
-              </Badge>
+              {/* The pill reflects the account's real status from the login
+                  payload — a suspended line must not be shown as
+                  "connection active", and there is no tier system to badge. */}
+              {user?.status === 'suspended' || user?.status === 'blocked' ? (
+                <div className="inline-flex items-center gap-1.5 rounded-full bg-amber-400/20 text-amber-100 border border-amber-300/40 px-3 py-1 text-xs font-semibold backdrop-blur-sm">
+                  <span className="h-2 w-2 rounded-full bg-amber-300"></span>
+                  Line suspended — contact support
+                </div>
+              ) : (
+                <div className="inline-flex items-center gap-1.5 rounded-full bg-white/20 px-3 py-1 text-xs font-semibold backdrop-blur-sm">
+                  <span className="h-2 w-2 rounded-full bg-emerald-400 animate-pulse"></span>
+                  {t('connectionActive')}
+                </div>
+              )}
             </div>
             <h1 className="text-3xl font-black tracking-tight text-white">
-              {t('welcomeBack')}, {user?.name || 'Alexander Wright'}!
+              {t('welcomeBack')}, {user?.name || user?.username || 'there'}!
             </h1>
           </div>
 
@@ -505,9 +512,13 @@ export default function DashboardPage() {
         </Card>
       </div>
 
-      {/* Retention Programs (Referral, Turbo Boost, Live Latency) */}
+      {/* Retention Programs (Referral, Turbo Boost, Live Latency). Each card
+          honours its `enabled` flag from the CMS — when the operator disables
+          the programme in the admin panel, the portal card disappears rather
+          than advertising a programme that does not exist. */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         {/* 1. Refer & Earn Box */}
+        {referralRewards?.enabled !== false && (
         <Card className="border-2 border-emerald-500/30 bg-emerald-500/5 shadow-sm">
           <CardHeader className="pb-3">
             <div className="flex items-center justify-between">
@@ -518,17 +529,17 @@ export default function DashboardPage() {
               <span className="text-xs font-bold text-emerald-600">${referralRewards?.bonusAmount || 25} Reward</span>
             </div>
             <CardTitle className="text-lg mt-2">
-              {referralRewards?.title || 'Earn $25 on Your Next Invoice'}
+              {referralRewards?.title || 'Refer a friend'}
             </CardTitle>
             <CardDescription>
-              {referralRewards?.description || 'Share your unique invite link with colleagues or neighbors worldwide'}
+              {referralRewards?.description || 'Share your invite link with a friend — you both receive billing credit when they activate.'}
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
             <div className="rounded-xl border bg-card p-3 flex items-center justify-between">
               <div>
                 <p className="text-[10px] text-muted-foreground uppercase font-bold">Your Referral Code</p>
-                <p className="font-mono font-bold text-sm text-primary">{referralRewards?.defaultCode || 'NL-GLOBAL-REF'}</p>
+                <p className="font-mono font-bold text-sm text-primary">{referralRewards?.defaultCode || '—'}</p>
               </div>
               <Button size="sm" variant="outline" onClick={handleCopyReferral} className="gap-1.5 h-8">
                 {copiedReferral ? <Check className="h-3.5 w-3.5 text-emerald-600" /> : <Copy className="h-3.5 w-3.5" />}
@@ -548,8 +559,10 @@ export default function DashboardPage() {
             </div>
           </CardContent>
         </Card>
+        )}
 
-        {/* 2. 1-Click Instant Turbo Speed Boost */}
+        {/* 2. Turbo Boost on Request */}
+        {boostBandwidth?.enabled !== false && (
         <Card className="border-2 border-amber-500/30 bg-amber-500/5 shadow-sm">
           <CardHeader className="pb-3">
             <div className="flex items-center justify-between">
@@ -560,7 +573,7 @@ export default function DashboardPage() {
               <span className="text-xs font-bold text-amber-600">{boostRequested ? 'Requested' : (boostBandwidth?.status || 'Ready')}</span>
             </div>
             <CardTitle className="text-lg mt-2">
-              {boostBandwidth?.title || '1-Click 1 Gbps Turbo Boost'}
+              {boostBandwidth?.title || 'Turbo Boost on Request'}
             </CardTitle>
             <CardDescription>
               {boostBandwidth?.description || 'Instantly scale bandwidth for massive cloud syncs, torrents, or gaming'}
@@ -601,6 +614,7 @@ export default function DashboardPage() {
             )}
           </CardContent>
         </Card>
+        )}
 
         {/* 3. Peering & Latency (reference) */}
         <Card className="border shadow-sm">

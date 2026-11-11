@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server';
 import path from 'path';
 import fs from 'fs';
 import { deleteAdminRecord } from '@/lib/db';
-import { requireAdmin } from '@/lib/requireAdmin';
+import { requireAdmin, hasRolePermission } from '@/lib/requireAdmin';
 
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
@@ -19,6 +19,14 @@ const corsHeaders = {
 
 const DELETABLE = new Set(['technicians', 'roles', 'adminUsers']);
 
+/** Technicians are managed with the technicians permission; roles and staff
+ * accounts are governance, not directory management. */
+const DELETE_PERMISSIONS: Record<string, string> = {
+  technicians: 'technicians',
+  roles: 'roles',
+  adminUsers: 'roles',
+};
+
 export async function OPTIONS() {
   return NextResponse.json({}, { headers: corsHeaders });
 }
@@ -26,7 +34,7 @@ export async function OPTIONS() {
 export async function POST(request: Request) {
   const auth = await requireAdmin(request);
   if (!auth.ok) {
-    return NextResponse.json({ error: auth.error }, { status: 401, headers: corsHeaders });
+    return NextResponse.json({ error: auth.error }, { status: auth.status ?? 401, headers: corsHeaders });
   }
 
   try {
@@ -38,6 +46,14 @@ export async function POST(request: Request) {
       return NextResponse.json(
         { error: 'Only technicians, roles and admin user accounts can be deleted here.' },
         { status: 400, headers: corsHeaders },
+      );
+    }
+
+    const permission = DELETE_PERMISSIONS[type];
+    if (!(await hasRolePermission(auth.principal!.role, permission))) {
+      return NextResponse.json(
+        { error: `Your role does not have permission to delete ${type}.` },
+        { status: 403, headers: corsHeaders },
       );
     }
 

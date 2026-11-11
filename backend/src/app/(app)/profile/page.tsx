@@ -3,11 +3,10 @@
 import React, { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { 
-  User, 
-  Mail, 
-  Phone, 
-  Shield, 
-  Save, 
+  User,
+  Mail,
+  Phone,
+  Save,
   Key, 
   Check, 
   AlertTriangle, 
@@ -105,11 +104,12 @@ export default function AdminProfilePage() {
                 Staff ID: <span className="text-foreground font-semibold">{user.id}</span> • Auth Email: <span className="text-foreground font-semibold">{email}</span>
               </p>
               <div className="flex flex-wrap gap-2 pt-1">
-                <Badge variant="secondary" className="gap-1 text-xs">
-                  <Shield size={12} className="text-primary" /> Full Infrastructure Privileges
-                </Badge>
+                {/* No MFA exists in this system yet — the previous badge read
+                    "MFA Hardware Enforced", which was fiction. Multi-factor
+                    setup is planned; what is real is the server-verified
+                    staff session, so that is what the badge states. */}
                 <Badge variant="outline" className="gap-1 text-xs">
-                  <Lock size={12} className="text-emerald-500" /> MFA Hardware Enforced
+                  <Lock size={12} className="text-emerald-500" /> Server-verified staff session
                 </Badge>
               </div>
             </div>

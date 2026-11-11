@@ -19,14 +19,15 @@ export default function BoostBandwidthPage() {
   const { boostBandwidth, saveItem, fetchData } = useAdminDataStore();
   const [loading, setLoading] = useState(false);
 
-  // Configuration State
-  const [enabled, setEnabled] = useState(true);
+  // Configuration State — honest, disabled-by-default initial values; the
+  // stored CMS configuration overrides them on load.
+  const [enabled, setEnabled] = useState(false);
   const [boostSpeed, setBoostSpeed] = useState(1000);
   const [durationHours, setDurationHours] = useState(6);
-  const [title, setTitle] = useState('1-Click 1 Gbps Turbo Boost');
-  const [description, setDescription] = useState('Instantly scale bandwidth for massive cloud syncs, torrents, or gaming');
-  const [status, setStatus] = useState('Ready');
-  const [burstQuotaPerMonth, setBurstQuotaPerMonth] = useState(3);
+  const [title, setTitle] = useState('Turbo Boost on Request');
+  const [description, setDescription] = useState('Time-boxed speed burst routed through support like any other change.');
+  const [status, setStatus] = useState('');
+  const [burstQuotaPerMonth, setBurstQuotaPerMonth] = useState(0);
   const [history, setHistory] = useState<any[]>([]);
 
   // Modal State for Manual Boost
@@ -41,13 +42,13 @@ export default function BoostBandwidthPage() {
 
   useEffect(() => {
     if (boostBandwidth) {
-      setEnabled(boostBandwidth.enabled ?? true);
+      setEnabled(boostBandwidth.enabled ?? false);
       setBoostSpeed(boostBandwidth.boostSpeed ?? 1000);
       setDurationHours(boostBandwidth.durationHours ?? 6);
-      setTitle(boostBandwidth.title || '1-Click 1 Gbps Turbo Boost');
-      setDescription(boostBandwidth.description || 'Instantly scale bandwidth for massive cloud syncs, torrents, or gaming');
-      setStatus(boostBandwidth.status || 'Ready');
-      setBurstQuotaPerMonth(boostBandwidth.burstQuotaPerMonth ?? 3);
+      setTitle(boostBandwidth.title || 'Turbo Boost on Request');
+      setDescription(boostBandwidth.description || 'Time-boxed speed burst routed through support like any other change.');
+      setStatus(boostBandwidth.status || '');
+      setBurstQuotaPerMonth(boostBandwidth.burstQuotaPerMonth ?? 0);
       setHistory(Array.isArray(boostBandwidth.history) ? boostBandwidth.history : []);
     }
   }, [boostBandwidth]);
@@ -94,7 +95,7 @@ export default function BoostBandwidthPage() {
     setDialogOpen(false);
     setSubscriberInput('');
     await handleSave(updated);
-    toast.success(`Boost recorded for ${subscriberInput} — it applies on the subscriber's next renewal window.`);
+    toast.success(`Boost recorded for ${subscriberInput} in the log — no router command was sent. Apply the change on the router if a burst is required.`);
   };
 
   const handleDeleteHistory = async (id: string) => {
@@ -115,14 +116,14 @@ export default function BoostBandwidthPage() {
   };
 
   const handleResetDefaults = () => {
-    if (confirm('Reset Boost Bandwidth configuration to default 1 Gbps / 6 Hours?')) {
-      setEnabled(true);
+    if (confirm('Reset Boost Bandwidth to the neutral defaults (disabled)?')) {
+      setEnabled(false);
       setBoostSpeed(1000);
       setDurationHours(6);
-      setTitle('1-Click 1 Gbps Turbo Boost');
-      setDescription('Instantly scale bandwidth for massive cloud syncs, torrents, or gaming');
-      setStatus('Ready');
-      setBurstQuotaPerMonth(3);
+      setTitle('Turbo Boost on Request');
+      setDescription('Time-boxed speed burst routed through support like any other change.');
+      setStatus('');
+      setBurstQuotaPerMonth(0);
       toast.success('Defaults reset. Click Save Changes to apply.');
     }
   };
@@ -139,7 +140,7 @@ export default function BoostBandwidthPage() {
             Boost Bandwidth Management
           </h1>
           <p className="text-sm text-muted-foreground mt-1">
-            Configure on-demand burst speeds, complimentary quotas, and MikroTik turbo rate-limit overrides.
+            Configure the Turbo Boost card shown on the subscriber dashboard. This CMS content bears no rate-limit commands on the router — burst activation is a support action, not an automatic MikroTik override.
           </p>
         </div>
         <div className="flex items-center gap-2">
@@ -205,7 +206,7 @@ export default function BoostBandwidthPage() {
               <Gauge className="h-4 w-4 text-amber-600" />
               Frontend Turbo Card Controls & Throttle Rules
             </CardTitle>
-            <CardDescription>Controls the "1-Click Turbo Boost" card on client dashboard</CardDescription>
+            <CardDescription>Controls the Turbo Boost card on the subscriber dashboard</CardDescription>
           </div>
           <div className="flex items-center gap-2">
             <span className="text-xs font-semibold">{enabled ? 'Active on Frontend' : 'Disabled'}</span>
@@ -249,7 +250,7 @@ export default function BoostBandwidthPage() {
               <Input
                 value={title}
                 onChange={(e) => setTitle(e.target.value)}
-                placeholder="e.g. 1-Click 1 Gbps Turbo Boost"
+                placeholder="e.g. Turbo Boost on Request"
                 className="mt-1 font-semibold"
               />
             </div>
@@ -283,9 +284,9 @@ export default function BoostBandwidthPage() {
           <div>
             <CardTitle className="text-base flex items-center gap-2">
               <Activity className="h-4 w-4 text-primary" />
-              Turbo Activations & Provisioning History
+              Turbo Boost Activation Log
             </CardTitle>
-            <CardDescription>Real-time log of customer burst triggers</CardDescription>
+            <CardDescription>Log of boost activations recorded by staff — not a live feed from the router</CardDescription>
           </div>
           <div className="flex items-center gap-2">
             <Button size="sm" variant="outline" onClick={handleClearAllHistory} className="gap-1.5 text-xs text-rose-600 hover:bg-rose-50 border-rose-200">
@@ -294,7 +295,7 @@ export default function BoostBandwidthPage() {
             </Button>
             <Button size="sm" onClick={() => setDialogOpen(true)} className="gap-1.5 text-xs bg-amber-600 hover:bg-amber-700 text-white">
               <Plus className="h-3.5 w-3.5" />
-              Manual Boost Override
+              Manual Boost Log
             </Button>
           </div>
         </CardHeader>
@@ -302,7 +303,7 @@ export default function BoostBandwidthPage() {
           {history.length === 0 ? (
             <div className="py-8 text-center border border-dashed rounded-xl">
               <p className="text-sm font-semibold text-muted-foreground">No Boost Sessions Recorded</p>
-              <p className="text-xs text-muted-foreground mt-1">Subscriber 1-click turbo activations will be recorded here.</p>
+              <p className="text-xs text-muted-foreground mt-1">Boost activations logged by staff will appear here.</p>
             </div>
           ) : (
             <div className="overflow-x-auto">
@@ -355,7 +356,7 @@ export default function BoostBandwidthPage() {
       <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
         <DialogContent className="max-w-md">
           <DialogHeader>
-            <DialogTitle>Provision Manual Bandwidth Boost</DialogTitle>
+            <DialogTitle>Log a Manual Bandwidth Boost</DialogTitle>
           </DialogHeader>
           <form onSubmit={handleAddBoost} className="space-y-4 pt-2">
             <div>

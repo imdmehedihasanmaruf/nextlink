@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 import { defaultRoles } from '@/lib/roles';
 import { getAdminStore, saveAdminSection, saveSiteContent, getSiteContent } from '@/lib/db';
-import { requireAdmin } from '@/lib/requireAdmin';
+import { requireAdmin, hasRolePermission } from '@/lib/requireAdmin';
 
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
@@ -53,10 +53,31 @@ const ALLOWED_TYPES = new Set([...COLLECTION_TYPES, ...SETTINGS_TYPES]);
 /** A hard cap so a broken client cannot write an unbounded payload. */
 const MAX_ITEMS = 5_000;
 
+/**
+ * Which role permission a collection requires to mutate. The GET route is
+ * open to every signed-in staff member; the permission check on POST keeps
+ * a support staff from rewriting invoices and a technician from deleting
+ * the subscriber database.
+ */
+const COLLECTION_PERMISSIONS: Record<string, string> = {
+  packages: 'packages',
+  subscribers: 'subscribers',
+  invoices: 'billing',
+  tickets: 'tickets',
+  technicians: 'technicians',
+  roles: 'roles',
+  adminUsers: 'roles',
+  referralRewards: 'referral_rewards',
+  boostBandwidth: 'boost_bandwidth',
+  liveLatency: 'live_latency',
+  interfaceTraffic: 'interface_traffic',
+  peeringHubs: 'peering_hubs',
+};
+
 export async function GET(request: Request) {
   const auth = await requireAdmin(request);
   if (!auth.ok) {
-    return NextResponse.json({ error: auth.error }, { status: 401, headers: corsHeaders });
+    return NextResponse.json({ error: auth.error }, { status: auth.status ?? 401, headers: corsHeaders });
   }
 
   try {
@@ -79,7 +100,7 @@ export async function GET(request: Request) {
 export async function POST(request: Request) {
   const auth = await requireAdmin(request);
   if (!auth.ok) {
-    return NextResponse.json({ error: auth.error }, { status: 401, headers: corsHeaders });
+    return NextResponse.json({ error: auth.error }, { status: auth.status ?? 401, headers: corsHeaders });
   }
 
   try {
@@ -94,6 +115,14 @@ export async function POST(request: Request) {
         return NextResponse.json(
           { error: `The collection "${type}" is not writable through this route.` },
           { status: 400, headers: corsHeaders },
+        );
+      }
+
+      const permission = COLLECTION_PERMISSIONS[type];
+      if (permission && !(await hasRolePermission(auth.principal!.role, permission))) {
+        return NextResponse.json(
+          { error: `Your role does not have permission to edit "${type}".` },
+          { status: 403, headers: corsHeaders },
         );
       }
 
@@ -181,10 +210,22 @@ export async function POST(request: Request) {
         }
       }
     } else {
-      // Full object update — the same whitelist applies per key.
-      for (const [key, val] of Object.entries(body || {})) {
-        if (key === 'demoMode' || key === 'lastUpdated' || key === 'allowEmpty') continue;
-        if (!ALLOWED_TYPES.has(key)) continue;
+      // Full object update — the same whitelist and permission matrix apply
+      // per key. Previously a caller could bulk-overwrite whitelisted
+      // collections without the role owning them.
+      const editable = Object.entries(body || {}).filter(
+        ([key]) => key !== 'demoMode' && key !== 'lastUpdated' && key !== 'allowEmpty' && ALLOWED_TYPES.has(key),
+      );
+      for (const [key] of editable) {
+        const permission = COLLECTION_PERMISSIONS[key];
+        if (permission && !(await hasRolePermission(auth.principal!.role, permission))) {
+          return NextResponse.json(
+            { error: `Your role does not have permission to edit "${key}".` },
+            { status: 403, headers: corsHeaders },
+          );
+        }
+      }
+      for (const [key, val] of editable) {
         await saveAdminSection(key, val);
       }
     }

@@ -278,7 +278,10 @@ export default function HomePage() {
             </CardContent>
           </Card>
 
-          {/* 3. 1-Click Bandwidth Turbo Boost */}
+          {/* 3. Turbo Boost on Request — shown only when the operator enables
+              it in the CMS; activation is a support action, not a button that
+              changes the router. */}
+          {boostBandwidth?.enabled !== false && (
           <Card className="border-2 border-border/80 hover:border-primary/60 transition-all duration-300 hover:shadow-xl flex flex-col justify-between">
             <CardHeader className="pb-3">
               <div className="flex items-center justify-between">
@@ -286,30 +289,31 @@ export default function HomePage() {
                   <Zap size={20} />
                 </div>
                 <Badge className="bg-amber-500 text-white font-mono text-[11px]">
-                  {boostBandwidth?.boostSpeed || 1000} Mbps Turbo
+                  {boostBandwidth?.boostSpeed || 1000} Mbps Burst
                 </Badge>
               </div>
-              <CardTitle className="text-xl font-bold mt-3">1-Click Bandwidth Boost</CardTitle>
+              <CardTitle className="text-xl font-bold mt-3">{boostBandwidth?.title || 'Turbo Boost on Request'}</CardTitle>
               <CardDescription className="text-xs">
-                Instantly burst your line speed up to 1 Gbps for large cloud uploads, high-bitrate video editing, or steam downloads.
+                {boostBandwidth?.description || 'Ask support for a time-boxed speed burst for a big upload, live stream or download sprint. Activated by the helpdesk — not a one-click router override.'}
               </CardDescription>
             </CardHeader>
             <CardContent className="space-y-3">
               <div className="flex items-center justify-between p-2.5 rounded-lg bg-muted/60 text-xs font-medium border">
                 <span>Burst Duration</span>
                 <span className="font-bold text-amber-600 dark:text-amber-400">
-                  {boostBandwidth?.durationHours || 6} Hours Free Quota
+                  {boostBandwidth?.durationHours || 6} Hours
                 </span>
               </div>
-              <Button 
+              <Button
                 onClick={() => handleProtectedAction(undefined, '/dashboard')}
                 className="w-full h-9 text-xs font-bold gap-1.5 bg-amber-600 hover:bg-amber-700 text-white shadow-sm"
               >
                 <Zap size={14} />
-                <span>Activate 1-Click Turbo Boost</span>
+                <span>Request a Turbo Boost</span>
               </Button>
             </CardContent>
           </Card>
+          )}
 
           {/* 4. Realtime Ping & Latency Diagnostics */}
           <Card className="border-2 border-border/80 hover:border-primary/60 transition-all duration-300 hover:shadow-xl flex flex-col justify-between">
@@ -434,7 +438,10 @@ export default function HomePage() {
             </CardContent>
           </Card>
 
-          {/* 7. Referral Rewards & Cash Credits */}
+          {/* 7. Referral Rewards — rendered only when the operator enables the
+              programme in the CMS. It advertises an invite a subscriber can
+              share; there is no automatic claim/credit backend yet. */}
+          {referralRewards?.enabled !== false && (
           <Card className="border-2 border-border/80 hover:border-primary/60 transition-all duration-300 hover:shadow-xl md:col-span-2 lg:col-span-3 flex flex-col md:flex-row items-center justify-between p-6 gap-6 bg-gradient-to-r from-primary/5 via-card to-emerald-500/5">
             <div className="flex items-start gap-4">
               <div className="h-12 w-12 rounded-2xl bg-primary/10 text-primary flex items-center justify-center shrink-0">
@@ -445,25 +452,28 @@ export default function HomePage() {
                   <Badge className="bg-emerald-600 text-white font-bold text-xs">
                     Earn ${referralRewards?.bonusAmount || 25} Credit
                   </Badge>
-                  <span className="text-xs font-mono text-muted-foreground">Code: NL-GLOBAL-REF</span>
+                  {referralRewards?.defaultCode && (
+                    <span className="text-xs font-mono text-muted-foreground">Code: {referralRewards.defaultCode}</span>
+                  )}
                 </div>
-                <h3 className="text-xl font-extrabold">Referral Rewards & Invoice Discounts</h3>
+                <h3 className="text-xl font-extrabold">{referralRewards?.title || 'Refer a friend'}</h3>
                 <p className="text-xs sm:text-sm text-muted-foreground max-w-2xl">
-                  Invite your friends, colleagues, or neighbors to NextLink Optical Fiber. Both you and your friend receive ${referralRewards?.bonusAmount || 25} billing discount credits upon account activation!
+                  {referralRewards?.description || 'Invite your friends, colleagues, or neighbors to NextLink Optical Fiber. Both of you receive billing credit when they activate.'}
                 </p>
               </div>
             </div>
             <div className="shrink-0 w-full md:w-auto">
-              <Button 
+              <Button
                 onClick={() => handleProtectedAction(undefined, '/dashboard')}
                 className="w-full md:w-auto font-bold h-11 px-6 gap-2 shadow-md hover:scale-105 transition-all"
               >
                 <Gift size={16} />
-                <span>Claim My Referral Reward</span>
+                <span>Get My Invite Link</span>
                 <ArrowRight size={15} />
               </Button>
             </div>
           </Card>
+          )}
 
         </div>
       </section>

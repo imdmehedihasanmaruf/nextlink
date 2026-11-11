@@ -468,23 +468,14 @@
   ],
   "coverageAreas": [],
   "boostBandwidth": {
-    "title": "1-Click 1 Gbps Turbo Boost",
-    "status": "Ready",
-    "enabled": true,
-    "history": [
-      {
-        "id": "BST-001",
-        "date": "2026-11-05",
-        "speed": 1000,
-        "status": "Completed",
-        "duration": 6,
-        "subscriber": "NL-SUB-0192"
-      }
-    ],
+    "title": "Turbo Boost on Request",
+    "status": "",
+    "enabled": false,
+    "history": [],
     "boostSpeed": 1000,
-    "description": "Instantly scale bandwidth for massive cloud syncs, torrents, or gaming",
+    "description": "Time-boxed speed burst routed through support like any other change.",
     "durationHours": 6,
-    "burstQuotaPerMonth": 3
+    "burstQuotaPerMonth": 0
   },
   "coverageSection": {
     "titleEn": "Worldwide Active Metro Coverage Zones",
@@ -498,41 +489,16 @@
     "popularBadgeEn": "Most Popular"
   },
   "referralRewards": {
-    "title": "Earn $25 on Your Next Invoice",
-    "enabled": true,
-    "tierName": "Platinum Tier",
-    "referrals": [
-      {
-        "id": "REF-001",
-        "date": "2026-10-14",
-        "name": "Alexander Wright",
-        "email": "alex.w@cloudcorp.io",
-        "reward": 25,
-        "status": "Rewarded"
-      },
-      {
-        "id": "REF-002",
-        "date": "2026-10-28",
-        "name": "Elena Rostova",
-        "email": "elena.r@quantum.tech",
-        "reward": 25,
-        "status": "Rewarded"
-      },
-      {
-        "id": "REF-003",
-        "date": "2026-11-02",
-        "name": "Marcus Vance",
-        "email": "marcus.v@edgefiber.net",
-        "reward": 25,
-        "status": "Rewarded"
-      }
-    ],
+    "title": "Refer a friend",
+    "enabled": false,
+    "tierName": "",
+    "referrals": [],
     "bonusAmount": 25,
-    "defaultCode": "NL-GLOBAL-REF",
-    "description": "Share your unique invite link with colleagues or neighbors worldwide",
+    "defaultCode": "",
+    "description": "Share your invite link with a friend — you both receive billing credit when they activate.",
     "discountPercent": 10,
-    "totalSavedAmount": 75,
-    "friendsJoinedCount": 3
+    "totalSavedAmount": 0,
+    "friendsJoinedCount": 0
   },
   "interfaceTraffic": {
     "oltPort": "2/1/4",

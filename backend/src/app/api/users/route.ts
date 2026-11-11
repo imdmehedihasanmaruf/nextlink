@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import crypto from 'crypto';
-import { getAdminStore, saveAdminSection } from '@/lib/db';
+import bcrypt from 'bcryptjs';
+import { getAdminStore, saveAdminSection, getDbPool } from '@/lib/db';
 import { Subscriber } from '@/lib/mockData';
 import { requireAdmin } from '@/lib/requireAdmin';
 
@@ -22,9 +23,9 @@ export async function OPTIONS() {
 }
 
 export async function GET(request: Request) {
-  const auth = await requireAdmin(request);
+  const auth = await requireAdmin(request, 'subscribers');
   if (!auth.ok) {
-    return NextResponse.json({ success: false, error: auth.error }, { status: 401, headers: corsHeaders });
+    return NextResponse.json({ success: false, error: auth.error }, { status: auth.status ?? 401, headers: corsHeaders });
   }
 
   try {
@@ -41,9 +42,9 @@ export async function GET(request: Request) {
 }
 
 export async function POST(request: Request) {
-  const auth = await requireAdmin(request);
+  const auth = await requireAdmin(request, 'subscribers');
   if (!auth.ok) {
-    return NextResponse.json({ success: false, error: auth.error }, { status: 401, headers: corsHeaders });
+    return NextResponse.json({ success: false, error: auth.error }, { status: auth.status ?? 401, headers: corsHeaders });
   }
 
   try {
@@ -51,9 +52,12 @@ export async function POST(request: Request) {
     const store = await getAdminStore();
     const subscribers: Subscriber[] = store.subscribers || [];
 
-    // The password is random and shown to the operator once — the previous
-    // 'NextLink@2026' default was public knowledge.
+    // The temporary password is random and shown to the operator once — the
+    // previous 'NextLink@2026' default was public knowledge. The hash is
+    // written to subscriber_credentials, the table the billing API verifies —
+    // the plain password never reaches the database record.
     const generatedPassword = body.password || crypto.randomBytes(9).toString('base64url');
+    const passwordHash = await bcrypt.hash(generatedPassword, 10);
 
     const newSub: Subscriber = {
       id: body.id || `NL-${new Date().getFullYear()}-${crypto.randomBytes(4).toString('hex').toUpperCase()}`,
@@ -61,7 +65,7 @@ export async function POST(request: Request) {
       username: body.username || (body.email ? body.email.split('@')[0] : `user_${crypto.randomBytes(4).toString('hex')}`),
       phone: body.phone || '01700000000',
       email: body.email || 'user@example.com',
-      password: generatedPassword,
+      password: '',
       address: body.address || 'Dhaka Metro Fiber Loop',
       zone: body.zone || 'Dhaka Metro',
       packageId: body.packageId || 'PKG-002',
@@ -85,6 +89,29 @@ export async function POST(request: Request) {
     const updated = [newSub, ...subscribers];
     await saveAdminSection('subscribers', updated);
 
+    // The credential is written to the dedicated table, hashed. A username
+    // that already exists fails cleanly with a conflict response.
+    try {
+      await getDbPool().query(
+        `INSERT INTO subscriber_credentials
+           (subscriber_id, username, password_hash, raw_data)
+         VALUES ($1, $2, $3, $4)
+         ON CONFLICT (subscriber_id) DO UPDATE SET
+           username = EXCLUDED.username,
+           password_hash = EXCLUDED.password_hash,
+           updated_at = NOW()`,
+        [newSub.id, newSub.username, passwordHash, JSON.stringify({ source: 'admin-create' })],
+      );
+    } catch (credentialError: any) {
+      // Password hashing/verify must not fail silently — the account would be
+      // unusable. Report the problem.
+      console.error('Could not create the credential for the subscriber:', credentialError);
+      return NextResponse.json(
+        { success: false, error: 'The account was created but the credential could not be stored.' },
+        { status: 500, headers: corsHeaders }
+      );
+    }
+
     return NextResponse.json({
       success: true,
       user: newSub,
@@ -97,9 +124,9 @@ export async function POST(request: Request) {
 }
 
 export async function PUT(request: Request) {
-  const auth = await requireAdmin(request);
+  const auth = await requireAdmin(request, 'subscribers');
   if (!auth.ok) {
-    return NextResponse.json({ success: false, error: auth.error }, { status: 401, headers: corsHeaders });
+    return NextResponse.json({ success: false, error: auth.error }, { status: auth.status ?? 401, headers: corsHeaders });
   }
 
   try {
@@ -136,9 +163,9 @@ export async function PUT(request: Request) {
 }
 
 export async function DELETE(request: Request) {
-  const auth = await requireAdmin(request);
+  const auth = await requireAdmin(request, 'subscribers');
   if (!auth.ok) {
-    return NextResponse.json({ success: false, error: auth.error }, { status: 401, headers: corsHeaders });
+    return NextResponse.json({ success: false, error: auth.error }, { status: auth.status ?? 401, headers: corsHeaders });
   }
 
   try {

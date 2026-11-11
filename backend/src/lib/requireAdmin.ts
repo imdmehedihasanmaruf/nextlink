@@ -20,7 +20,58 @@ export interface AdminPrincipal {
   role: string;
 }
 
-const STAFF_ROLES = new Set(['super_admin', 'billing', 'support', 'technician']);
+const STAFF_ROLES = new Set(['super_admin', 'billing', 'support', 'technician', 'noc_operator']);
+
+/**
+ * The built-in permission matrix, used when the roles table has not been
+ * loaded yet — it mirrors src/lib/roles.ts. Once the operator edits the
+ * matrix in the admin UI, the stored matrix is the source of truth.
+ */
+const DEFAULT_PERMISSIONS: Record<string, string[]> = {
+  super_admin: [
+    'dashboard', 'subscribers', 'packages', 'billing', 'tickets', 'technicians',
+    'referral_rewards', 'boost_bandwidth', 'live_latency', 'interface_traffic', 'peering_hubs',
+    'reports', 'cms', 'settings', 'roles',
+  ],
+  billing: ['dashboard', 'subscribers', 'billing', 'referral_rewards', 'reports'],
+  support: ['dashboard', 'subscribers', 'tickets', 'technicians', 'boost_bandwidth', 'live_latency'],
+  technician: ['dashboard', 'tickets', 'technicians', 'live_latency', 'interface_traffic'],
+  noc_operator: ['dashboard', 'reports', 'tickets', 'live_latency', 'interface_traffic', 'peering_hubs'],
+};
+
+async function loadPermissions(): Promise<Record<string, string[]>> {
+  try {
+    // eslint-disable-next-line global-require
+    const { getAdminStore } = require('@/lib/db');
+    const store = await getAdminStore();
+    const roles = Array.isArray(store?.roles) ? store.roles : [];
+    if (roles.length === 0) return DEFAULT_PERMISSIONS;
+
+    const fromTable: Record<string, string[]> = {};
+    for (const role of roles) {
+      if (role?.key && Array.isArray(role.permissions)) {
+        fromTable[role.key] = role.permissions;
+      }
+    }
+    return { ...DEFAULT_PERMISSIONS, ...fromTable };
+  } catch {
+    return DEFAULT_PERMISSIONS;
+  }
+}
+
+/**
+ * Check a permission against the stored (operator-edited) matrix or the
+ * built-in defaults. Used when the required permission depends on the
+ * request body, so requireAdmin() cannot evaluate it up front.
+ */
+export async function hasRolePermission(
+  roleKey: string,
+  permission: string,
+): Promise<boolean> {
+  const permissions = await loadPermissions();
+  const allowed = permissions[roleKey] || [];
+  return allowed.includes(permission);
+}
 
 /**
  * Verify the bearer token in the request with the Express API and return the
@@ -28,7 +79,8 @@ const STAFF_ROLES = new Set(['super_admin', 'billing', 'support', 'technician'])
  */
 export async function requireAdmin(
   request: Request,
-): Promise<{ ok: boolean; principal?: AdminPrincipal; error?: string }> {
+  permission?: string,
+): Promise<{ ok: boolean; principal?: AdminPrincipal; error?: string; status?: number }> {
   const header = request.headers.get('authorization') || '';
   const token = header.startsWith('Bearer ') ? header.slice(7).trim() : '';
 
@@ -36,6 +88,7 @@ export async function requireAdmin(
     return {
       ok: false,
       error: 'Authentication required. Please sign in to the admin panel.',
+      status: 401,
     };
   }
 
@@ -47,7 +100,7 @@ export async function requireAdmin(
     });
 
     if (!response.ok) {
-      return { ok: false, error: 'Your session has expired. Please sign in again.' };
+      return { ok: false, error: 'Your session has expired. Please sign in again.', status: 401 };
     }
 
     const payload = await response.json();
@@ -57,6 +110,16 @@ export async function requireAdmin(
       return {
         ok: false,
         error: 'This action is restricted to staff accounts.',
+        status: 403,
+      };
+    }
+
+    const roleKey = String(user?.role || '');
+    if (permission && !(await hasRolePermission(roleKey, permission))) {
+      return {
+        ok: false,
+        error: 'Your role does not have permission for this action.',
+        status: 403,
       };
     }
 
@@ -73,6 +136,7 @@ export async function requireAdmin(
     return {
       ok: false,
       error: 'The authentication service is unavailable. Please try again in a moment.',
+      status: 503,
     };
   }
 }

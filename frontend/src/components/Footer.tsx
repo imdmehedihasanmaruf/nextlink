@@ -28,17 +28,17 @@ export function Footer() {
 
   const subscriberServices = [
     { label: 'Online Bill Payment', href: '/dashboard' },
-    { label: '1-Click Turbo Boost', href: '/dashboard' },
+    { label: 'Turbo Boost on Request', href: '/dashboard' },
     { label: 'Upgrade Fiber Plan', href: '/packages' },
     { label: 'Line Shifting Request', href: '/tickets' },
-    { label: 'Router Configuration', href: '/dashboard' },
+    { label: 'Router Configuration Help', href: '/tickets' },
   ]
 
   const helpdeskTools = [
     { label: 'Submit Support Ticket', href: '/tickets' },
-    { label: 'Live Speedtest Tool', href: '/dashboard' },
-    { label: 'Bandwidth Traffic Monitor', href: '/dashboard' },
-    { label: 'Referral Rewards & Bonus', href: '/dashboard' },
+    { label: 'Speedtest (via CDN Peering)', href: '/dashboard' },
+    { label: 'Configured Bandwidth Reference', href: '/dashboard' },
+    { label: 'Referral Invite', href: '/dashboard' },
     { label: 'Invoice & Billing Receipts', href: '/dashboard' },
   ]
 

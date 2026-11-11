@@ -5,6 +5,25 @@ import { requireAdmin } from '@/lib/requireAdmin';
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
 
+/**
+ * The only store collections a restore may write. Without this, a crafted
+ * backup could inject arbitrary `app_settings` keys into the store.
+ */
+const RESTORABLE_COLLECTIONS = new Set([
+  'packages',
+  'subscribers',
+  'invoices',
+  'tickets',
+  'technicians',
+  'adminUsers',
+  'roles',
+  'referralRewards',
+  'boostBandwidth',
+  'liveLatency',
+  'interfaceTraffic',
+  'peeringHubs',
+]);
+
 const ALLOWED_ORIGINS = (process.env.ADMIN_CORS_ORIGINS ||
   'http://localhost:8000,http://localhost:8001,http://localhost:3000').split(',');
 
@@ -43,9 +62,9 @@ function redactCredentials(record: any) {
 }
 
 export async function GET(request: Request) {
-  const auth = await requireAdmin(request);
+  const auth = await requireAdmin(request, 'cms');
   if (!auth.ok) {
-    return NextResponse.json({ error: auth.error }, { status: 401, headers: corsHeaders });
+    return NextResponse.json({ error: auth.error }, { status: auth.status ?? 401, headers: corsHeaders });
   }
 
   try {
@@ -87,9 +106,9 @@ export async function GET(request: Request) {
 }
 
 export async function POST(request: Request) {
-  const auth = await requireAdmin(request);
+  const auth = await requireAdmin(request, 'cms');
   if (!auth.ok) {
-    return NextResponse.json({ error: auth.error }, { status: 401, headers: corsHeaders });
+    return NextResponse.json({ error: auth.error }, { status: auth.status ?? 401, headers: corsHeaders });
   }
 
   try {
@@ -101,17 +120,30 @@ export async function POST(request: Request) {
     // Validate everything BEFORE touching the database. The previous version
     // wrote the collections one by one, so a half-valid file left the store
     // half-restored with the live data already replaced.
-    const collections: Record<string, any[]> = {};
+    // The dashboard-card configs (referralRewards, boostBandwidth, …) are
+    // objects, not arrays — they must round-trip too, or a restore silently
+    // loses them.
+    const SETTINGS_KEYS = new Set([
+      'referralRewards',
+      'boostBandwidth',
+      'liveLatency',
+      'interfaceTraffic',
+      'peeringHubs',
+    ]);
+    const collections: Record<string, any> = {};
+    const collect = (key: string, val: any) => {
+      if (key === 'demoMode' || key === 'lastUpdated') return;
+      if (!RESTORABLE_COLLECTIONS.has(key)) return;
+      if (SETTINGS_KEYS.has(key)) {
+        if (val && typeof val === 'object') collections[key] = val;
+      } else if (Array.isArray(val)) {
+        collections[key] = val;
+      }
+    };
     if (payload.adminStore && typeof payload.adminStore === 'object') {
-      for (const [key, val] of Object.entries(payload.adminStore)) {
-        if (key === 'demoMode' || key === 'lastUpdated') continue;
-        if (Array.isArray(val)) collections[key] = val;
-      }
+      for (const [key, val] of Object.entries(payload.adminStore)) collect(key, val);
     } else {
-      const keys = ['packages', 'subscribers', 'invoices', 'tickets', 'technicians', 'adminUsers', 'roles'];
-      for (const key of keys) {
-        if (Array.isArray(payload[key])) collections[key] = payload[key];
-      }
+      for (const key of RESTORABLE_COLLECTIONS) collect(key, payload[key]);
     }
 
     if (Object.keys(collections).length === 0) {
@@ -121,11 +153,11 @@ export async function POST(request: Request) {
       );
     }
 
-    // The restore runs collection by collection. An empty collection is never
+    // The restore runs collection by collection. An empty array is never
     // restored — an empty subscribers array would delete every customer.
     const restored: string[] = [];
     for (const [key, data] of Object.entries(collections)) {
-      if (data.length === 0) {
+      if (Array.isArray(data) && data.length === 0) {
         console.warn(`[backup] skipping the empty "${key}" collection in the restore`);
         continue;
       }

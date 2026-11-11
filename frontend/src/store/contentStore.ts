@@ -582,33 +582,31 @@ const defaultContent = {
   },
   coverageAreas: [],
   retention: {},
+  // No fabricated history ships with the build. The referral program has no
+  // tracking backend yet — the operator configures the copy in the admin panel
+  // and the credits are not applied automatically. Empty lists render as no
+  // stats rather than made-up ones.
   referralRewards: {
-    enabled: true,
+    enabled: false,
     bonusAmount: 25,
     discountPercent: 10,
-    defaultCode: "NL-GLOBAL-REF",
-    title: "Earn $25 on Your Next Invoice",
-    description: "Share your unique invite link with colleagues or neighbors worldwide",
-    friendsJoinedCount: 3,
-    totalSavedAmount: 75,
-    tierName: "Platinum Tier",
-    referrals: [
-      { id: "REF-001", name: "Alexander Wright", email: "alex.w@cloudcorp.io", date: "2026-10-14", reward: 25, status: "Rewarded" },
-      { id: "REF-002", name: "Elena Rostova", email: "elena.r@quantum.tech", date: "2026-10-28", reward: 25, status: "Rewarded" },
-      { id: "REF-003", name: "Marcus Vance", email: "marcus.v@edgefiber.net", date: "2026-11-02", reward: 25, status: "Rewarded" }
-    ]
+    defaultCode: "",
+    title: "Refer a friend",
+    description: "Share your invite link with a friend — you both receive billing credit when they activate.",
+    friendsJoinedCount: 0,
+    totalSavedAmount: 0,
+    tierName: "",
+    referrals: [],
   },
   boostBandwidth: {
-    enabled: true,
+    enabled: false,
     boostSpeed: 1000,
     durationHours: 6,
-    title: "1-Click 1 Gbps Turbo Boost",
-    description: "Instantly scale bandwidth for massive cloud syncs, torrents, or gaming",
-    status: "Ready",
-    burstQuotaPerMonth: 3,
-    history: [
-      { id: "BST-001", subscriber: "NL-SUB-0192", speed: 1000, duration: 6, date: "2026-11-05", status: "Completed" }
-    ]
+    title: "Turbo Boost on Request",
+    description: "Request a time-boxed speed burst over the service hours. Routed to support like any other change.",
+    status: "",
+    burstQuotaPerMonth: 0,
+    history: [],
   },
   liveLatency: {
     enabled: true,

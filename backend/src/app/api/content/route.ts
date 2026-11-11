@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { getSiteContent, saveSiteContent, saveAdminSection, getAdminStore } from '@/lib/db';
-import { requireAdmin } from '@/lib/requireAdmin';
+import { requireAdmin, hasRolePermission } from '@/lib/requireAdmin';
 import type { Package } from '@/lib/mockData';
 
 export const dynamic = 'force-dynamic';
@@ -36,9 +36,9 @@ export async function GET() {
 }
 
 export async function POST(request: Request) {
-  const auth = await requireAdmin(request);
+  const auth = await requireAdmin(request, 'cms');
   if (!auth.ok) {
-    return NextResponse.json({ error: auth.error }, { status: 401, headers: corsHeaders });
+    return NextResponse.json({ error: auth.error }, { status: auth.status ?? 401, headers: corsHeaders });
   }
 
   try {
@@ -48,6 +48,16 @@ export async function POST(request: Request) {
       return NextResponse.json(
         { error: 'The content payload must be an object.' },
         { status: 400, headers: corsHeaders },
+      );
+    }
+
+    // The CMS save also rewrites the storefront package catalogue. Editing
+    // that portion requires the packages permission, not only the CMS one.
+    if (Array.isArray(body.packages) && body.packages.length > 0
+      && !(await hasRolePermission(auth.principal!.role, 'packages'))) {
+      return NextResponse.json(
+        { error: 'Your role does not have permission to edit the package catalogue.' },
+        { status: 403, headers: corsHeaders },
       );
     }
 

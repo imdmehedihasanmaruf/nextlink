@@ -2,7 +2,7 @@
 
 import React, { useState, useEffect, useMemo } from 'react';
 import {
-  Users, ShieldAlert, ShieldCheck, Eye, EyeOff, Ban, CheckCircle2,
+  Users, ShieldAlert, ShieldCheck, Eye, Ban, CheckCircle2,
   Trash2, KeyRound, Search, Plus, RefreshCw, AlertTriangle, Globe,
   Shield, MapPin, Phone, Mail, Wifi, Copy, Check, Lock, AlertOctagon,
   ExternalLink, UserCheck
@@ -21,14 +21,14 @@ import { formatDate } from '@/lib/utils';
 import { apiPost } from '@/lib/apiClient';
 
 export default function UserDetailsPage() {
-  const { subscribers, packages, addSubscriber, updateSubscriber, deleteSubscriber, fetchData, isLoading } = useAdminDataStore();
+  const { subscribers, packages, updateSubscriber, deleteSubscriber, fetchData, isLoading } = useAdminDataStore();
   
   // State
   const [activeTab, setActiveTab] = useState<'all' | 'active' | 'vpn' | 'spam' | 'scam' | 'blocked'>('all');
   const [searchQuery, setSearchQuery] = useState('');
   const [riskFilter, setRiskFilter] = useState('all');
-  const [visiblePasswords, setVisiblePasswords] = useState<Record<string, boolean>>({});
   const [copiedId, setCopiedId] = useState<string | null>(null);
+  const [busyUser, setBusyUser] = useState<string | null>(null);
 
   // Modals state
   const [selectedUser, setSelectedUser] = useState<Subscriber | null>(null);
@@ -39,13 +39,13 @@ export default function UserDetailsPage() {
   const [confirmPassword, setConfirmPassword] = useState('');
   const [addUserOpen, setAddUserOpen] = useState(false);
 
-  // New user form state
+  // New user form state. There is no password field — the API generates a
+  // one-time temporary password for each account.
   const [newUserForm, setNewUserForm] = useState({
     name: '',
     username: '',
     phone: '',
     email: '',
-    password: '',
     packageId: '',
     address: '',
     isVpn: false,
@@ -57,13 +57,6 @@ export default function UserDetailsPage() {
   useEffect(() => {
     fetchData();
   }, [fetchData]);
-
-  const togglePasswordVisibility = (userId: string) => {
-    setVisiblePasswords(prev => ({
-      ...prev,
-      [userId]: !prev[userId],
-    }));
-  };
 
   const copyToClipboard = (text: string, id: string) => {
     navigator.clipboard.writeText(text);
@@ -117,25 +110,41 @@ export default function UserDetailsPage() {
     return { total, active, vpn, spam, scam, blocked };
   }, [subscribers]);
 
-  // Block / Unblock handler
+  // Block / Unblock handler. Blocking goes through the billing service,
+  // which disables the PPPoE secret on the router — otherwise the customer
+  // remained connected while the admin panel claimed their line was cut.
   const handleToggleBlock = async (user: Subscriber) => {
     const isCurrentlyBlocked = user.status === 'blocked' || user.status === 'suspended';
-    const nextStatus: SubscriberStatus = isCurrentlyBlocked ? 'active' : 'blocked';
-    
-    const updated: Subscriber = {
-      ...user,
-      status: nextStatus,
-    };
+    const action = isCurrentlyBlocked ? 'restore' : 'suspend';
 
-    await updateSubscriber(updated);
-    toast.success(
-      isCurrentlyBlocked 
-        ? `User ${user.name} has been unblocked and line reactivated!` 
-        : `User ${user.name} has been blocked and network access revoked!`
-    );
+    if (confirm(
+      isCurrentlyBlocked
+        ? `Restore ${user.name}'s connection on the router?`
+        : `Suspend ${user.name}'s connection on the router? Their PPPoE secret will be disabled.`
+    )) {
+      setBusyUser(user.id);
+      const result = await apiPost(`/api/mikrotik/${action}`, {
+        subscriberId: user.id,
+        username: user.username || user.id,
+      });
+      setBusyUser(null);
 
-    if (selectedUser?.id === user.id) {
-      setSelectedUser(updated);
+      if (!result.success) {
+        toast.error(result.error || `The router refused the ${action} request`);
+        return;
+      }
+
+      toast.success(
+        isCurrentlyBlocked
+          ? `${user.name}'s line restored on the router and account activated.`
+          : `${user.name}'s line suspended on the router and account suspended.`
+      );
+
+      await fetchData();
+      if (selectedUser?.id === user.id) {
+        setSelectedUser(null);
+        setViewDetailsOpen(false);
+      }
     }
   };
 
@@ -212,7 +221,9 @@ export default function UserDetailsPage() {
     setConfirmPassword(res);
   };
 
-  // Add new user handler
+  // Add new user handler. The account is created through the backend so the
+  // credential is stored only as a hash — the operator receives a one-time
+  // temporary password to hand to the customer.
   const handleCreateUser = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!newUserForm.name || !newUserForm.phone || !newUserForm.email) {
@@ -220,51 +231,45 @@ export default function UserDetailsPage() {
       return;
     }
 
-    const selectedPkg = packages.find(p => p.id === newUserForm.packageId) || packages[0];
-    // The id has to be unique. The previous value was drawn from a space of
-    // 9000 numbers, so a collision silently replaced an existing customer.
-    const newId = `NL-${new Date().getFullYear()}-${crypto.randomUUID().slice(0, 8).toUpperCase()}`;
+    if (!newUserForm.packageId) {
+      toast.error('Please choose a package for this customer');
+      return;
+    }
 
-    const newSub: Subscriber = {
-      id: newId,
+    setBusyUser('creating');
+    const result = await apiPost('/api/users', {
       name: newUserForm.name,
       username: newUserForm.username || newUserForm.email.split('@')[0],
       phone: newUserForm.phone,
       email: newUserForm.email,
-      password: newUserForm.password || 'NextLink@2026',
-      address: newUserForm.address || 'Central Fiber Grid',
-      zone: 'Dhaka Metro',
-      packageId: selectedPkg ? selectedPkg.id : 'pkg-default',
-      packageName: selectedPkg ? selectedPkg.name : 'Gigabit Fiber',
-      status: newUserForm.isScam ? 'blocked' : 'active',
-      dueDate: new Date(Date.now() + 30 * 86400000).toISOString().split('T')[0],
-      joinDate: new Date().toISOString().split('T')[0],
-      connectionType: 'Optical Fiber GPON',
-      ipAddress: `103.147.218.${Math.floor(10 + Math.random() * 240)}`,
-      macAddress: `00:1A:2B:3C:${Math.floor(10 + Math.random() * 89)}:${Math.floor(10 + Math.random() * 89)}`,
-      balance: 0,
-      totalPaid: 0,
+      // Never the operator's own input — the API generates a one-time
+      // password and returns it exactly once.
+      password: '',
+      packageId: newUserForm.packageId,
+      address: newUserForm.address,
       isVpn: newUserForm.isVpn,
-      vpnProvider: newUserForm.isVpn ? 'Commercial VPN Proxy' : null,
       isSpam: newUserForm.isSpam,
       isScam: newUserForm.isScam,
       riskScore: newUserForm.riskScore,
-      riskReason: newUserForm.isScam 
-        ? 'High Risk Scam flagged during registration' 
-        : newUserForm.isVpn 
-        ? 'VPN detected on IP signature' 
-        : 'Clean verified user',
-    };
+    });
+    setBusyUser(null);
 
-    await addSubscriber(newSub);
-    toast.success(`User ${newSub.name} created and registered successfully!`);
+    if (!result.success || !result.temporaryPassword) {
+      toast.error(result.error || 'The user could not be created');
+      return;
+    }
+
+    toast.success(
+      `User ${newUserForm.name} created. Temporary password: ${result.temporaryPassword} — share it with the customer and ask them to change it on first sign-in.`,
+      { duration: 30000 },
+    );
+
     setAddUserOpen(false);
     setNewUserForm({
       name: '',
       username: '',
       phone: '',
       email: '',
-      password: '',
       packageId: '',
       address: '',
       isVpn: false,
@@ -272,6 +277,7 @@ export default function UserDetailsPage() {
       isScam: false,
       riskScore: 'low',
     });
+    await fetchData();
   };
 
   return (
@@ -523,8 +529,6 @@ export default function UserDetailsPage() {
               ) : (
                 filteredUsers.map((user) => {
                   const isBlocked = user.status === 'blocked' || user.status === 'suspended';
-                  const isPasswordVisible = !!visiblePasswords[user.id];
-                  const userPassword = user.password || '••••••••';
 
                   return (
                     <tr
@@ -600,25 +604,18 @@ export default function UserDetailsPage() {
                         </div>
                       </td>
 
-                      {/* Password with Forget / Reset option */}
+                      {/* Password — never stored or shown; must be reset */}
                       <td className="py-3.5 px-4 whitespace-nowrap">
                         <div className="flex items-center gap-1.5 bg-muted/40 px-2 py-1 rounded border max-w-[160px]">
                           <Lock className="h-3 w-3 text-muted-foreground shrink-0" />
-                          <span className="font-mono text-xs select-all truncate">
-                            {isPasswordVisible ? (user.password || 'NextLink@2026') : '••••••••'}
+                          <span className="font-mono text-xs text-muted-foreground truncate">
+                            Hashed only
                           </span>
                           <button
                             type="button"
-                            onClick={() => togglePasswordVisibility(user.id)}
-                            className="p-1 hover:text-foreground text-muted-foreground transition-colors ml-auto"
-                            title={isPasswordVisible ? 'Hide password' : 'View password'}
-                          >
-                            {isPasswordVisible ? <EyeOff className="h-3 w-3" /> : <Eye className="h-3 w-3" />}
-                          </button>
-                          <button
-                            type="button"
+                            aria-label="Reset password"
                             onClick={() => handleOpenPasswordModal(user)}
-                            className="p-1 hover:text-primary text-muted-foreground transition-colors"
+                            className="p-1 hover:text-primary text-muted-foreground transition-colors ml-auto"
                             title="Reset / Set New Password"
                           >
                             <KeyRound className="h-3 w-3" />
@@ -700,15 +697,20 @@ export default function UserDetailsPage() {
                           <Button
                             variant="ghost"
                             size="icon"
+                            disabled={busyUser === user.id}
                             className={`h-8 w-8 ${
-                              isBlocked 
-                                ? 'text-emerald-600 hover:text-emerald-700 hover:bg-emerald-50 dark:hover:bg-emerald-950/40' 
+                              isBlocked
+                                ? 'text-emerald-600 hover:text-emerald-700 hover:bg-emerald-50 dark:hover:bg-emerald-950/40'
                                 : 'text-rose-600 hover:text-rose-700 hover:bg-rose-50 dark:hover:bg-rose-950/40'
                             }`}
-                            title={isBlocked ? 'Unblock User' : 'Block User'}
+                            title={busyUser === user.id ? 'Talking to the router…' : isBlocked ? 'Unblock User' : 'Block User'}
                             onClick={() => handleToggleBlock(user)}
                           >
-                            {isBlocked ? <CheckCircle2 className="h-4 w-4" /> : <Ban className="h-4 w-4" />}
+                            {busyUser === user.id
+                              ? <RefreshCw className="h-4 w-4 animate-spin" />
+                              : isBlocked
+                                ? <CheckCircle2 className="h-4 w-4" />
+                                : <Ban className="h-4 w-4" />}
                           </Button>
 
                           {/* Set New Password */}
@@ -830,9 +832,12 @@ export default function UserDetailsPage() {
 
                   <div className="flex items-center justify-between bg-muted/60 p-3 rounded-lg border font-mono text-sm">
                     <div>
-                      <span className="text-xs text-muted-foreground block font-sans">Current Password</span>
-                      <span className="font-bold select-all">
-                        {visiblePasswords[selectedUser.id] ? (selectedUser.password || 'NextLink@2026') : '••••••••••••'}
+                      <span className="text-xs text-muted-foreground block font-sans">Password</span>
+                      <span className="font-bold text-muted-foreground font-sans">
+                        Not shown — passwords are stored as hashes only
+                      </span>
+                      <span className="text-[10px] text-muted-foreground block font-sans mt-0.5">
+                        Use the Reset button to issue a fresh one
                       </span>
                     </div>
                     <div className="flex items-center gap-1">
@@ -840,17 +845,13 @@ export default function UserDetailsPage() {
                         variant="ghost"
                         size="icon"
                         className="h-8 w-8"
-                        onClick={() => togglePasswordVisibility(selectedUser.id)}
+                        title="Issue a new password"
+                        onClick={() => {
+                          setViewDetailsOpen(false);
+                          handleOpenPasswordModal(selectedUser);
+                        }}
                       >
-                        {visiblePasswords[selectedUser.id] ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
-                      </Button>
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        className="h-8 w-8"
-                        onClick={() => copyToClipboard(selectedUser.password || 'NextLink@2026', 'modal-pwd')}
-                      >
-                        {copiedId === 'modal-pwd' ? <Check className="h-4 w-4 text-emerald-500" /> : <Copy className="h-4 w-4" />}
+                        <KeyRound className="h-4 w-4" />
                       </Button>
                     </div>
                   </div>
@@ -1020,10 +1021,16 @@ export default function UserDetailsPage() {
                 <Button
                   variant={selectedUser.status === 'blocked' ? 'default' : 'destructive'}
                   size="sm"
+                  disabled={busyUser === selectedUser.id}
                   onClick={() => handleToggleBlock(selectedUser)}
                   className="gap-1.5 w-full sm:w-auto"
                 >
-                  {selectedUser.status === 'blocked' ? (
+                  {busyUser === selectedUser.id ? (
+                    <>
+                      <RefreshCw className="h-4 w-4 animate-spin" />
+                      Talking to the router…
+                    </>
+                  ) : selectedUser.status === 'blocked' ? (
                     <>
                       <CheckCircle2 className="h-4 w-4" />
                       Unblock User
@@ -1185,12 +1192,12 @@ export default function UserDetailsPage() {
 
             <div className="grid grid-cols-2 gap-3">
               <div className="space-y-1.5">
-                <Label>Initial Password</Label>
-                <Input
-                  placeholder="Default: NextLink@2026"
-                  value={newUserForm.password}
-                  onChange={(e) => setNewUserForm({ ...newUserForm, password: e.target.value })}
-                />
+                <Label>Temporary Password</Label>
+                {/* No password field — the API generates a one-time temporary
+                    password and shows it to you once after creation. */}
+                <div className="text-xs text-muted-foreground bg-muted/50 border rounded-lg px-3 py-2.5 leading-relaxed">
+                  Auto-generated on save — you will see the one-time password once, right after the account is created.
+                </div>
               </div>
 
               <div className="space-y-1.5">
@@ -1264,8 +1271,8 @@ export default function UserDetailsPage() {
               <Button type="button" variant="outline" onClick={() => setAddUserOpen(false)}>
                 Cancel
               </Button>
-              <Button type="submit" className="bg-primary text-primary-foreground">
-                Create User
+              <Button type="submit" className="bg-primary text-primary-foreground" disabled={busyUser === 'creating'}>
+                {busyUser === 'creating' ? 'Creating…' : 'Create User'}
               </Button>
             </DialogFooter>
           </form>
