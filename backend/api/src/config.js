@@ -27,8 +27,8 @@ const rootDir = path.resolve(__dirname, '..');
 
 const config = {
   env: process.env.NODE_ENV || 'development',
-  port: int(process.env.PORT, 3000),
-  apiBaseUrl: process.env.API_BASE_URL || 'http://localhost:3000',
+  port: int(process.env.PORT, 3100),
+  apiBaseUrl: process.env.API_BASE_URL || 'http://localhost:3100',
   /**
    * Where the customer's browser lands after a payment completes. The
    * callback handler redirects the browser here so the portal can show the
