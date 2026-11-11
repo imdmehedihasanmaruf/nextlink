@@ -2,6 +2,7 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 import type { UserRole } from '@/lib/mockData';
+import { clearApiToken } from '@/lib/apiClient';
 
 export interface AuthUser {
   id: string;
@@ -36,7 +37,12 @@ export const useAuthStore = create<AuthState>()(
         set((state) => ({
           user: state.user ? { ...state.user, ...data } : null,
         })),
-      logout: () => set({ user: null, isAuthenticated: false }),
+      // The API session is closed as well. Leaving it behind would let the
+      // next sign-in reuse the previous staff token.
+      logout: () => {
+        clearApiToken();
+        set({ user: null, isAuthenticated: false });
+      },
       setHasHydrated: (state) => set({ hasHydrated: state }),
     }),
     {

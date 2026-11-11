@@ -743,10 +743,14 @@ export async function updateOrderStatus(orderId: string, newStatus: string): Pro
       if (subRes.rows.length > 0) {
         const raw = subRes.rows[0].raw_data || {};
         if (order.purchase_type === 'upgrade') {
+          // The plan only changes now, on approval. A pending or cancelled
+          // order leaves the account on its current plan.
           raw.packageId = order.package_id;
           raw.packageName = order.package_name;
           raw.speed = order.download_speed;
           raw.uploadSpeed = order.upload_speed;
+          delete raw.pendingPackageId;
+          delete raw.pendingPackageName;
         } else if (order.purchase_type === 'additional') {
           if (!raw.additionalConnections) raw.additionalConnections = [];
           raw.additionalConnections.push({
@@ -764,6 +768,27 @@ export async function updateOrderStatus(orderId: string, newStatus: string): Pro
            WHERE id = $3`,
           [raw.packageId || order.package_id, JSON.stringify(raw), order.customer_id]
         );
+      }
+    }
+
+    if (newStatus === 'Cancelled') {
+      // The account goes back to the plan it had before the order.
+      const subRes = await client.query('SELECT raw_data FROM subscribers WHERE id = $1', [order.customer_id]);
+      if (subRes.rows.length > 0) {
+        const raw = subRes.rows[0].raw_data || {};
+        if (raw.pendingPackageId) {
+          raw.packageId = order.current_package_id || raw.packageId;
+          raw.packageName = order.current_package_name || raw.packageName;
+          delete raw.pendingPackageId;
+          delete raw.pendingPackageName;
+
+          await client.query(
+            `UPDATE subscribers 
+             SET package_id = $1, raw_data = $2, updated_at = NOW() 
+             WHERE id = $3`,
+            [raw.packageId || order.current_package_id || '', JSON.stringify(raw), order.customer_id]
+          );
+        }
       }
     }
 

@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { getCustomerOrders, getSubscriberById } from '@/lib/db';
+import { authenticate, authError, ownsAccount } from '@/lib/customerAuth';
 
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
@@ -16,18 +17,24 @@ export async function OPTIONS() {
 
 export async function GET(request: Request) {
   try {
+    // Only the signed-in subscriber can read their own orders.
+    const auth = await authenticate(request);
+    if (!auth.ok) {
+      return authError(auth);
+    }
+
     const { searchParams } = new URL(request.url);
     const customerId = searchParams.get('customerId');
 
-    if (!customerId) {
+    if (!ownsAccount(auth, customerId || undefined)) {
       return NextResponse.json(
-        { success: false, error: 'Customer ID is required.' },
-        { status: 400, headers: corsHeaders }
+        { success: false, error: 'You are not allowed to view the orders of this account.' },
+        { status: 403, headers: corsHeaders }
       );
     }
 
     // Verify subscriber exists
-    const subscriber = await getSubscriberById(customerId);
+    const subscriber = await getSubscriberById(auth.subscriber!.id);
     if (!subscriber) {
       return NextResponse.json(
         { success: false, error: 'Customer not found.' },
@@ -36,7 +43,7 @@ export async function GET(request: Request) {
     }
 
     // Strict customer isolation: only fetch orders belonging to this customer
-    const orders = await getCustomerOrders(customerId);
+    const orders = await getCustomerOrders(auth.subscriber!.id);
 
     return NextResponse.json(
       {

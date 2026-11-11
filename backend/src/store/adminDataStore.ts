@@ -73,7 +73,7 @@ interface AdminDataState {
 }
 
 export const useAdminDataStore = create<AdminDataState>()(
-  persist(
+  persist<AdminDataState, [], [], Partial<AdminDataState>>(
     (set, get) => ({
       packages: [],
       subscribers: [],
@@ -320,6 +320,21 @@ export const useAdminDataStore = create<AdminDataState>()(
     }),
     {
       name: 'nextlink-admin-persistent-store',
+      // The collections are the server's data, so they are not persisted.
+      // A stale local snapshot could otherwise be written back and delete
+      // rows the server had changed in the meantime.
+      partialize: (state) => {
+        const {
+          packages,
+          subscribers,
+          invoices,
+          tickets,
+          technicians,
+          roles,
+          ...rest
+        } = state;
+        return rest as Partial<AdminDataState>;
+      },
     }
   )
 );

@@ -40,6 +40,15 @@ router.post(
     }),
   }),
   asyncHandler(async (req, res) => {
+    // A ticket needs a session. An anonymous ticket could be used to send
+    // SMS to any phone number and to fill the helpdesk.
+    if (!req.user) {
+      return res.status(401).json({
+        success: false,
+        error: 'Authentication required. Please sign in to raise a support ticket.',
+      });
+    }
+
     const body = req.validatedBody;
     const subscriberId = resolveSubscriber(req) || body.subscriberId || null;
 

@@ -2,6 +2,7 @@
 
 const fs = require('fs');
 const path = require('path');
+const crypto = require('crypto');
 const config = require('../../config');
 const db = require('../../lib/db');
 const logger = require('../../lib/logger');
@@ -131,6 +132,132 @@ async function listRequests({ status = null, limit = 100 } = {}) {
 }
 
 /**
+ * Approve a connection request.
+ *
+ * Approving has to create the customer. Without it the applicant only had a
+ * status string on a request — no account, no invoice, no router line, so
+ * they could never be billed or suspended.
+ *
+ * The whole activation happens in one transaction:
+ *   1. the subscriber row is created
+ *   2. the credential is hashed
+ *   3. the billing profile is created with the catalogue price
+ *   4. the request points at the new account
+ */
+async function approveRequest(id, { activate = true } = {}) {
+  const request = await db.queryOne('SELECT * FROM connection_requests WHERE id = $1', [id]);
+  if (!request) return { success: false, error: 'Connection request not found' };
+
+  // The activation is idempotent: a request that already has an account is
+  // not activated a second time.
+  if (request.subscriber_id) {
+    return {
+      success: true,
+      alreadyActivated: true,
+      subscriberId: request.subscriber_id,
+      request,
+    };
+  }
+
+  const packageId = request.package_id || 'PKG-002';
+  const packageRow = await db.queryOne(
+    'SELECT id, name, price FROM packages WHERE id = $1',
+    [packageId],
+  );
+
+  const subscriberId = `SUB-${crypto.randomUUID().slice(0, 8).toUpperCase()}`;
+  const username =
+    request.phone ||
+    `user${crypto.randomUUID().slice(0, 6)}`;
+  const temporaryPassword = `NL-${crypto.randomUUID().slice(0, 10).toUpperCase()}`;
+
+  const rawData = {
+    id: subscriberId,
+    name: request.full_name,
+    phone: request.phone,
+    email: request.email,
+    address: request.address,
+    username,
+    packageId,
+    packageName: request.package_name || packageRow?.name || 'Standard',
+    status: activate ? 'active' : 'pending',
+    connectionType: 'Optical Fiber GPON',
+    zone: request.address ? 'Dhaka Metro' : 'Dhaka Metro',
+    balance: 0,
+    totalPaid: 0,
+    joinDate: new Date().toISOString().slice(0, 10),
+    dueDate: new Date(Date.now() + 30 * 86400000).toISOString().slice(0, 10),
+    activatedFromRequest: request.id,
+  };
+
+  const credentialHash = await require('../credentials').hashPassword(temporaryPassword);
+
+  await db.transaction(async (client) => {
+    await client.query(
+      `INSERT INTO subscribers (id, name, email, phone, package_id, status, raw_data, created_at, updated_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, NOW(), NOW())
+       ON CONFLICT (id) DO NOTHING`,
+      [
+        subscriberId,
+        request.full_name,
+        request.email || null,
+        request.phone || null,
+        packageId,
+        activate ? 'active' : 'pending',
+        JSON.stringify(rawData),
+      ],
+    );
+
+    await client.query(
+      `INSERT INTO subscriber_credentials (subscriber_id, username, password_hash, raw_data)
+       VALUES ($1, $2, $3, $4)
+       ON CONFLICT (subscriber_id) DO UPDATE SET
+         username = EXCLUDED.username,
+         password_hash = EXCLUDED.password_hash,
+         updated_at = NOW()`,
+      [subscriberId, username, credentialHash, JSON.stringify({ source: 'connection-request' })],
+    );
+
+    await client.query(
+      `INSERT INTO subscriber_billing
+         (subscriber_id, package_id, amount, currency, billing_start, next_invoice_date, auto_disconnect, status, raw_data)
+       VALUES ($1, $2, $3, 'BDT', CURRENT_DATE, $4, TRUE, $5, $6)
+       ON CONFLICT (subscriber_id) DO UPDATE SET
+         package_id = EXCLUDED.package_id,
+         amount = EXCLUDED.amount,
+         next_invoice_date = EXCLUDED.next_invoice_date,
+         status = EXCLUDED.status,
+         updated_at = NOW()`,
+      [
+        subscriberId,
+        packageId,
+        Number(packageRow?.price || 0),
+        new Date(Date.now() + 30 * 86400000).toISOString().slice(0, 10),
+        activate ? 'active' : 'inactive',
+        JSON.stringify({ source: 'connection-request' }),
+      ],
+    );
+
+    await client.query(
+      `UPDATE connection_requests
+          SET status = $2, subscriber_id = $3, updated_at = NOW()
+        WHERE id = $1`,
+      [id, activate ? 'activated' : 'approved', subscriberId],
+    );
+  });
+
+  logger.info('connection request activated', { requestId: id, subscriberId });
+
+  return {
+    success: true,
+    subscriberId,
+    temporaryPassword,
+    packageId,
+    request: await db.queryOne('SELECT * FROM connection_requests WHERE id = $1', [id]),
+  };
+}
+
+/**
  * Update the status of a connection request.
  */
 async function updateStatus(id, status, subscriberId = null) {
@@ -161,6 +288,7 @@ module.exports = {
   createRequest,
   listRequests,
   updateStatus,
+  approveRequest,
   storeIdDocument,
   idDocumentAbsolutePath,
   UPLOAD_DIR,

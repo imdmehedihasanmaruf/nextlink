@@ -70,6 +70,14 @@ export function setSubscriberToken(token: string | null) {
 }
 
 /**
+ * Remove the cached token. Called when the subscriber signs out, so the next
+ * sign-in cannot reuse the previous token.
+ */
+export function clearSubscriberToken() {
+  setSubscriberToken(null);
+}
+
+/**
  * Log the subscriber in against the Express API and cache the JWT.
  */
 export async function subscriberLogin(username: string, password: string): Promise<ApiResult> {
@@ -120,6 +128,15 @@ export async function portalFetch<T = any>(
   } catch {
     return { success: false, error: 'Cannot reach the billing service. Please try again later.' };
   }
+}
+
+/**
+ * The bearer token of the signed-in subscriber, for the calls that go to this
+ * app's own API routes.
+ */
+export function subscriberAuthHeader(): Record<string, string> {
+  const token = getSubscriberToken();
+  return token ? { Authorization: `Bearer ${token}` } : {};
 }
 
 /** Load the subscriber's invoices and transactions. */

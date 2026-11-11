@@ -257,6 +257,15 @@ CREATE TABLE IF NOT EXISTS subscriber_credentials (
 );
 
 -- ---------------------------------------------------------------------------
+-- RouterOS profile for each package
+--
+-- Without this a subscriber on a gigabit plan is shaped at the 10 Mbps
+-- fallback profile.
+-- ---------------------------------------------------------------------------
+ALTER TABLE packages ADD COLUMN IF NOT EXISTS routeros_profile VARCHAR(100);
+ALTER TABLE packages ADD COLUMN IF NOT EXISTS max_limit VARCHAR(50);
+
+-- ---------------------------------------------------------------------------
 -- Indexes (IF NOT EXISTS keeps re-runs safe)
 -- ---------------------------------------------------------------------------
 CREATE INDEX IF NOT EXISTS idx_subscriber_billing_next_invoice ON subscriber_billing (next_invoice_date);

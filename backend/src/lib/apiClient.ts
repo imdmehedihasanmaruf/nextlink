@@ -73,6 +73,13 @@ export function apiLogout() {
 }
 
 /**
+ * Remove the cached token without calling the API.
+ */
+export function clearApiToken() {
+  setApiToken(null);
+}
+
+/**
  * Perform an authenticated request against the Express API.
  */
 export async function apiFetch<T = any>(

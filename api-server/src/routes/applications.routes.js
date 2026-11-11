@@ -101,9 +101,42 @@ router.patch(
     }),
   }),
   asyncHandler(async (req, res) => {
+    const status = req.validatedBody.status;
+
+    // Approving creates the customer. Without the account there was nothing
+    // to bill, provision or suspend.
+    if (status === 'approved' || status === 'activated') {
+      const activation = await applications.approveRequest(req.params.id, {
+        activate: status === 'activated',
+      });
+
+      if (!activation.success) {
+        return res.status(404).json({ success: false, error: activation.error });
+      }
+
+      await audit({
+        actorId: req.user.id,
+        actorRole: req.user.role,
+        action: 'connection_request.activated',
+        entityType: 'connection_request',
+        entityId: req.params.id,
+        details: { subscriberId: activation.subscriberId },
+        ip: req.ip,
+      });
+
+      return res.json({
+        success: true,
+        request: activation.request,
+        subscriberId: activation.subscriberId,
+        // The temporary password is shown once so the operator can hand it
+        // over; it is never stored in clear text.
+        temporaryPassword: activation.alreadyActivated ? undefined : activation.temporaryPassword,
+      });
+    }
+
     const result = await applications.updateStatus(
       req.params.id,
-      req.validatedBody.status,
+      status,
       req.validatedBody.subscriberId || null,
     );
     if (!result) {
@@ -116,7 +149,7 @@ router.patch(
       action: 'connection_request.status_changed',
       entityType: 'connection_request',
       entityId: req.params.id,
-      details: { status: req.validatedBody.status },
+      details: { status },
       ip: req.ip,
     });
 

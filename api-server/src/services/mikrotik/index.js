@@ -314,21 +314,50 @@ async function disconnectSession({ subscriberId, username }) {
 }
 
 /**
+ * The RouterOS profile and queue limit that belong to a subscriber's plan.
+ *
+ * Without this every subscriber was shaped at the 10 Mbps fallback, so a
+ * gigabit customer ran at a hundredth of the speed they pay for.
+ */
+async function getProfileForSubscriber(subscriberId) {
+  const row = await db.queryOne(
+    `SELECT p.routeros_profile, p.max_limit, p.speed
+       FROM subscribers s
+       LEFT JOIN packages p ON p.id = s.package_id
+      WHERE s.id = $1`,
+    [subscriberId],
+  );
+
+  if (row && row.routeros_profile) {
+    return { profile: row.routeros_profile, maxLimit: row.max_limit || '' };
+  }
+
+  // Fall back to a profile derived from the plan speed.
+  const speed = Number(row?.speed || 0);
+  if (speed >= 1000) return { profile: 'nl-1g', maxLimit: '1000M/1000M' };
+  if (speed >= 500) return { profile: 'nl-500m', maxLimit: '500M/500M' };
+  if (speed >= 200) return { profile: 'nl-200m', maxLimit: '200M/200M' };
+  if (speed >= 100) return { profile: 'nl-100m', maxLimit: '100M/100M' };
+  return { profile: 'nl-25m', maxLimit: '25M/25M' };
+}
+
+/**
  * Ensure the PPPoE secret exists for a subscriber, creating it when the
  * router does not know it yet (new activation).
  */
-async function ensureSecret({ subscriberId, username, password, profile = 'default-10m', remoteAddress, address }) {
+async function ensureSecret({ subscriberId, username, password, profile, remoteAddress, address }) {
   const client = await getClient();
-  const request = { subscriberId, username, profile, remoteAddress, address };
+  const resolved = profile ? { profile, maxLimit: '' } : await getProfileForSubscriber(subscriberId);
+  const request = { subscriberId, username, profile: resolved.profile, remoteAddress, address };
   try {
     await client.connect();
     const secrets = await client.listPppoeSecrets();
     const existing = secrets.find((secret) => secret.name === username);
 
     if (existing) {
-      await client.setPppoeSecretProfile(username, profile).catch(() => {});
+      await client.setPppoeSecretProfile(username, resolved.profile).catch(() => {});
       await client.setPppoeSecretDisabled(username, false).catch(() => {});
-      const response = { username, created: false, profile };
+      const response = { username, created: false, profile: resolved.profile };
       await logOperation({ subscriberId, action: 'ensure_secret', status: 'success', request, response });
       return { success: true, ...response };
     }
@@ -336,14 +365,14 @@ async function ensureSecret({ subscriberId, username, password, profile = 'defau
     await client.send('/ppp/secret/add', {
       name: username,
       password,
-      profile,
+      profile: resolved.profile,
       service: 'pppoe',
       'remote-address': remoteAddress || '',
       address: address || '',
       disabled: 'no',
     });
 
-    const response = { username, created: true, profile };
+    const response = { username, created: true, profile: resolved.profile };
     await logOperation({ subscriberId, action: 'ensure_secret', status: 'success', request, response });
     return { success: true, ...response };
   } catch (error) {
@@ -367,5 +396,6 @@ module.exports = {
   applyBandwidthProfile,
   disconnectSession,
   ensureSecret,
+  getProfileForSubscriber,
   logOperation,
 };

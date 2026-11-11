@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { getAdminStore, saveAdminSection } from '@/lib/db';
 import { Subscriber } from '@/lib/mockData';
+import crypto from 'crypto';
 
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
@@ -142,10 +143,22 @@ export async function POST(request: Request) {
     const store = await getAdminStore();
     const currentSubscribers: Subscriber[] = store.subscribers || [];
 
-    // Generate User ID
+    // Generate User ID — a UUID suffix keeps it unique, so a collision can
+    // never replace an existing customer.
     const year = new Date().getFullYear();
-    const subNumber = 1000 + currentSubscribers.length + Math.floor(Math.random() * 900);
-    const newId = `NL-${year}-${subNumber}`;
+    const newId = `NL-${year}-${crypto.randomUUID().slice(0, 8).toUpperCase()}`;
+
+    // The package arrives by name from the public form. The catalogue id is
+    // resolved here, because the billing engine prices an account by its
+    // package id.
+    const catalogue = store.packages || [];
+    const matchedPackage = packageName
+      ? catalogue.find(
+          (pkg: any) =>
+            pkg.id === packageName ||
+            String(pkg.name || '').toLowerCase() === packageName.toLowerCase()
+        )
+      : null;
 
     const newSubscriber: Subscriber = {
       id: newId,
@@ -156,8 +169,8 @@ export async function POST(request: Request) {
       password: password || 'NextLink@2026',
       address: address || 'Optical Distribution Hub, Core Network',
       zone: 'Dhaka Metro',
-      packageId: packageName ? packageName.toLowerCase().replace(/\s+/g, '-') : 'pkg-gigabit',
-      packageName: packageName || 'Gigabit Fiber 50',
+      packageId: matchedPackage?.id || 'PKG-002',
+      packageName: matchedPackage?.name || packageName || 'Standard 200M',
       status: isScam ? 'blocked' : 'active',
       dueDate: new Date(Date.now() + 30 * 86400000).toISOString().split('T')[0],
       joinDate: new Date().toISOString().split('T')[0],

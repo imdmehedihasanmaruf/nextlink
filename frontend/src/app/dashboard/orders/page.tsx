@@ -23,6 +23,7 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/com
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { useAuthStore } from '@/store/authStore'
+import { subscriberAuthHeader } from '@/lib/portalApi'
 
 interface OrderItem {
   id: string
@@ -75,7 +76,9 @@ export default function CustomerOrdersPage() {
     if (!user?.id) return
     setLoading(true)
     try {
-      const res = await fetch(`/api/customer/orders?customerId=${encodeURIComponent(user.id)}`)
+      const res = await fetch(`/api/customer/orders?customerId=${encodeURIComponent(user.id)}`, {
+        headers: subscriberAuthHeader(),
+      })
       const data = await res.json()
       if (data.success && data.orders) {
         setOrders(data.orders)
@@ -227,7 +230,7 @@ export default function CustomerOrdersPage() {
 
                           <td className="py-3 px-4">
                             <Badge variant="outline" className="text-[10px]">
-                              {ord.purchase_type === 'UPGRADE' ? 'Upgrade' : 'Additional Line'}
+                              {ord.purchase_type?.toUpperCase() === 'UPGRADE' ? 'Upgrade' : 'Additional Line'}
                             </Badge>
                           </td>
 

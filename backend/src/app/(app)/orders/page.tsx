@@ -91,11 +91,9 @@ export default function AdminOrdersPage() {
       });
       const data = await res.json();
       if (data.success) {
-        setActionSuccess(
-          newStatus === 'Active' 
-            ? `Order ${orderId} has been approved and provisioned onto the optical network!` 
-            : `Order ${orderId} has been marked as cancelled.`
-        );
+        // The message comes from the server, which knows whether the router
+        // actually confirmed the provisioning.
+        setActionSuccess(data.message || `Order ${orderId} has been updated.`);
         await fetchOrders();
         if (selectedOrder && selectedOrder.id === orderId) {
           setSelectedOrder({ ...selectedOrder, order_status: newStatus });
@@ -316,7 +314,7 @@ export default function AdminOrdersPage() {
 
                         <td className="py-3 px-4">
                           <Badge variant="outline" className="text-[10px]">
-                            {ord.purchase_type === 'UPGRADE' ? 'Upgrade' : 'Additional Line'}
+                            {ord.purchase_type?.toUpperCase() === 'UPGRADE' ? 'Upgrade' : 'Additional Line'}
                           </Badge>
                         </td>
 

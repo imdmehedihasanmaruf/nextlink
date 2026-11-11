@@ -677,28 +677,32 @@ export const useContentStore = create<ContentState>((set) => ({
         } catch (e) {}
       }
 
-      if (data) {
-        set({
-          brand: data.brand || defaultContent.brand,
-          nav: data.nav || defaultContent.nav,
-          notice: data.notice || defaultContent.notice,
-          hero: data.hero || defaultContent.hero,
-          packagesSection: data.packagesSection || defaultContent.packagesSection,
-          packages: Array.isArray(data.packages) ? data.packages : [],
-          mediaHubs: data.mediaHubs || defaultContent.mediaHubs,
-          coverageSection: data.coverageSection || defaultContent.coverageSection,
-          coverageAreas: Array.isArray(data.coverageAreas) ? data.coverageAreas : [],
-          retention: data.retention || {},
-          referralRewards: data.referralRewards || defaultContent.referralRewards,
-          boostBandwidth: data.boostBandwidth || defaultContent.boostBandwidth,
-          liveLatency: data.liveLatency || defaultContent.liveLatency,
-          interfaceTraffic: data.interfaceTraffic || defaultContent.interfaceTraffic,
-          peeringHubs: Array.isArray(data.peeringHubs) ? data.peeringHubs : defaultContent.peeringHubs,
-          ctaBanner: data.ctaBanner || defaultContent.ctaBanner,
-          footer: data.footer || defaultContent.footer,
+      if (data && typeof data === 'object') {
+        // The payload is merged into the current state instead of replacing
+        // it. A partial response used to reset the brand, the hero and the
+        // whole package catalogue to the built-in defaults, which emptied
+        // the pricing page and made the application form unsubmittable.
+        set((state) => ({
+          brand: data.brand || state.brand,
+          nav: data.nav || state.nav,
+          notice: data.notice || state.notice,
+          hero: data.hero || state.hero,
+          packagesSection: data.packagesSection || state.packagesSection,
+          packages: Array.isArray(data.packages) ? data.packages : state.packages,
+          mediaHubs: data.mediaHubs || state.mediaHubs,
+          coverageSection: data.coverageSection || state.coverageSection,
+          coverageAreas: Array.isArray(data.coverageAreas) ? data.coverageAreas : state.coverageAreas,
+          retention: data.retention || state.retention,
+          referralRewards: data.referralRewards || state.referralRewards,
+          boostBandwidth: data.boostBandwidth || state.boostBandwidth,
+          liveLatency: data.liveLatency || state.liveLatency,
+          interfaceTraffic: data.interfaceTraffic || state.interfaceTraffic,
+          peeringHubs: Array.isArray(data.peeringHubs) ? data.peeringHubs : state.peeringHubs,
+          ctaBanner: data.ctaBanner || state.ctaBanner,
+          footer: data.footer || state.footer,
           lastFetched: Date.now(),
           isLoading: false,
-        })
+        }))
       } else {
         set({ isLoading: false })
       }

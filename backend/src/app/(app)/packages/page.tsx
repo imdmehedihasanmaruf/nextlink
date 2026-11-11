@@ -17,6 +17,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { type Package, type PackageCategory, mockPackages } from '@/lib/mockData';
 import { useAdminTranslation } from '@/store/settingsStore';
 import { useAdminDataStore } from '@/store/adminDataStore';
+import crypto from 'crypto';
 
 export default function PackagesPage() {
   const { t } = useAdminTranslation();
@@ -89,7 +90,10 @@ export default function PackagesPage() {
       toast.success(t('Package updated and saved permanently to disk!', 'Package updated and saved to disk!'));
     } else {
       const newPkg: Package = {
-        id: `PKG-${Date.now().toString().slice(-4)}`,
+        // A UUID suffix keeps the id unique. The previous value came from a
+        // space of 10,000 numbers that repeated every 10 seconds, so two
+        // plans could overwrite each other.
+        id: `PKG-${crypto.randomUUID().slice(0, 8).toUpperCase()}`,
         name,
         downloadSpeed: parsedDown,
         uploadSpeed: parsedUp,

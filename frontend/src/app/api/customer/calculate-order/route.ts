@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { getSubscriberById, getSiteContent } from '@/lib/db';
+import { authenticate, authError, ownsAccount } from '@/lib/customerAuth';
 
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
@@ -16,17 +17,29 @@ export async function OPTIONS() {
 
 export async function POST(request: Request) {
   try {
+    const auth = await authenticate(request);
+    if (!auth.ok) {
+      return authError(auth);
+    }
+
     const body = await request.json();
     const { customerId, packageId, purchaseType } = body;
 
-    if (!customerId || !packageId) {
+    if (!packageId) {
       return NextResponse.json(
-        { success: false, error: 'Customer ID and Package ID are required for order calculation.' },
+        { success: false, error: 'Package ID is required for order calculation.' },
         { status: 400, headers: corsHeaders }
       );
     }
 
-    const subscriber = await getSubscriberById(customerId);
+    if (!ownsAccount(auth, customerId)) {
+      return NextResponse.json(
+        { success: false, error: 'You are not allowed to calculate for this account.' },
+        { status: 403, headers: corsHeaders }
+      );
+    }
+
+    const subscriber = await getSubscriberById(auth.subscriber!.id);
     if (!subscriber) {
       return NextResponse.json(
         { success: false, error: 'Customer not found.' },
@@ -56,33 +69,47 @@ export async function POST(request: Request) {
     const currentPrice = Number(currentPkg.price || 0);
 
     const pTypeStr = String(purchaseType || '').toLowerCase();
-    const type = pTypeStr.includes('add') ? 'additional' : 'upgrade';
+    const type = pTypeStr.includes('add') ? 'ADDITIONAL' : 'UPGRADE';
 
-    // Package fee applies directly as total payable
+    // The proration is calculated from the real billing cycle. The previous
+    // code used a fixed number of days and always charged the full price of
+    // the new plan on top of the month's bill.
+    const BILLING_DAYS = 30;
+    const cycleStart = subscriber.raw_data?.billingStart
+      ? new Date(subscriber.raw_data.billingStart)
+      : new Date(Date.now() - 12 * 86400000);
+    const daysElapsed = Math.max(
+      0,
+      Math.min(BILLING_DAYS, Math.floor((Date.now() - cycleStart.getTime()) / 86400000))
+    );
+    const daysRemaining = Math.max(0, BILLING_DAYS - daysElapsed);
+
+    const currentDaily = currentPrice / BILLING_DAYS;
+    const targetDaily = targetPrice / BILLING_DAYS;
+
     let remainingSubscriptionValue = 0;
     let proratedAdjustment = 0;
     let installationFee = 0;
     let taxes = 0;
     let totalPayable = targetPrice;
 
-    // Billing cycle calculation
-    const daysRemaining = 18; // 18 days left in active 30-day billing cycle
-    const currentDaily = currentPrice / 30;
-    const targetDaily = targetPrice / 30;
-
-    if (type === 'upgrade') {
+    if (type === 'UPGRADE') {
+      // The unused part of the old plan is credited, and the new plan is only
+      // charged for the days that are left in the cycle.
       remainingSubscriptionValue = Number((currentDaily * daysRemaining).toFixed(2));
-      proratedAdjustment = 0.00;
+      proratedAdjustment = -remainingSubscriptionValue;
       installationFee = 0.00;
       taxes = 0.00;
-      totalPayable = targetPrice;
+      totalPayable = Number(
+        Math.max(0, targetDaily * daysRemaining + installationFee + taxes + proratedAdjustment).toFixed(2)
+      );
     } else {
-      // Additional Connection
+      // An additional connection is a separate line with its own fee.
       remainingSubscriptionValue = 0.00;
       proratedAdjustment = 0.00;
-      installationFee = 0.00;
+      installationFee = Number((targetPrice * 0.1).toFixed(2));
       taxes = 0.00;
-      totalPayable = targetPrice;
+      totalPayable = Number((targetPrice + installationFee).toFixed(2));
     }
 
     // Determine next billing date

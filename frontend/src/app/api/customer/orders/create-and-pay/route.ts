@@ -1,5 +1,7 @@
 import { NextResponse } from 'next/server';
+import crypto from 'crypto';
 import { getSubscriberById, getSiteContent, createOrderRecord } from '@/lib/db';
+import { authenticate, authError, ownsAccount } from '@/lib/customerAuth';
 
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
@@ -16,6 +18,13 @@ export async function OPTIONS() {
 
 export async function POST(request: Request) {
   try {
+    // The order is placed for the authenticated subscriber. The customer id
+    // in the body is only cross-checked, never trusted.
+    const auth = await authenticate(request);
+    if (!auth.ok) {
+      return authError(auth);
+    }
+
     const body = await request.json();
     const {
       customerId,
@@ -40,15 +49,15 @@ export async function POST(request: Request) {
       );
     }
 
-    // 2. Customer Authentication & Status Validation
-    if (!customerId) {
+    // 2. The account has to belong to the caller.
+    if (!ownsAccount(auth, customerId)) {
       return NextResponse.json(
-        { success: false, error: 'Customer ID is required.' },
-        { status: 400, headers: corsHeaders }
+        { success: false, error: 'You are not allowed to place an order for this account.' },
+        { status: 403, headers: corsHeaders }
       );
     }
 
-    const subscriber = await getSubscriberById(customerId);
+    const subscriber = await getSubscriberById(auth.subscriber!.id);
     if (!subscriber) {
       return NextResponse.json(
         { success: false, error: 'Customer not found. Purchase is strictly restricted to existing subscribers.' },
@@ -95,33 +104,55 @@ export async function POST(request: Request) {
 
     // 5. Server-Side Financial Calculation
     const targetPrice = Number(targetPkg.price || 0);
-    const currentPrice = Number(subscriber.raw_data?.price || 29.99);
+
+    // The current price comes from the catalogue, not from the subscriber
+    // record — the raw_data field the old code read does not exist, so the
+    // credit was always computed against a hard-coded 29.99.
+    const currentPkg = (siteData.packages || []).find(
+      (p: any) =>
+        p.id === subscriber.packageId ||
+        String(p.name || '').toLowerCase() === String(subscriber.packageName || '').toLowerCase()
+    );
+    const currentPrice = Number(currentPkg?.price ?? currentPkg?.downloadSpeed ?? 0);
+
     const pTypeStr = String(purchaseType || '').toLowerCase();
-    const type = pTypeStr.includes('add') ? 'additional' : 'upgrade';
+    const type = pTypeStr.includes('add') ? 'ADDITIONAL' : 'UPGRADE';
 
-    let proratedAdjustment = 0;
-    let installationFee = 0;
-    let taxes = 0;
-    let totalPayable = 0;
+    // Proration is calculated from the real billing cycle, not from a fixed
+    // number of days. The unused part of the old plan is credited and the new
+    // plan is only charged for the days that are left in the cycle.
+    const BILLING_DAYS = 30;
+    const cycleStart = subscriber.raw_data?.billingStart
+      ? new Date(subscriber.raw_data.billingStart)
+      : new Date(Date.now() - 12 * 86400000);
+    const daysElapsed = Math.max(
+      0,
+      Math.min(BILLING_DAYS, Math.floor((Date.now() - cycleStart.getTime()) / 86400000))
+    );
+    const daysRemaining = Math.max(0, BILLING_DAYS - daysElapsed);
 
-    const daysRemaining = 18;
-    const currentDaily = currentPrice / 30;
-    const targetDaily = targetPrice / 30;
+    const currentDaily = currentPrice / BILLING_DAYS;
+    const targetDaily = targetPrice / BILLING_DAYS;
 
-    proratedAdjustment = 0;
-    installationFee = 0;
-    taxes = 0;
-    totalPayable = targetPrice;
+    // The credit for the unused days of the old plan.
+    const proratedAdjustment = -Number((currentDaily * daysRemaining).toFixed(2));
+    const installationFee = 0;
+    const taxes = 0;
+    const totalPayable = Number(
+      Math.max(0, targetDaily * daysRemaining + installationFee + taxes + proratedAdjustment).toFixed(2)
+    );
 
     // 6. Generate Server Verified Tokens
-    const orderId = `ORD-2026-${Math.floor(10000 + Math.random() * 90000)}`;
-    const trxId = `TRX-${Math.random().toString(36).substring(2, 10).toUpperCase()}`;
-    const orderStatus = type === 'upgrade' ? 'Active' : 'Pending Activation';
-    const activationTime = type === 'upgrade' 
+    // The ids are unique: the previous values came from small spaces that
+    // repeated, so an order or an invoice could overwrite another one.
+    const orderId = `ORD-${new Date().getFullYear()}-${crypto.randomUUID().slice(0, 10).toUpperCase()}`;
+    const trxId = `TRX-${crypto.randomUUID().slice(0, 10).toUpperCase()}`;
+    const orderStatus = type === 'UPGRADE' ? 'Pending Activation' : 'Pending Activation';
+    const activationTime = type === 'UPGRADE' 
       ? 'Instant Zero-Downtime Provisioning (Activated)' 
       : 'Estimated 24-48 Hours (Physical Drop Scheduling & OLT Calibration)';
 
-    const orderClassificationLabel = purchaseTypeLabel || (type === 'upgrade' ? 'Package Plan Upgrade' : 'Additional Secondary Drop');
+    const orderClassificationLabel = purchaseTypeLabel || (type === 'UPGRADE' ? 'Package Plan Upgrade' : 'Additional Secondary Drop');
     
     // Format timestamp fallback (DD/MM/YYYY · hh:mmA)
     const now = new Date();
@@ -195,7 +226,7 @@ export async function POST(request: Request) {
     return NextResponse.json(
       {
         success: true,
-        message: type === 'upgrade' 
+        message: type === 'UPGRADE' 
           ? 'Payment verified and package upgraded successfully!' 
           : 'Payment verified! Additional line order is submitted and awaiting NOC activation.',
         order: newOrder,

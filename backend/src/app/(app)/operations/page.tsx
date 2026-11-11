@@ -117,7 +117,18 @@ export default function OperationsPage() {
     });
     setBusy(null);
     if (result.success) {
-      toast.success(`Request marked as ${status}`);
+      if (result.subscriberId) {
+        // Approving creates the account, so the operator needs the details
+        // to hand over to the customer.
+        toast.success(
+          `Request approved — account ${result.subscriberId} created${
+            result.temporaryPassword ? ` (temporary password: ${result.temporaryPassword})` : ''
+          }`,
+          { duration: 12000 }
+        );
+      } else {
+        toast.success(`Request marked as ${status}`);
+      }
       loadAll();
     } else {
       toast.error(result.error || 'Could not update the request');

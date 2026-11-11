@@ -316,7 +316,9 @@ router.post(
       subscriberId: body.subscriberId,
       username: body.username,
       password: body.password,
-      profile: body.profile || 'default-10m',
+      // Without an explicit profile the one that belongs to the subscriber's
+      // plan is used, so a gigabit customer is not shaped at 10 Mbps.
+      profile: body.profile || undefined,
       remoteAddress: body.remoteAddress,
       address: body.address,
     });

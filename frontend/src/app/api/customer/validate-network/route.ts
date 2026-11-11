@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { getSubscriberById, getSiteContent } from '@/lib/db';
+import { authenticate, authError, ownsAccount } from '@/lib/customerAuth';
 
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
@@ -16,17 +17,29 @@ export async function OPTIONS() {
 
 export async function POST(request: Request) {
   try {
+    const auth = await authenticate(request);
+    if (!auth.ok) {
+      return authError(auth);
+    }
+
     const body = await request.json();
     const { customerId, packageId, purchaseType } = body;
 
-    if (!customerId || !packageId) {
+    if (!packageId) {
       return NextResponse.json(
-        { success: false, error: 'Customer ID and Package ID are required.' },
+        { success: false, error: 'Package ID is required.' },
         { status: 400, headers: corsHeaders }
       );
     }
 
-    const subscriber = await getSubscriberById(customerId);
+    if (!ownsAccount(auth, customerId)) {
+      return NextResponse.json(
+        { success: false, error: 'You are not allowed to check this account.' },
+        { status: 403, headers: corsHeaders }
+      );
+    }
+
+    const subscriber = await getSubscriberById(auth.subscriber!.id);
     if (!subscriber) {
       return NextResponse.json(
         { success: false, error: 'Customer record not found.' },

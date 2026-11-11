@@ -2,6 +2,7 @@
 
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
+import { clearSubscriberToken } from '@/lib/portalApi'
 
 export interface SubscriberUser {
   id: string
@@ -44,7 +45,13 @@ export const useAuthStore = create<AuthState>()(
         set((state) => ({
           user: state.user ? { ...state.user, ...data } : null,
         })),
-      logout: () => set({ user: null, isAuthenticated: false }),
+      // The billing service token is cleared as well. Without that, signing
+      // in as another subscriber could still send the previous subscriber's
+      // token and show their invoices.
+      logout: () => {
+        clearSubscriberToken()
+        set({ user: null, isAuthenticated: false })
+      },
       setHasHydrated: (state) => set({ hasHydrated: state }),
     }),
     {

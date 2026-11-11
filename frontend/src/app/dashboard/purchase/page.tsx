@@ -31,6 +31,7 @@ import {
   Globe,
   MapPin,
   RefreshCw,
+  Loader2,
   X
 } from 'lucide-react'
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
@@ -40,6 +41,7 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { useAuthStore } from '@/store/authStore'
 import { useContentStore, PackageItem } from '@/store/contentStore'
+import { subscriberAuthHeader } from '@/lib/portalApi'
 
 type PurchaseType = 'UPGRADE' | 'ADDITIONAL'
 type PaymentGateway = 'card' | 'payoneer' | 'applepay' | 'bkash' | 'upi'
@@ -91,6 +93,8 @@ function PurchaseContent() {
     message?: string
     balance?: number
     subscriber?: any
+    /** The verification service could not be reached — not a restriction. */
+    verificationFailed?: boolean
   } | null>(null)
 
   // Step Tracker (1: Package, 2: Type, 3: Compatibility, 4: Summary, 5: Payment, 6: Confirmed)
@@ -110,6 +114,10 @@ function PurchaseContent() {
     hardwareRequired?: string
     upgradeHardwareNeeded?: boolean
     notes?: string
+    /** The verification service could not be reached — not a pass. */
+    verificationFailed?: boolean
+    available?: boolean
+    error?: string
   } | null>(null)
 
   // Calculation State
@@ -225,14 +233,31 @@ function PurchaseContent() {
     const verifyCustomer = async () => {
       setIsVerifyingEligibility(true)
       try {
-        const res = await fetch(`/api/customer/validate-eligibility?customerId=${encodeURIComponent(user.id)}`)
+        const res = await fetch(`/api/customer/validate-eligibility?customerId=${encodeURIComponent(user.id)}`, {
+          headers: subscriberAuthHeader(),
+        })
         const data = await res.json()
-        setEligibilityData(data)
+        // A server error is not an eligibility problem, so the two are kept
+        // apart — otherwise a failing request shows a red restriction notice
+        // to a paying customer.
+        if (!res.ok) {
+          setEligibilityData({
+            eligible: false,
+            restrictionCode: 'VERIFICATION_UNAVAILABLE',
+            verificationFailed: true,
+            message:
+              data?.error ||
+              'The subscriber verification service could not be reached. Please retry in a moment.',
+          })
+        } else {
+          setEligibilityData(data)
+        }
       } catch (err) {
         console.error('Eligibility check error:', err)
         setEligibilityData({
           eligible: false,
           restrictionCode: 'NETWORK_ERROR',
+          verificationFailed: true,
           message: 'Unable to connect to NextLink optical subscriber verification database.'
         })
       } finally {
@@ -268,17 +293,35 @@ function PurchaseContent() {
       try {
         const res = await fetch('/api/customer/validate-network', {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: { 'Content-Type': 'application/json', ...subscriberAuthHeader() },
           body: JSON.stringify({
             customerId: user.id,
             packageId: selectedPackage.id,
+            purchaseType,
             speed: selectedPackage.speed
           })
         })
         const result = await res.json()
-        setNetworkValidation(result)
+        if (!res.ok) {
+          // A failed check is not a pass. The badge below reads the result, so
+          // the verification is marked as unavailable instead of cleared.
+          setNetworkValidation({
+            compatible: false,
+            available: false,
+            verificationFailed: true,
+            error: result?.error || 'The network verification service could not be reached.',
+          })
+        } else {
+          setNetworkValidation(result)
+        }
       } catch (e) {
         console.error('Network check error:', e)
+        setNetworkValidation({
+          compatible: false,
+          available: false,
+          verificationFailed: true,
+          error: 'The network verification service could not be reached.',
+        })
       } finally {
         setNetworkCheckLoading(false)
       }
@@ -296,7 +339,7 @@ function PurchaseContent() {
       try {
         const res = await fetch('/api/customer/calculate-order', {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: { 'Content-Type': 'application/json', ...subscriberAuthHeader() },
           body: JSON.stringify({
             customerId: user.id,
             packageId: selectedPackage.id,
@@ -336,7 +379,7 @@ function PurchaseContent() {
 
       const res = await fetch('/api/customer/orders/create-and-pay', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...subscriberAuthHeader() },
         body: JSON.stringify({
           customerId: user.id,
           packageId: selectedPackage.id,
@@ -785,9 +828,24 @@ function PurchaseContent() {
                         <Cpu className="h-5 w-5 text-primary" />
                         <CardTitle className="text-base">Carrier Optical Line Diagnostics</CardTitle>
                       </div>
-                      <Badge className="bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/20 text-xs">
-                        PASSED
-                      </Badge>
+                      {networkCheckLoading ? (
+                        <Badge className="bg-muted text-muted-foreground border-border text-xs">
+                          <Loader2 className="h-3 w-3 mr-1 animate-spin" />
+                          CHECKING
+                        </Badge>
+                      ) : networkValidation?.verificationFailed ? (
+                        <Badge className="bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-500/20 text-xs">
+                          UNAVAILABLE
+                        </Badge>
+                      ) : networkValidation?.compatible ? (
+                        <Badge className="bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/20 text-xs">
+                          PASSED
+                        </Badge>
+                      ) : (
+                        <Badge className="bg-rose-500/10 text-rose-600 dark:text-rose-400 border-rose-500/20 text-xs">
+                          NOT AVAILABLE
+                        </Badge>
+                      )}
                     </div>
                   </CardHeader>
                   <CardContent className="space-y-4 pt-4">
@@ -1223,7 +1281,7 @@ function PurchaseContent() {
                       <div className="flex justify-between">
                         <span className="text-muted-foreground">Order Classification:</span>
                         <span className="font-semibold text-foreground">
-                          {confirmedOrder.purchaseType === 'UPGRADE' ? 'Package Plan Upgrade' : 'Additional Secondary Drop'}
+                          {confirmedOrder.purchaseType?.toUpperCase() === 'UPGRADE' ? 'Package Plan Upgrade' : 'Additional Secondary Drop'}
                         </span>
                       </div>
                       <div className="flex justify-between">

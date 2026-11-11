@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { getSubscriberById } from '@/lib/db';
+import { authenticate, authError, ownsAccount } from '@/lib/customerAuth';
 
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
@@ -15,30 +16,43 @@ export async function OPTIONS() {
 }
 
 export async function GET(request: Request) {
+  // The eligibility belongs to the signed-in subscriber, so the token decides
+  // which account is checked.
+  const auth = await authenticate(request);
+  if (!auth.ok) {
+    return authError(auth);
+  }
+
   const url = new URL(request.url);
   const customerId = url.searchParams.get('customerId');
-  if (!customerId) {
+  if (!ownsAccount(auth, customerId || undefined)) {
     return NextResponse.json(
-      { success: false, error: 'Customer ID query param is required' },
-      { status: 400, headers: corsHeaders }
+      { success: false, error: 'You are not allowed to check this account.' },
+      { status: 403, headers: corsHeaders }
     );
   }
-  return validateCustomer(customerId);
+
+  return validateCustomer(auth.subscriber!.id);
 }
 
 export async function POST(request: Request) {
   try {
+    const auth = await authenticate(request);
+    if (!auth.ok) {
+      return authError(auth);
+    }
+
     const body = await request.json();
     const { customerId } = body;
 
-    if (!customerId) {
+    if (!ownsAccount(auth, customerId)) {
       return NextResponse.json(
-        { success: false, error: 'Customer ID is required for authentication verification.' },
-        { status: 400, headers: corsHeaders }
+        { success: false, error: 'You are not allowed to check this account.' },
+        { status: 403, headers: corsHeaders }
       );
     }
 
-    return validateCustomer(customerId);
+    return validateCustomer(auth.subscriber!.id);
   } catch (err: any) {
     console.error('Error validating customer eligibility:', err);
     return NextResponse.json(

@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { getAllOrders, updateOrderStatus } from '@/lib/db';
+import { apiPost, getApiToken } from '@/lib/apiClient';
 
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
@@ -53,10 +54,61 @@ export async function PUT(request: Request) {
       );
     }
 
+    // Provisioning is a router operation, so it is performed by the billing
+    // service — it owns the MikroTik client. The status is only reported as
+    // provisioned when the router confirmed it.
+    let provisioning: { attempted: boolean; success: boolean; error?: string } = {
+      attempted: false,
+      success: false,
+    };
+
+    if (status === 'Active' && getApiToken()) {
+      provisioning = { attempted: true, success: false };
+      try {
+        const orders = await getAllOrders();
+        const order = orders.find((item: any) => item.id === orderId);
+
+        if (order) {
+          const result = await apiPost('/api/mikrotik/provision', {
+            subscriberId: order.customer_id,
+            username: order.customer_id,
+            password: `NL-${orderId}`,
+            // The profile is derived from the subscriber's plan by the API.
+          });
+
+          if (result.success) {
+            provisioning = { attempted: true, success: true };
+          } else {
+            provisioning = {
+              attempted: true,
+              success: false,
+              error: result.error || 'The router did not confirm the provisioning.',
+            };
+          }
+        }
+      } catch (error: any) {
+        provisioning = {
+          attempted: true,
+          success: false,
+          error: error?.message || 'The router could not be reached.',
+        };
+      }
+    }
+
+    const message =
+      status === 'Active'
+        ? provisioning.success
+          ? `Order ${orderId} approved and provisioned on the router.`
+          : `Order ${orderId} approved, but the router provisioning did not complete${
+              provisioning.error ? `: ${provisioning.error}` : '.'
+            }`
+        : `Order ${orderId} updated to status "${status}".`;
+
     return NextResponse.json(
       {
         success: true,
-        message: `Order ${orderId} updated to status "${status}" and provisioned successfully.`,
+        message,
+        provisioning,
       },
       { headers: corsHeaders }
     );
@@ -68,4 +120,3 @@ export async function PUT(request: Request) {
     );
   }
 }
-

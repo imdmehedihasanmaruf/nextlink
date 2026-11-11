@@ -16,6 +16,7 @@ import {
   Sparkles
 } from 'lucide-react';
 import toast from 'react-hot-toast';
+import crypto from 'crypto';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
@@ -118,7 +119,10 @@ export default function RolesPage() {
     } else {
       // Create new
       const newRole: Role = {
-        id: `ROLE-${String(roles.length + 1).padStart(3, '0')}`,
+        // The id is unique. Deriving it from the array length meant a deleted
+        // role made the next one reuse the id of a live role and overwrite
+        // its permissions.
+        id: `ROLE-${crypto.randomUUID().slice(0, 8).toUpperCase()}`,
         name: name.trim(),
         key: cleanKey,
         description: description.trim(),

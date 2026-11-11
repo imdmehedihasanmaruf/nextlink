@@ -220,7 +220,9 @@ export default function UserDetailsPage() {
     }
 
     const selectedPkg = packages.find(p => p.id === newUserForm.packageId) || packages[0];
-    const newId = `NL-2026-${Math.floor(1000 + Math.random() * 9000)}`;
+    // The id has to be unique. The previous value was drawn from a space of
+    // 9000 numbers, so a collision silently replaced an existing customer.
+    const newId = `NL-${new Date().getFullYear()}-${crypto.randomUUID().slice(0, 8).toUpperCase()}`;
 
     const newSub: Subscriber = {
       id: newId,

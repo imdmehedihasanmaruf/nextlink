@@ -1,4 +1,5 @@
 import { Pool } from 'pg';
+import crypto from 'crypto';
 import fs from 'fs';
 import path from 'path';
 
@@ -245,31 +246,38 @@ export async function createOrderRecord(order: any): Promise<any> {
       ]
     );
 
-    // If Upgrade, update subscriber's current package in PostgreSQL subscribers table
+    // The subscriber's package is NOT changed here. The plan changes when the
+    // order is approved, so a pending order does not change what the customer
+    // is billed for, and a cancelled order can be reverted.
     if (order.purchaseType === 'upgrade') {
       const subRes = await client.query('SELECT raw_data FROM subscribers WHERE id = $1', [order.customerId]);
       if (subRes.rows.length > 0) {
         const raw = subRes.rows[0].raw_data || {};
-        raw.packageId = order.packageId;
-        raw.packageName = order.packageName;
-        raw.speed = order.downloadSpeed;
-        raw.uploadSpeed = order.uploadSpeed;
-
+        // The pending plan is recorded, but the active plan is untouched.
+        raw.pendingPackageId = order.packageId;
+        raw.pendingPackageName = order.packageName;
         await client.query(
           `UPDATE subscribers 
-           SET package_id = $1, raw_data = $2, updated_at = NOW() 
-           WHERE id = $3`,
-          [order.packageId, JSON.stringify(raw), order.customerId]
+           SET raw_data = $1, updated_at = NOW() 
+           WHERE id = $2`,
+          [JSON.stringify(raw), order.customerId]
         );
       }
     }
 
-    // Insert invoice record into invoices table
-    const invoiceId = `INV-${Date.now().toString().slice(-6)}`;
+    // Insert invoice record into invoices table. The id is unique: the
+    // previous value came from a space of a million numbers that repeated
+    // every 16 minutes, so an invoice could be silently dropped.
+    const invoiceId = `INV-${crypto.randomUUID().slice(0, 12).toUpperCase()}`;
     await client.query(
       `INSERT INTO invoices (id, subscriber_id, amount, status, due_date, raw_data, created_at, updated_at)
        VALUES ($1, $2, $3, $4, $5, $6, NOW(), NOW())
-       ON CONFLICT (id) DO NOTHING`,
+       ON CONFLICT (id) DO UPDATE SET
+         amount = EXCLUDED.amount,
+         status = EXCLUDED.status,
+         due_date = EXCLUDED.due_date,
+         raw_data = EXCLUDED.raw_data,
+         updated_at = NOW()`,
       [
         invoiceId,
         order.customerId,
@@ -280,13 +288,20 @@ export async function createOrderRecord(order: any): Promise<any> {
           id: invoiceId,
           orderId: order.id,
           subscriberId: order.customerId,
+          subscriberName: order.customerName,
+          subscriberPhone: order.customerPhone,
+          packageName: order.packageName,
           amount: Number(order.totalPayable || 0),
           status: 'paid',
+          currency: 'BDT',
           date: new Date().toISOString().split('T')[0],
+          dueDate: order.nextBillingDate || new Date().toISOString().split('T')[0],
           paymentMethod: order.paymentMethod,
+          paidVia: order.paymentMethod,
           trxId: order.trxId,
           package: order.packageName,
           purchaseType: order.purchaseType,
+          source: 'package-order',
         }),
       ]
     );
