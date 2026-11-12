@@ -130,7 +130,7 @@ export default function CustomerOrdersPage() {
               <span>Back to Subscriber Dashboard</span>
             </Link>
             <h1 className="text-2xl sm:text-3xl font-black tracking-tight text-foreground">
-              My Package Orders &amp; Subscriptions
+              My Subscriber Details &amp; Plans
             </h1>
             <p className="text-xs sm:text-sm text-muted-foreground">
               View your order transaction history, line provisioning milestones, and printable carrier receipts.
@@ -201,7 +201,7 @@ export default function CustomerOrdersPage() {
             ) : orders.length === 0 ? (
               <div className="py-16 text-center space-y-3">
                 <PackageCheck className="h-10 w-10 text-muted-foreground mx-auto stroke-1" />
-                <p className="font-semibold text-sm text-foreground">No Package Orders Yet</p>
+                <p className="font-semibold text-sm text-foreground">No Subscriber Details Yet</p>
                 <p className="text-xs text-muted-foreground max-w-sm mx-auto">
                   You are currently on your base plan. You can upgrade your symmetrical optical speed or add a secondary line at any time.
                 </p>

@@ -1002,11 +1002,11 @@ function PurchaseContent() {
                   </CardContent>
                 </Card>
 
-                {/* Package Order Invoice Preview */}
+                {/* Subscriber Plan Invoice Preview */}
                 <Card className="border shadow-sm">
                   <CardHeader className="pb-3 border-b">
                     <div className="flex items-center justify-between">
-                      <CardTitle className="text-base font-bold">Package Order Invoice Preview</CardTitle>
+                      <CardTitle className="text-base font-bold">Subscriber Plan Invoice Preview</CardTitle>
                       <Badge variant="outline" className="font-mono text-xs">
                         {purchaseType === 'UPGRADE' ? 'Package Plan Upgrade' : 'Additional Secondary Connection'}
                       </Badge>

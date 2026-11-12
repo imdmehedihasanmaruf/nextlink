@@ -233,7 +233,7 @@ export default function PackagesPage() {
             </div>
             <div>
               <h3 className="text-sm font-bold text-foreground">
-                Existing Customer-Only Package Orders & Upgrades
+                Existing Subscriber-Only Plans & Upgrades
               </h3>
               <p className="text-xs text-muted-foreground">
                 In accordance with carrier policy, new plan selections, bandwidth upgrades, and extra connections require an active NextLink subscriber account.

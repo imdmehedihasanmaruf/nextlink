@@ -142,9 +142,9 @@ export default function AdminOrdersPage() {
       {/* Top Title & Refresh */}
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
         <div>
-          <h1 className="text-2xl font-bold tracking-tight">Package Orders &amp; Provisioning</h1>
+          <h1 className="text-2xl font-bold tracking-tight">Subscriber Details &amp; Provisioning</h1>
           <p className="text-sm text-muted-foreground mt-0.5">
-            Administer customer plan upgrades, secondary optical line orders, and hardware dispatch.
+            Every subscriber&apos;s plan purchases, secondary optical line orders, and hardware dispatch in one place.
           </p>
         </div>
         <div className="flex items-center gap-2">
@@ -177,12 +177,12 @@ export default function AdminOrdersPage() {
         <Card className="shadow-sm">
           <CardContent className="p-5">
             <div className="flex items-center justify-between">
-              <span className="text-xs font-semibold text-muted-foreground uppercase">Total Orders</span>
+              <span className="text-xs font-semibold text-muted-foreground uppercase">Total Subscriptions</span>
               <PackageCheck className="h-4 w-4 text-primary" />
             </div>
             <div className="mt-2">
               <p className="text-2xl font-black">{totalCount}</p>
-              <p className="text-[11px] text-muted-foreground">Historical customer orders</p>
+              <p className="text-[11px] text-muted-foreground">Historical subscriber plan records</p>
             </div>
           </CardContent>
         </Card>
@@ -221,7 +221,7 @@ export default function AdminOrdersPage() {
             </div>
             <div className="mt-2">
               <p className="text-2xl font-black text-primary font-mono">${totalRevenue.toFixed(2)}</p>
-              <p className="text-[11px] text-muted-foreground">Gross package order receipts</p>
+              <p className="text-[11px] text-muted-foreground">Gross subscriber plan receipts</p>
             </div>
           </CardContent>
         </Card>
@@ -234,7 +234,7 @@ export default function AdminOrdersPage() {
             <div className="relative w-full sm:w-80">
               <Search className="absolute left-3 top-2.5 h-4 w-4 text-muted-foreground" />
               <Input
-                placeholder="Search by customer, order ID, TRX..."
+                placeholder="Search by subscriber, order ID, TRX..."
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
                 className="pl-9 text-xs"
@@ -250,7 +250,7 @@ export default function AdminOrdersPage() {
                   onClick={() => setStatusFilter(st)}
                   className="text-xs h-8 whitespace-nowrap"
                 >
-                  {st === 'ALL' ? 'All Orders' : st}
+                  {st === 'ALL' ? 'All Records' : st}
                 </Button>
               ))}
             </div>
@@ -262,9 +262,9 @@ export default function AdminOrdersPage() {
       <Card className="shadow-sm">
         <CardHeader className="pb-3 border-b flex flex-row items-center justify-between">
           <div>
-            <CardTitle className="text-base font-bold">Package Order Registry</CardTitle>
+            <CardTitle className="text-base font-bold">Subscriber Plan Registry</CardTitle>
             <CardDescription className="text-xs">
-              Showing {filteredOrders.length} of {orders.length} total customer orders
+              Showing {filteredOrders.length} of {orders.length} total subscriber plan records
             </CardDescription>
           </div>
         </CardHeader>
@@ -277,7 +277,7 @@ export default function AdminOrdersPage() {
             </div>
           ) : filteredOrders.length === 0 ? (
             <div className="py-16 text-center text-muted-foreground text-xs">
-              No package orders found matching the filter criteria.
+              No subscriber plan records found matching the filter criteria.
             </div>
           ) : (
             <div className="overflow-x-auto">
@@ -285,7 +285,7 @@ export default function AdminOrdersPage() {
                 <thead className="bg-muted/40 border-b text-[11px] font-semibold text-muted-foreground uppercase">
                   <tr>
                     <th className="py-3 px-4">Order ID &amp; Trx</th>
-                    <th className="py-3 px-4">Customer</th>
+                    <th className="py-3 px-4">Subscriber</th>
                     <th className="py-3 px-4">Package</th>
                     <th className="py-3 px-4">Type</th>
                     <th className="py-3 px-4">Total Paid</th>
@@ -408,7 +408,7 @@ export default function AdminOrdersPage() {
           <Card className="w-full max-w-xl bg-card border shadow-2xl animate-in zoom-in-95 my-8">
             <CardHeader className="border-b pb-4 flex flex-row items-center justify-between">
               <div>
-                <CardTitle className="text-base font-bold">Order Details: {selectedOrder.id}</CardTitle>
+                <CardTitle className="text-base font-bold">Subscriber Plan Details: {selectedOrder.id}</CardTitle>
                 <CardDescription className="text-xs">
                   Transaction Reference: <span className="font-mono text-primary">{selectedOrder.trx_id}</span>
                 </CardDescription>
@@ -423,7 +423,7 @@ export default function AdminOrdersPage() {
             <CardContent className="p-6 space-y-4 text-xs">
               <div className="grid grid-cols-2 gap-3 p-3 rounded-xl bg-muted/40 border">
                 <div>
-                  <span className="text-muted-foreground block text-[10px] uppercase">Customer Name</span>
+                  <span className="text-muted-foreground block text-[10px] uppercase">Subscriber Name</span>
                   <span className="font-semibold text-foreground text-sm">{selectedOrder.customer_name}</span>
                 </div>
                 <div>

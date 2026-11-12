@@ -296,9 +296,9 @@ export default function UserDetailsPage() {
               <Users className="h-6 w-6" />
             </div>
             <div>
-              <h1 className="text-2xl font-bold tracking-tight">User Details & Security</h1>
+              <h1 className="text-2xl font-bold tracking-tight">Subscribers & Security</h1>
               <p className="text-sm text-muted-foreground">
-                All registered users, credentials, internet plans, fraud & VPN intelligence, and access controls.
+                Every subscriber, credentials, internet plan, fraud &amp; VPN intelligence, and access controls.
               </p>
             </div>
           </div>
@@ -332,7 +332,7 @@ export default function UserDetailsPage() {
         <Card className="cursor-pointer hover:border-primary/50 transition-all shadow-sm" onClick={() => setActiveTab('all')}>
           <CardContent className="p-4">
             <div className="flex items-center justify-between">
-              <span className="text-xs font-medium text-muted-foreground">Total Users</span>
+              <span className="text-xs font-medium text-muted-foreground">Total Subscribers</span>
               <Users className="h-4 w-4 text-primary" />
             </div>
             <div className="text-2xl font-bold mt-1 text-foreground">{stats.total}</div>
@@ -405,7 +405,7 @@ export default function UserDetailsPage() {
           className="gap-2 rounded-lg"
         >
           <Users className="h-4 w-4" />
-          All Users
+          All Subscribers
           <span className="ml-1 text-xs px-1.5 py-0.2 rounded-full bg-background/20 font-mono">
             {stats.total}
           </span>
@@ -470,7 +470,7 @@ export default function UserDetailsPage() {
           className="gap-2 rounded-lg text-rose-700 dark:text-rose-300"
         >
           <Ban className="h-4 w-4" />
-          Blocked Users
+          Blocked Subscribers
           <span className="ml-1 text-xs px-1.5 py-0.2 rounded-full bg-rose-500/10 font-mono">
             {stats.blocked}
           </span>

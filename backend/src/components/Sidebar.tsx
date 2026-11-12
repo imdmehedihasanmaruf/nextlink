@@ -26,9 +26,9 @@ interface NavItem {
 const navItems: NavItem[] = [
   { label: 'Dashboard', key: 'dashboard', href: '/dashboard', icon: <LayoutDashboard className="h-5 w-5" />, roles: ['super_admin', 'billing', 'support', 'technician', 'noc_operator'], permission: 'dashboard' },
   { label: 'Frontend CMS', key: 'cms', href: '/cms', icon: <Globe className="h-5 w-5" />, roles: ['super_admin', 'billing', 'support'], permission: 'cms' },
-  { label: 'User Details', key: 'subscribers', href: '/users', icon: <Users className="h-5 w-5" />, roles: ['super_admin', 'billing', 'support'], permission: 'subscribers' },
+  { label: 'Subscribers', key: 'subscribers', href: '/users', icon: <Users className="h-5 w-5" />, roles: ['super_admin', 'billing', 'support'], permission: 'subscribers' },
   { label: 'Packages', key: 'packages', href: '/packages', icon: <Package className="h-5 w-5" />, roles: ['super_admin'], permission: 'packages' },
-  { label: 'Package Orders', key: 'orders', href: '/orders', icon: <PackageCheck className="h-5 w-5" />, roles: ['super_admin', 'billing', 'support'], permission: 'billing' },
+  { label: 'Subscriber Details', key: 'orders', href: '/orders', icon: <PackageCheck className="h-5 w-5" />, roles: ['super_admin', 'billing', 'support'], permission: 'billing' },
   { label: 'Billing', key: 'billing', href: '/billing', icon: <Receipt className="h-5 w-5" />, roles: ['super_admin', 'billing'], permission: 'billing' },
   { label: 'Billing Engine', key: 'billing_engine', href: '/billing-engine', icon: <Bot className="h-5 w-5" />, roles: ['super_admin', 'billing'], permission: 'billing' },
   { label: 'Operations', key: 'operations', href: '/operations', icon: <ClipboardList className="h-5 w-5" />, roles: ['super_admin', 'billing', 'support'], permission: 'subscribers' },
