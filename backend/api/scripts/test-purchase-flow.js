@@ -110,6 +110,24 @@ async function run() {
   const invoiceRow = await db.queryOne('SELECT status FROM invoices WHERE id = $1', [invoiceId]);
   assert(invoiceRow?.status === 'unpaid', 'the invoice is created unpaid', invoiceRow);
 
+  // The order the purchase belongs to — it waits for the gateway as well.
+  await db.query(
+    `INSERT INTO orders (id, customer_id, customer_name, package_id, package_name, purchase_type,
+                          total_payable, payment_method, payment_status, order_status, raw_data, created_at, updated_at)
+     VALUES ($1, $2, $3, $4, $5, 'UPGRADE', $6, 'bkash', 'Payment Pending', 'Pending Activation', $7, NOW(), NOW())`,
+    [
+      orderId,
+      subscriberId,
+      'Purchase Flow User',
+      plan.id,
+      plan.name,
+      amount,
+      JSON.stringify({ id: orderId, orderId, subscriberId, packageId: plan.id, packageName: plan.name }),
+    ],
+  );
+  const orderBefore = await db.queryOne('SELECT payment_status FROM orders WHERE id = $1', [orderId]);
+  assert(orderBefore?.payment_status === 'Payment Pending', 'the order waits for the gateway', orderBefore);
+
   // -----------------------------------------------------------------------
   console.log('\n3. The payment is started at the gateway');
   const purchase = await api('/api/portal/purchase', {
@@ -160,6 +178,14 @@ async function run() {
   );
   assert(events.rows.length > 0, 'the activation is written to the billing ledger', events.rows.length);
 
+  // The order is only marked as paid once the gateway confirmed the payment.
+  const orderRow = await db.queryOne(
+    'SELECT payment_status, trx_id FROM orders WHERE id = $1',
+    [orderId],
+  );
+  assert(orderRow?.payment_status === 'Payment Verified', 'the order is marked as paid by the settlement', orderRow);
+  assert(Boolean(orderRow?.trx_id), 'the order carries the gateway transaction id', orderRow);
+
   // -----------------------------------------------------------------------
   console.log('\n5. The mock gateway cannot settle a live payment');
   const mockCallback = await api('/api/payments/mock/callback', {
@@ -172,6 +198,7 @@ async function run() {
   console.log('\n6. Cleanup — the test records are removed');
   await db.query('DELETE FROM billing_events WHERE subscriber_id = $1', [subscriberId]);
   await db.query('DELETE FROM invoices WHERE subscriber_id = $1', [subscriberId]);
+  await db.query('DELETE FROM orders WHERE id = $1', [orderId]);
   await db.query('DELETE FROM subscriber_billing WHERE subscriber_id = $1', [subscriberId]);
   await db.query('DELETE FROM subscriber_credentials WHERE subscriber_id = $1', [subscriberId]);
   await db.query('DELETE FROM subscribers WHERE id = $1', [subscriberId]);

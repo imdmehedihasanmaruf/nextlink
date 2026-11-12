@@ -324,14 +324,14 @@ async function handleCallback(gatewayName, req) {
   // billing engine owns the transition, so the subscription is activated here
   // — never by the portal, and never before the money arrived.
   let activation = null;
+  const invoiceRow = await db.queryOne('SELECT raw_data FROM invoices WHERE id = $1', [transaction.invoice_id]);
+  const invoiceRaw = (invoiceRow && invoiceRow.raw_data) || {};
   try {
     const subscriberRow = await db.queryOne(
       'SELECT id, status FROM subscribers WHERE id = $1',
       [transaction.subscriber_id],
     );
     if (subscriberRow && subscriberRow.status === 'registered') {
-      const invoiceRow = await db.queryOne('SELECT raw_data FROM invoices WHERE id = $1', [transaction.invoice_id]);
-      const invoiceRaw = (invoiceRow && invoiceRow.raw_data) || {};
       const packageId = invoiceRaw.packageId || null;
       const packageName = invoiceRaw.packageName || null;
       if (packageId) {
@@ -351,6 +351,19 @@ async function handleCallback(gatewayName, req) {
       invoiceId: transaction.invoice_id,
       message: activationError.message,
     });
+  }
+
+  // The order the purchase belongs to is only marked as paid now — the
+  // transaction id is the one the gateway handed out.
+  if (invoiceRaw.orderId) {
+    await db.query(
+      `UPDATE orders
+          SET payment_status = 'Payment Verified',
+              trx_id = COALESCE(trx_id, $2),
+              updated_at = NOW()
+        WHERE id = $1`,
+      [invoiceRaw.orderId, parsed.transactionId || null],
+    );
   }
 
   await db.query(

@@ -77,6 +77,11 @@ async function run() {
   // unpaid (directly in the database), then delete every invoice of this
   // subscriber except the test one. This leaves exactly one outstanding
   // invoice — the one the sweep and the restore assertions are built around.
+  //
+  // The deletion happens directly in the database: the admin route only lists
+  // the newest invoices, so with a large invoice table the older leftovers of
+  // this subscriber were never reached — and an outstanding invoice keeps the
+  // service suspended after the payment.
   // eslint-disable-next-line global-require
   const db = require('../src/lib/db');
   await db.query(
@@ -87,11 +92,14 @@ async function run() {
       WHERE subscriber_id = 'SUB-001'
         AND status = 'paid'`,
   );
-  const afterReset = await api('/api/billing/invoices?limit=200', { token });
-  for (const leftover of (afterReset.body.invoices || []).filter(
-    (invoice) => invoice.subscriber_id === 'SUB-001' && invoice.id !== invoiceId,
-  )) {
-    await api(`/api/billing/invoices/${leftover.id}`, { method: 'DELETE', token });
+  const leftovers = await db.query(
+    `SELECT id FROM invoices WHERE subscriber_id = 'SUB-001' AND id <> $1`,
+    [invoiceId],
+  );
+  for (const leftover of leftovers.rows) {
+    await db.query('DELETE FROM payment_transactions WHERE invoice_id = $1', [leftover.id]);
+    await db.query('DELETE FROM billing_events WHERE invoice_id = $1', [leftover.id]);
+    await db.query('DELETE FROM invoices WHERE id = $1', [leftover.id]);
   }
   console.log('  (reset the test subscriber invoices: only the test invoice remains)');
 
@@ -137,7 +145,7 @@ async function run() {
 
   // One subscriber with several overdue invoices is cut once, so exactly one
   // suspension SMS is sent for the account.
-  const suspensionMessages = (await api('/api/sms/messages?limit=200', { token })).body.messages.filter(
+  const suspensionMessages = (await api('/api/sms/messages?limit=500', { token })).body.messages.filter(
     (message) => message.template === 'service_suspended' && message.subscriber_id === 'SUB-001',
   );
   assert(
@@ -151,7 +159,7 @@ async function run() {
   const secrets = await api('/api/mikrotik/secrets', { token });
   assert(secrets.status === 200, 'router secrets readable');
 
-  const log = await api('/api/mikrotik/log?limit=50', { token });
+  const log = await api('/api/mikrotik/log?limit=500', { token });
   const suspendOp = log.body.log.find(
     (entry) => entry.action === 'suspend' && entry.subscriber_id === 'SUB-001',
   );
@@ -160,13 +168,13 @@ async function run() {
 
   // --- 4. Verify the subscriber + SMS state ------------------------------
   console.log('\n4. Subscriber + SMS state');
-  const events = await api('/api/billing/events?limit=50', { token });
+  const events = await api('/api/billing/events?limit=500', { token });
   const suspendEvent = events.body.events.find(
     (event) => event.invoice_id === invoiceId && event.event === 'auto_suspended',
   );
   assert(Boolean(suspendEvent), 'auto_suspended billing event recorded');
 
-  const smsLog = await api('/api/sms/messages?limit=50', { token });
+  const smsLog = await api('/api/sms/messages?limit=500', { token });
   const suspensionSms = smsLog.body.messages.find(
     (message) => message.template === 'service_suspended' && message.subscriber_id === 'SUB-001',
   );
@@ -202,14 +210,14 @@ async function run() {
   const restoreEvent = afterPay.body.events.find((event) => event.event === 'service_restored');
   assert(Boolean(restoreEvent), 'service_restored event recorded');
 
-  const logAfter = await api('/api/mikrotik/log?limit=50', { token });
+  const logAfter = await api('/api/mikrotik/log?limit=500', { token });
   const restoreOp = logAfter.body.log.find(
     (entry) => entry.action === 'restore' && entry.subscriber_id === 'SUB-001',
   );
   assert(Boolean(restoreOp), 'restore operation performed on the router');
   assert(restoreOp && restoreOp.status === 'success', 'restore succeeded', restoreOp?.status);
 
-  const smsAfter = await api('/api/sms/messages?limit=50', { token });
+  const smsAfter = await api('/api/sms/messages?limit=500', { token });
   const restoreSms = smsAfter.body.messages.find(
     (message) => message.template === 'service_restored' && message.subscriber_id === 'SUB-001',
   );

@@ -62,7 +62,10 @@ async function run() {
 
   // -----------------------------------------------------------------------
   console.log('\n1. Record the state before the save');
-  const before = await api('/api/billing/invoices?limit=200', { token });
+  // The paid invoices are requested by status. Reading "the newest 200
+  // invoices" only worked while the table was small — with a full table the
+  // newest rows are the unpaid ones and the check found nothing.
+  const before = await api('/api/billing/invoices?status=paid&limit=500', { token });
   const paidBefore = before.body.invoices.filter((invoice) => invoice.status === 'paid');
   assert(paidBefore.length > 0, 'the database holds paid invoices', paidBefore.length);
 
@@ -89,7 +92,7 @@ async function run() {
 
   // -----------------------------------------------------------------------
   console.log('\n3. Verify the billing data survived');
-  const after = await api('/api/billing/invoices?limit=200', { token });
+  const after = await api('/api/billing/invoices?status=paid&limit=500', { token });
   const paidAfter = after.body.invoices.filter((invoice) => invoice.status === 'paid');
   const paidIdsAfter = paidAfter.map((invoice) => invoice.id);
 
