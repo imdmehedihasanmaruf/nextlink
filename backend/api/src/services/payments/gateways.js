@@ -61,7 +61,9 @@ class MockGateway {
       success: true,
       gateway: this.name,
       transactionId,
-      redirectUrl: `${require('../../config').apiBaseUrl}/api/payments/mock/checkout/${transactionId}`,
+      // The checkout page is opened through the portal, so the browser stays
+      // on the portal's origin and never talks to the API port directly.
+      redirectUrl: `${require('../../config').portalPublicUrl}/api/payments/mock/checkout/${transactionId}`,
       raw: { ...payload, signature },
     };
   }

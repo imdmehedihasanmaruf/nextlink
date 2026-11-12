@@ -150,6 +150,18 @@ export default function DashboardPage() {
   const [billingError, setBillingError] = useState<string | null>(null)
 
   /**
+   * The account state the panel renders.
+   *
+   * The billing service is the authority: the sign-in payload is a snapshot
+   * from the moment the customer signed in, so after a purchase at the
+   * gateway it still said "registered". The live status and plan come from
+   * the billing summary.
+   */
+  const accountStatus = String(liveSummary?.subscriber?.status || user?.status || '').toLowerCase()
+  const accountPackageName =
+    liveSummary?.subscriber?.packageName || user?.packageName || user?.package || ''
+
+  /**
    * The bill outstanding with this account — derived from the billing
    * service, never from a hard-coded month. The due month is the period of
    * the first unpaid invoice.
@@ -271,8 +283,8 @@ export default function DashboardPage() {
   // Resolve current active package and monthly subscription price
   const activePackage = React.useMemo(() => {
     if (!packages || packages.length === 0) return null
-    const userPkgName = (user?.packageName || user?.package || '').toLowerCase().trim()
-    const userPkgId = (user?.packageId || '').toLowerCase().trim()
+    const userPkgName = (accountPackageName || '').toLowerCase().trim()
+    const userPkgId = (liveSummary?.subscriber?.packageId || user?.packageId || '').toLowerCase().trim()
     return (
       packages.find(p => p.id?.toLowerCase() === userPkgId) ||
       packages.find(p => p.name?.toLowerCase() === userPkgName) ||
@@ -280,7 +292,7 @@ export default function DashboardPage() {
       packages.find(p => userPkgName && userPkgName.includes(p.name?.toLowerCase())) ||
       packages[0]
     )
-  }, [packages, user])
+  }, [packages, user, accountPackageName, liveSummary?.subscriber?.packageId])
 
   useEffect(() => {
     if (hasHydrated && !isAuthenticated) {
@@ -428,17 +440,17 @@ export default function DashboardPage() {
               {/* The pill reflects the account's real status from the login
                   payload — a suspended line must not be shown as
                   "connection active", and there is no tier system to badge. */}
-              {user?.status === 'registered' ? (
+              {accountStatus === 'registered' ? (
                 <div className="inline-flex items-center gap-1.5 rounded-full bg-blue-400/20 text-blue-100 border border-blue-300/40 px-3 py-1 text-xs font-semibold backdrop-blur-sm">
                   <span className="h-2 w-2 rounded-full bg-blue-300"></span>
                   Registered — buy a plan to activate
                 </div>
-              ) : user?.status === 'cancelled' ? (
+              ) : accountStatus === 'cancelled' ? (
                 <div className="inline-flex items-center gap-1.5 rounded-full bg-amber-400/20 text-amber-100 border border-amber-300/40 px-3 py-1 text-xs font-semibold backdrop-blur-sm">
                   <span className="h-2 w-2 rounded-full bg-amber-300"></span>
                   Subscription cancelled
                 </div>
-              ) : user?.status === 'suspended' || user?.status === 'blocked' ? (
+              ) : accountStatus === 'suspended' || accountStatus === 'blocked' ? (
                 <div className="inline-flex items-center gap-1.5 rounded-full bg-amber-400/20 text-amber-100 border border-amber-300/40 px-3 py-1 text-xs font-semibold backdrop-blur-sm">
                   <span className="h-2 w-2 rounded-full bg-amber-300"></span>
                   Line suspended — contact support
@@ -491,12 +503,12 @@ export default function DashboardPage() {
               <h3 className="text-2xl font-bold">
                 {boostRequested
                   ? 'Boost Requested'
-                  : user?.status === 'registered'
+                  : accountStatus === 'registered'
                     ? 'No active plan'
-                    : user?.packageName || user?.package || 'Ultra Gigabit 500'}
+                    : accountPackageName || 'No active plan'}
               </h3>
               <p className="text-xs text-muted-foreground mt-1">
-                {user?.status === 'registered'
+                {accountStatus === 'registered'
                   ? 'Purchase a package to activate your service'
                   : 'Symmetrical 100% Optical Fiber'}
               </p>
@@ -505,7 +517,7 @@ export default function DashboardPage() {
               <Link href="/dashboard/purchase">
                 <Button size="sm" variant="outline" className="w-full text-xs font-bold gap-1.5 h-8">
                   <ArrowUpRight className="h-3.5 w-3.5" />
-                  <span>{user?.status === 'registered' ? 'Buy a Package Plan' : 'Upgrade Fiber Plan'}</span>
+                  <span>{accountStatus === 'registered' ? 'Buy a Package Plan' : 'Upgrade Fiber Plan'}</span>
                 </Button>
               </Link>
             </div>
