@@ -14,7 +14,7 @@
  * Run with:  node scripts/test-credentials.js
  */
 
-const BASE = process.env.API_BASE_URL || 'http://localhost:3000';
+const BASE = process.env.API_BASE_URL || 'http://localhost:3100';
 
 let passed = 0;
 let failed = 0;
@@ -37,11 +37,14 @@ async function api(path, { method = 'GET', body, token } = {}) {
     headers,
     body: body ? JSON.stringify(body) : undefined,
   });
+  // The body is read once and parsed from text — reading it twice throws
+  // "Body is unusable" when the response is not valid JSON.
+  const raw = await response.text();
   let payload = null;
   try {
-    payload = await response.json();
+    payload = raw ? JSON.parse(raw) : null;
   } catch {
-    payload = { raw: await response.text() };
+    payload = { raw };
   }
   return { status: response.status, body: payload };
 }
@@ -180,6 +183,51 @@ async function run() {
     body: { currentPassword: 'SubscriberChosen#2026', newPassword: 'short' },
   });
   assert(tooShort.status === 400, 'a too-short new password is rejected', tooShort.body);
+
+  // -----------------------------------------------------------------------
+  console.log('\n4b. Self-service password reset from the login page');
+  const forgot = await api('/api/auth/forgot-password', {
+    method: 'POST',
+    body: { username: 'chloedupont' },
+  });
+  assert(forgot.status === 200 && forgot.body.success, 'the reset request is accepted', forgot.body);
+
+  // The response must not reveal whether the account exists — an unknown
+  // username has to look exactly the same.
+  const forgotUnknown = await api('/api/auth/forgot-password', {
+    method: 'POST',
+    body: { username: 'nobody-at-all' },
+  });
+  assert(
+    forgotUnknown.status === 200 && forgotUnknown.body.success,
+    'an unknown username gets the same generic answer',
+    forgotUnknown.body,
+  );
+  assert(
+    !forgotUnknown.body.temporaryPassword,
+    'no password is handed out for an unknown account',
+    forgotUnknown.body,
+  );
+
+  if (forgot.body.temporaryPassword) {
+    const withTemp = await api('/api/auth/subscriber-login', {
+      method: 'POST',
+      body: { username: 'chloedupont', password: forgot.body.temporaryPassword },
+    });
+    assert(
+      withTemp.status === 200 && withTemp.body.success,
+      'the temporary password signs the subscriber in',
+      withTemp.body,
+    );
+
+    // Put the account back the way it was.
+    const restore = await api('/api/auth/admin/reset-password', {
+      method: 'POST',
+      token,
+      body: { subscriberId: 'SUB-005', newPassword: 'ChloeParis!22' },
+    });
+    assert(restore.status === 200 && restore.body.success, 'the original password is restored', restore.body);
+  }
 
   // -----------------------------------------------------------------------
   console.log('\n5. Role enforcement');

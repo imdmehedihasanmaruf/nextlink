@@ -12,6 +12,7 @@ export default function ForgotPasswordPage() {
   const [username, setUsername] = useState('')
   const [loading, setLoading] = useState(false)
   const [sent, setSent] = useState(false)
+  const [tempPassword, setTempPassword] = useState<string | null>(null)
   const [error, setError] = useState('')
 
   const onSubmit = async (e: React.FormEvent) => {
@@ -29,6 +30,8 @@ export default function ForgotPasswordPage() {
         setError(payload.error || 'Could not process the request. Please try again.')
         return
       }
+      const payload = await res.json().catch(() => ({}))
+      setTempPassword(payload.temporaryPassword || null)
       setSent(true)
     } catch {
       setError('The authentication service is currently unavailable. Please try again later.')
@@ -61,8 +64,25 @@ export default function ForgotPasswordPage() {
             {sent ? (
               <div className="text-center space-y-4">
                 <CheckCircle2 size={40} className="text-emerald-500 mx-auto" />
-                <p className="font-semibold">Temporary password sent</p>
-                <p className="text-sm text-muted-foreground">If the account exists, a temporary password has been sent to the registered phone number. Use it to sign in and change the password from Settings.</p>
+                <p className="font-semibold">
+                  {tempPassword ? 'Temporary password generated' : 'Temporary password sent'}
+                </p>
+                {tempPassword ? (
+                  <>
+                    <p className="text-sm text-muted-foreground">
+                      The SMS gateway is in mock mode, so the temporary password is shown here instead of being
+                      delivered. Use it to sign in, then change it from Settings.
+                    </p>
+                    <div className="rounded-lg border bg-muted/40 px-4 py-3">
+                      <span className="font-mono text-lg font-bold tracking-wider">{tempPassword}</span>
+                    </div>
+                  </>
+                ) : (
+                  <p className="text-sm text-muted-foreground">
+                    If the account exists, a temporary password has been sent to the registered phone number. Use it
+                    to sign in and change the password from Settings.
+                  </p>
+                )}
                 <Link href="/login">
                   <Button className="w-full h-11 font-bold">Go to Sign In</Button>
                 </Link>

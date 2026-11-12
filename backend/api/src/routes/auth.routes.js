@@ -166,23 +166,29 @@ router.post(
     const { username } = req.validatedBody;
     const needle = String(username || '').trim();
 
+    // The same placeholder is reused in the query, so exactly one parameter
+    // is bound — passing three would make the prepared statement mismatch.
     const subscriber = await db.queryOne(
       `SELECT id, name, phone FROM subscribers WHERE id = $1 OR phone = $1 OR raw_data->>'username' = $1`,
-      [needle, needle, needle],
+      [needle],
     );
 
+    let temporaryPassword = null;
+
     if (subscriber) {
-      const temporaryPassword = `NL-${Math.random().toString(36).slice(2, 8).toUpperCase()}${Math.floor(Math.random() * 90 + 10)}`;
+      temporaryPassword = `NL-${Math.random().toString(36).slice(2, 8).toUpperCase()}${Math.floor(Math.random() * 90 + 10)}`;
       try {
         await credentials.resetPassword(subscriber.id, temporaryPassword);
       } catch (error) {
         logger.error('forgot-password: temp password could not be stored', { error: error.message });
       }
       try {
+        // The phone number belongs to the template context — the send helper
+        // reads it from there, not from the options.
         await sms.sendTemplate(
           'password_reset',
-          { name: subscriber.name || 'Customer', password: temporaryPassword },
-          { phone: subscriber.phone, subscriberId: subscriber.id },
+          { name: subscriber.name || 'Customer', password: temporaryPassword, phone: subscriber.phone },
+          { subscriberId: subscriber.id },
         );
       } catch (error) {
         logger.error('forgot-password: temp password SMS could not be sent', { error: error.message });
@@ -197,9 +203,19 @@ router.post(
       });
     }
 
+    // In mock SMS mode the message is only written to the log, so the
+    // temporary password is handed back to the caller — otherwise the flow
+    // could never be completed in development. Production refuses to start
+    // with SMS_MODE != live (see config.js), so this branch cannot leak a
+    // password on a live deployment.
+    const smsIsLive = config.sms.mode === 'live';
+
     return res.json({
       success: true,
-      message: 'If the account exists, a temporary password has been sent to the registered phone number.',
+      message: smsIsLive
+        ? 'If the account exists, a temporary password has been sent to the registered phone number.'
+        : 'If the account exists, a temporary password has been generated.',
+      ...(smsIsLive || !temporaryPassword ? {} : { temporaryPassword, delivery: 'sms_mock' }),
     });
   }),
 );

@@ -10,7 +10,7 @@
  * Run with:  node scripts/test-automation.js
  */
 
-const BASE = process.env.API_BASE_URL || 'http://localhost:3000';
+const BASE = process.env.API_BASE_URL || 'http://localhost:3100';
 
 let passed = 0;
 let failed = 0;
@@ -33,11 +33,14 @@ async function api(path, { method = 'GET', body, token } = {}) {
     headers,
     body: body ? JSON.stringify(body) : undefined,
   });
+  // The body is read once and parsed from text — reading it twice throws
+  // "Body is unusable" when the response is not valid JSON.
+  const raw = await response.text();
   let payload = null;
   try {
-    payload = await response.json();
+    payload = raw ? JSON.parse(raw) : null;
   } catch {
-    payload = { raw: await response.text() };
+    payload = { raw };
   }
   return { status: response.status, body: payload };
 }
