@@ -258,34 +258,42 @@ export default function DashboardPage() {
                   label: 'Automated Billing Engine',
                   status: apiHealth?.database === 'connected' ? 'Operational' : 'Unavailable',
                   ok: apiHealth?.database === 'connected',
+                  warn: false,
                 },
                 {
                   label: 'MikroTik RouterOS API',
                   status: apiHealth?.mikrotikMode === 'live' ? 'Live' : (apiHealth?.mikrotikMode ? 'Simulator' : 'Unknown'),
-                  ok: apiHealth?.mikrotikMode === 'live' || apiHealth?.mikrotikMode === 'simulator',
+                  ok: apiHealth?.mikrotikMode === 'live',
+                  // A simulator is not a working router — the dot is amber, not
+                  // green, so the panel never shows a healthy router that does
+                  // not exist.
+                  warn: apiHealth?.mikrotikMode === 'simulator',
                 },
                 {
                   label: 'SMS & OTP Gateway',
                   status: apiHealth?.smsMode === 'live' ? 'Live' : (apiHealth?.smsMode ? 'Mock Mode' : 'Unknown'),
-                  ok: apiHealth?.smsMode === 'live' || apiHealth?.smsMode === 'mock',
+                  ok: apiHealth?.smsMode === 'live',
+                  warn: apiHealth?.smsMode === 'mock',
                 },
                 {
                   label: 'Payment Gateways',
                   status: apiHealth?.paymentMode === 'live' ? 'Live' : (apiHealth?.paymentMode ? 'Mock Mode' : 'Unknown'),
-                  ok: apiHealth?.paymentMode === 'live' || apiHealth?.paymentMode === 'mock',
+                  ok: apiHealth?.paymentMode === 'live',
+                  warn: apiHealth?.paymentMode === 'mock',
                 },
                 {
                   label: 'Job Queue',
                   status: apiHealth?.queue?.mode ? `${apiHealth.queue.mode === 'redis' ? 'Redis' : 'In-Process'} (${apiHealth.queue.pending ?? 0} pending)` : 'Unknown',
                   ok: Boolean(apiHealth?.queue?.mode),
+                  warn: false,
                 },
               ].map((item) => (
                 <div key={item.label} className="flex items-center justify-between">
                   <div className="flex items-center gap-2">
-                    <div className={`h-2 w-2 rounded-full ${item.ok ? 'bg-green-500' : 'bg-rose-500'}`} />
+                    <div className={`h-2 w-2 rounded-full ${item.ok ? 'bg-green-500' : item.warn ? 'bg-amber-500' : 'bg-rose-500'}`} />
                     <span className="text-sm font-medium">{item.label}</span>
                   </div>
-                  <span className={`text-xs font-semibold ${item.ok ? 'text-green-600' : 'text-rose-600'}`}>
+                  <span className={`text-xs font-semibold ${item.ok ? 'text-green-600' : item.warn ? 'text-amber-600' : 'text-rose-600'}`}>
                     {item.status}
                   </span>
                 </div>

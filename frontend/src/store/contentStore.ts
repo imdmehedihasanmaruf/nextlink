@@ -165,8 +165,8 @@ export interface ContentState {
     allocatedSpeed?: number
     consumedDataGB?: string | number
     totalQuota?: string
-    downloadRateMbps?: number
-    uploadRateMbps?: number
+    downloadRateMbps?: number | null
+    uploadRateMbps?: number | null
     gatewayIPv4?: string
     gatewayIPv6?: string
     oltPort?: string
@@ -612,28 +612,24 @@ const defaultContent = {
     enabled: true,
     title: "Realtime Ping & Latency",
     description: "Real-time response to Tier-1 international backbones",
-    targets: [
-      { id: "LAT-1", name: "Direct POP Peering", host: "pop.nextlink.net", ping: "1.2 ms", status: "optimal" },
-      { id: "LAT-2", name: "Cloudflare Edge (1.1.1.1)", host: "1.1.1.1", ping: "2.4 ms", status: "optimal" },
-      { id: "LAT-3", name: "Google DNS (8.8.8.8)", host: "8.8.8.8", ping: "3.1 ms", status: "optimal" },
-      { id: "LAT-4", name: "AWS Cloud Peering", host: "aws.amazon.com", ping: "4.8 ms", status: "optimal" }
-    ]
+    // The peering targets are configured by the operator. Until they are set
+    // there is no measurement to show — the portal must never invent ping
+    // times and present them as live.
+    targets: [] as any[],
   },
   interfaceTraffic: {
-    allocatedSpeed: 500,
-    consumedDataGB: "648.2 GB",
-    totalQuota: "Unlimited Symmetrical",
-    downloadRateMbps: 498.2,
-    uploadRateMbps: 494.7,
-    gatewayIPv4: "198.51.100.12",
-    gatewayIPv6: "2001:db8:85a3::8a2e:370:7334",
-    oltPort: "2/1/4",
-    terminalStatus: "Synchronized",
-    interfaces: [
-      { id: "IF-1", name: "sfp-sfpplus1 (Uplink)", type: "Optical 10G SFP+", rx: "4.82 Gbps", tx: "3.91 Gbps", status: "Up" },
-      { id: "IF-2", name: "ether1-gateway (Client Drop)", type: "Gigabit Ethernet", rx: "498.2 Mbps", tx: "494.7 Mbps", status: "Up" },
-      { id: "IF-3", name: "gpon-olt-port (Fiber PON)", type: "GPON ITU-T G.984", rx: "1.24 Gbps", tx: "1.18 Gbps", status: "Up" }
-    ]
+    // The same rule applies here: the figures come from the operator (or the
+    // monitoring service). Nothing is filled in with made-up numbers.
+    allocatedSpeed: 0,
+    consumedDataGB: "",
+    totalQuota: "",
+    downloadRateMbps: null,
+    uploadRateMbps: null,
+    gatewayIPv4: "",
+    gatewayIPv6: "",
+    oltPort: "",
+    terminalStatus: "",
+    interfaces: [] as any[],
   },
   peeringHubs: [
     { id: "HUB-1", name: "Speedtest Diagnostic", url: "https://speedtest.net", badge: "Tier-1", category: "speedtest", status: "Active" },

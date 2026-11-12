@@ -617,6 +617,16 @@ function resolveGateway(name) {
   const config = require('../../config');
   const key = String(name || '').toLowerCase();
   if (key === 'mock') {
+    // The mock gateway settles a payment without any gateway being involved.
+    // It is only available while the deployment runs in mock mode — a live
+    // installation must never be able to settle an invoice through it, not
+    // even through an unauthenticated callback.
+    if (config.payments.mode === 'live') {
+      throw new GatewayError(
+        'The mock payment gateway is disabled while the deployment runs in live mode.',
+        'MOCK_GATEWAY_DISABLED',
+      );
+    }
     return new MockGateway('mock');
   }
   if (!GATEWAYS[key]) {

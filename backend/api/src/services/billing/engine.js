@@ -611,6 +611,13 @@ async function applyPayment({ invoiceId, transactionId, gateway, amount, raw = {
   const subscriber = subscriberRow ? readSubscriber(subscriberRow) : null;
 
   if (subscriber) {
+    // A registered account has no service to restore — it has never been
+    // provisioned. Its first purchase is activated by the subscription
+    // service, which creates the billing profile and the router line. The
+    // restore branch below would only flip the status without provisioning
+    // anything, so it is skipped for those accounts.
+    const isFirstPurchase = subscriber.status === 'registered';
+
     // The service is only restored when the account has no other unpaid
     // invoice. Otherwise the customer would be cut again the next morning.
     const outstanding = await db.queryOne(
@@ -621,7 +628,7 @@ async function applyPayment({ invoiceId, transactionId, gateway, amount, raw = {
     );
     const hasOutstanding = Number(outstanding?.count || 0) > 0;
 
-    if (!hasOutstanding) {
+    if (!hasOutstanding && !isFirstPurchase) {
       const username = subscriber.pppoeUsername || subscriber.id;
       const routerResult = await mikrotik.restoreSubscriber({
         subscriberId: subscriber.id,
@@ -663,7 +670,7 @@ async function applyPayment({ invoiceId, transactionId, gateway, amount, raw = {
           { subscriberId: subscriber.id },
         );
       }
-    } else {
+    } else if (hasOutstanding) {
       await db.query(
         `INSERT INTO billing_events (subscriber_id, invoice_id, event, amount, message)
          VALUES ($1, $2, 'payment_received_outstanding', $3, $4)`,

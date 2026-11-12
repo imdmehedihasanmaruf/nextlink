@@ -211,6 +211,18 @@ async function run() {
   assert(health.body.paymentMode === 'live', 'API reports the live payment mode', health.body.paymentMode);
   assert(health.body.smsMode === 'live', 'API reports the live SMS mode', health.body.smsMode);
 
+  // The mock gateway settles a payment without any gateway being involved.
+  // While the deployment runs in live mode it must not be reachable at all —
+  // not through the callback and not through the checkout page.
+  const mockCallback = await api('/api/payments/mock/callback', {
+    method: 'POST',
+    body: { transactionId: 'does-not-matter', status: 'success', amount: 1 },
+  });
+  assert(mockCallback.status === 404, 'the mock payment callback is refused in live mode', mockCallback.body);
+
+  const mockCheckout = await api('/api/payments/mock/checkout/does-not-matter');
+  assert(mockCheckout.status === 404, 'the mock checkout page is refused in live mode', mockCheckout.body);
+
   // -----------------------------------------------------------------------
   // 3. MikroTik over the real protocol.
   // -----------------------------------------------------------------------

@@ -310,11 +310,18 @@ class RouterOsClient {
     // The commands must run one after another: the protocol multiplexes
     // replies over a single socket, so parallel commands can be matched to
     // the wrong request.
-    const identity = await this.send('/system/identity/print').catch(() => []);
-    const resource = await this.send('/system/resource/print').catch(() => []);
+    //
+    // A failed query is reported as such. The previous version replaced the
+    // error with the placeholders "MikroTik" and "unknown", so a router that
+    // did not answer was reported as reachable with a made-up identity.
+    const identity = await this.send('/system/identity/print');
+    const resource = await this.send('/system/resource/print');
+    if (!identity.length && !resource.length) {
+      throw new RouterOsError('The router did not return its identity or resource information.');
+    }
     return {
-      identity: identity[0]?.name || 'MikroTik',
-      version: resource[0]?.version || 'unknown',
+      identity: identity[0]?.name || '',
+      version: resource[0]?.version || '',
       boardName: resource[0]?.['board-name'] || '',
       uptime: resource[0]?.uptime || '',
       cpu: resource[0]?.['cpu-load'] || '',

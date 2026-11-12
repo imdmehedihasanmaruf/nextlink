@@ -43,17 +43,33 @@ npm start   # runs scripts/start-production.js which pins NODE_ENV=production
 
 ## 3. Production flow (what changes from dev)
 
-- **Payments** — every live gateway signs/verifies callbacks before any invoice is
-  marked paid. A forged callback is rejected before anything settles. In mock
-  mode only, `/api/payments/mock/checkout/:txnId` exists; in live mode it returns 404.
-- **MikroTik** — billing suspends a subscriber the moment the grace days pass and
+- **Payments** - every live gateway signs/verifies callbacks before any invoice is
+  marked paid. A forged callback is rejected before anything settles. The mock
+  gateway is **not reachable** in live mode: `POST /api/payments/mock/callback`
+  and `GET /api/payments/mock/checkout/:txnId` both answer 404, so no invoice can
+  ever be settled without a gateway.
+- **Package purchases** - the portal never marks an order or an invoice as paid
+  on its own. It creates the order (`Payment Pending`) with an **unpaid** invoice
+  and hands the invoice to the gateway (`POST /api/portal/purchase`). The
+  customer is redirected to the gateway checkout, and the billing engine
+  activates the subscription when the gateway confirms the payment. A plan is
+  therefore only ever active after the money arrived.
+- **MikroTik** - billing suspends a subscriber the moment the grace days pass and
   restores the moment payment settles. In live mode a router that is unreachable
   does **not** mark the line as suspended; the attempt is recorded against
   `mikrotik_sync_log` with status `failed` and the sweep will retry next day.
-- **SMS** — live provider only; a provider that is unreachable logs `failed` with the
+  A failed router write is reported as a failure - it is never swallowed and
+  reported as a successful provisioning.
+- **SMS** - live provider only; a provider that is unreachable logs `failed` with the
   provider's own error message. Messages are never marked `sent` unless the
   provider acknowledged them.
-- **CORS** — only the portal and admin origins are accepted.
+- **CORS** - only the portal and admin origins are accepted.
+- **Database** - the admin panel and the portal do not fall back to a disk copy
+  when PostgreSQL is unreachable. The error is surfaced instead, so the operator
+  never acts on stale numbers and never saves an empty snapshot over the tables.
+- **No invented figures** - the portal shows a dash instead of a made-up latency,
+  traffic figure, IP address, MAC or plan. A plan that was never purchased reads
+  "No plan yet" everywhere, including the admin panel.
 
 ## 4. First-run checklist
 
@@ -61,7 +77,7 @@ npm start   # runs scripts/start-production.js which pins NODE_ENV=production
 2. Seed the staff accounts: included in `migrate.js`. **Rotate the seeded passwords before going live.**
 3. Verify the live MikroTik connection from the admin: **Settings → MikroTik → Test Router Connection**. It must return `Online` before saving live mode.
 4. Send a **single** live test SMS from the admin to a real phone. Confirm delivery on the handset before releasing billing.
-5. Send a **sandbox** payment for the smallest package through SSLCommerz sandbox or bKash sandbox to a real account. Confirm: invoice flips paid, MikroTik PPPoE secret re-enabled, and an SMS is enqueued.
+5. Send a **sandbox** payment for the smallest package through SSLCommerz sandbox or bKash sandbox to a real account. Confirm: the order shows `Payment Pending` before the payment, the invoice flips to paid after the gateway confirms it, the MikroTik PPPoE secret is provisioned, and an SMS is enqueued.
 6. Only then open the customer portal to real subscribers.
 
 ## 5. Rollback

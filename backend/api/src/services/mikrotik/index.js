@@ -355,8 +355,11 @@ async function ensureSecret({ subscriberId, username, password, profile, remoteA
     const existing = secrets.find((secret) => secret.name === username);
 
     if (existing) {
-      await client.setPppoeSecretProfile(username, resolved.profile).catch(() => {});
-      await client.setPppoeSecretDisabled(username, false).catch(() => {});
+      // The two updates are not swallowed. The previous code ignored a failed
+      // write and still reported success, so the panel claimed the line was
+      // provisioned while the secret on the router was still disabled.
+      await client.setPppoeSecretProfile(username, resolved.profile);
+      await client.setPppoeSecretDisabled(username, false);
       const response = { username, created: false, profile: resolved.profile };
       await logOperation({ subscriberId, action: 'ensure_secret', status: 'success', request, response });
       return { success: true, ...response };

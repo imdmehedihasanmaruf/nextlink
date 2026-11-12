@@ -99,6 +99,13 @@ export async function getSiteContent(): Promise<Record<string, any>> {
       return siteData;
     }
   } catch (err) {
+    // In production the site content must not fall back to the disk copy: a
+    // stale price or plan would be shown to customers. The error is surfaced
+    // instead.
+    if (process.env.NODE_ENV === 'production') {
+      console.error('[PostgreSQL Frontend] Could not read siteData from DB:', err);
+      throw new Error(`The site content could not be read: ${(err as Error)?.message || 'unknown error'}`);
+    }
     console.warn('[PostgreSQL Frontend] Could not read siteData from DB:', err);
   }
 
@@ -131,24 +138,27 @@ export async function findSubscriber(identifier: string): Promise<any | null> {
     if (res.rows.length > 0) {
       const row = res.rows[0];
       const raw = row.raw_data || {};
+      // Only the recorded values are returned. The previous version filled the
+      // gaps with a made-up plan, IP address, MAC, due date and installation
+      // address, so an account without a plan appeared to have one.
       return {
         id: row.id,
         name: row.name,
         email: row.email,
         phone: row.phone,
         status: row.status,
-        packageId: row.package_id || raw.packageId || raw.package_id || 'PKG-003',
-        packageName: raw.packageName || raw.package || 'Advanced',
+        packageId: row.package_id || raw.packageId || raw.package_id || '',
+        packageName: raw.packageName || raw.package || '',
         balance: Number(raw.balance || 0),
-        dueDate: raw.dueDate || '2026-02-15',
-        joinDate: raw.joinDate || '2024-01-01',
+        dueDate: raw.dueDate || '',
+        joinDate: raw.joinDate || raw.joinedAt || '',
         subscriptionStartedAt: raw.subscriptionStartedAt || null,
         subscriptionCancelledAt: raw.subscriptionCancelledAt || null,
-        connectionType: raw.connectionType || 'Optical Fiber GPON',
-        ipAddress: raw.ipAddress || '198.51.100.12',
-        macAddress: raw.macAddress || 'AA:BB:CC:DD:EE:01',
-        address: raw.address || 'Connected Premises',
-        zone: raw.zone || 'Global Network',
+        connectionType: raw.connectionType || '',
+        ipAddress: raw.ipAddress || '',
+        macAddress: raw.macAddress || '',
+        address: raw.address || '',
+        zone: raw.zone || '',
         username: raw.username || clean.toLowerCase(),
         password: raw.password || '',
         raw_data: raw,
@@ -220,7 +230,7 @@ export async function createOrderRecord(order: any): Promise<any> {
         discount NUMERIC(10,2) DEFAULT 0.00,
         total_payable NUMERIC(10,2) DEFAULT 0.00,
         payment_method VARCHAR(50),
-        payment_status VARCHAR(50) DEFAULT 'Payment Verified',
+        payment_status VARCHAR(50) DEFAULT 'Payment Pending',
         order_status VARCHAR(50) DEFAULT 'Pending Activation',
         trx_id VARCHAR(100),
         next_billing_date VARCHAR(50),
@@ -261,7 +271,8 @@ export async function createOrderRecord(order: any): Promise<any> {
         Number(order.discount || 0),
         Number(order.totalPayable || 0),
         order.paymentMethod,
-        order.paymentStatus || 'Payment Verified',
+        // The payment is not verified until the gateway confirms it.
+        order.paymentStatus || 'Payment Pending',
         order.orderStatus || (order.purchaseType === 'upgrade' ? 'Active' : 'Pending Activation'),
         order.trxId,
         order.nextBillingDate,
@@ -289,9 +300,11 @@ export async function createOrderRecord(order: any): Promise<any> {
       }
     }
 
-    // Insert invoice record into invoices table. The id is unique: the
-    // previous value came from a space of a million numbers that repeated
-    // every 16 minutes, so an invoice could be silently dropped.
+    // The invoice is created as UNPAID. The portal never marks an invoice as
+    // paid on its own — the billing engine does that when the gateway
+    // confirms the payment. Before this change the order route wrote the
+    // invoice as 'paid' together with a locally invented transaction id, so
+    // a purchase was "verified" without any gateway ever being contacted.
     const invoiceId = `INV-${crypto.randomUUID().slice(0, 12).toUpperCase()}`;
     await client.query(
       `INSERT INTO invoices (id, subscriber_id, amount, status, due_date, raw_data, created_at, updated_at)
@@ -306,7 +319,7 @@ export async function createOrderRecord(order: any): Promise<any> {
         invoiceId,
         order.customerId,
         Number(order.totalPayable || 0),
-        'paid',
+        'unpaid',
         order.nextBillingDate || new Date().toISOString().split('T')[0],
         JSON.stringify({
           id: invoiceId,
@@ -314,15 +327,14 @@ export async function createOrderRecord(order: any): Promise<any> {
           subscriberId: order.customerId,
           subscriberName: order.customerName,
           subscriberPhone: order.customerPhone,
+          packageId: order.packageId,
           packageName: order.packageName,
           amount: Number(order.totalPayable || 0),
-          status: 'paid',
+          status: 'unpaid',
           currency: 'USD',
           date: new Date().toISOString().split('T')[0],
           dueDate: order.nextBillingDate || new Date().toISOString().split('T')[0],
           paymentMethod: order.paymentMethod,
-          paidVia: order.paymentMethod,
-          trxId: order.trxId,
           package: order.packageName,
           purchaseType: order.purchaseType,
           source: 'package-order',
@@ -331,7 +343,8 @@ export async function createOrderRecord(order: any): Promise<any> {
     );
 
     await client.query('COMMIT');
-    return order;
+    // The invoice id is returned so the caller can start the payment for it.
+    return { ...order, invoiceId };
   } catch (err) {
     await client.query('ROLLBACK');
     console.error('[PostgreSQL createOrderRecord Error]', err);
@@ -379,10 +392,10 @@ export async function getCustomerOrders(customerId: string): Promise<any[]> {
       expectedActivationTime: row.expected_activation_time,
       createdAt: row.created_at,
       raw_data: row.raw_data,
-      purchase_timestamp: row.raw_data?.purchase_timestamp || row.raw_data?.purchaseTimestamp || (row.created_at ? new Date(row.created_at).toLocaleDateString('en-GB') + ' · ' + new Date(row.created_at).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' }) : '09/11/2026 · 12:00PM'),
-      purchaseTimestamp: row.raw_data?.purchase_timestamp || row.raw_data?.purchaseTimestamp || (row.created_at ? new Date(row.created_at).toLocaleDateString('en-GB') + ' · ' + new Date(row.created_at).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' }) : '09/11/2026 · 12:00PM'),
-      session_geolocation: row.raw_data?.session_geolocation || row.raw_data?.sessionGeolocation || 'Azimpur, 1205, Dhaka Division, Bangladesh',
-      sessionGeolocation: row.raw_data?.session_geolocation || row.raw_data?.sessionGeolocation || 'Azimpur, 1205, Dhaka Division, Bangladesh',
+      purchase_timestamp: row.raw_data?.purchase_timestamp || row.raw_data?.purchaseTimestamp || (row.created_at ? new Date(row.created_at).toLocaleDateString('en-GB') + ' · ' + new Date(row.created_at).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' }) : ''),
+      purchaseTimestamp: row.raw_data?.purchase_timestamp || row.raw_data?.purchaseTimestamp || (row.created_at ? new Date(row.created_at).toLocaleDateString('en-GB') + ' · ' + new Date(row.created_at).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' }) : ''),
+      session_geolocation: row.raw_data?.session_geolocation || row.raw_data?.sessionGeolocation || '',
+      sessionGeolocation: row.raw_data?.session_geolocation || row.raw_data?.sessionGeolocation || '',
       purchase_type_label: row.raw_data?.purchase_type_label || row.raw_data?.purchaseTypeLabel || (row.purchase_type === 'upgrade' ? 'Package Plan Upgrade' : 'Additional Secondary Drop'),
       purchaseTypeLabel: row.raw_data?.purchase_type_label || row.raw_data?.purchaseTypeLabel || (row.purchase_type === 'upgrade' ? 'Package Plan Upgrade' : 'Additional Secondary Drop'),
     }));
@@ -427,10 +440,10 @@ export async function getAllOrders(): Promise<any[]> {
       expectedActivationTime: row.expected_activation_time,
       createdAt: row.created_at,
       raw_data: row.raw_data,
-      purchase_timestamp: row.raw_data?.purchase_timestamp || row.raw_data?.purchaseTimestamp || (row.created_at ? new Date(row.created_at).toLocaleDateString('en-GB') + ' · ' + new Date(row.created_at).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' }) : '09/11/2026 · 12:00PM'),
-      purchaseTimestamp: row.raw_data?.purchase_timestamp || row.raw_data?.purchaseTimestamp || (row.created_at ? new Date(row.created_at).toLocaleDateString('en-GB') + ' · ' + new Date(row.created_at).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' }) : '09/11/2026 · 12:00PM'),
-      session_geolocation: row.raw_data?.session_geolocation || row.raw_data?.sessionGeolocation || 'Azimpur, 1205, Dhaka Division, Bangladesh',
-      sessionGeolocation: row.raw_data?.session_geolocation || row.raw_data?.sessionGeolocation || 'Azimpur, 1205, Dhaka Division, Bangladesh',
+      purchase_timestamp: row.raw_data?.purchase_timestamp || row.raw_data?.purchaseTimestamp || (row.created_at ? new Date(row.created_at).toLocaleDateString('en-GB') + ' · ' + new Date(row.created_at).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' }) : ''),
+      purchaseTimestamp: row.raw_data?.purchase_timestamp || row.raw_data?.purchaseTimestamp || (row.created_at ? new Date(row.created_at).toLocaleDateString('en-GB') + ' · ' + new Date(row.created_at).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' }) : ''),
+      session_geolocation: row.raw_data?.session_geolocation || row.raw_data?.sessionGeolocation || '',
+      sessionGeolocation: row.raw_data?.session_geolocation || row.raw_data?.sessionGeolocation || '',
       purchase_type_label: row.raw_data?.purchase_type_label || row.raw_data?.purchaseTypeLabel || (row.purchase_type === 'upgrade' ? 'Package Plan Upgrade' : 'Additional Secondary Drop'),
       purchaseTypeLabel: row.raw_data?.purchase_type_label || row.raw_data?.purchaseTypeLabel || (row.purchase_type === 'upgrade' ? 'Package Plan Upgrade' : 'Additional Secondary Drop'),
     }));

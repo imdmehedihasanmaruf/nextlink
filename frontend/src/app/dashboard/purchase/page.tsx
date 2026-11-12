@@ -45,7 +45,12 @@ import { subscriberAuthHeader } from '@/lib/portalApi'
 import { useModalA11y } from '@/lib/useModalA11y'
 
 type PurchaseType = 'UPGRADE' | 'ADDITIONAL'
-type PaymentGateway = 'card' | 'payoneer' | 'applepay' | 'bkash' | 'upi'
+/**
+ * The gateways the billing engine can actually charge through. The customer
+ * is redirected to the gateway checkout — the portal does not collect the
+ * card or wallet credentials itself.
+ */
+type PaymentGateway = 'bkash' | 'nagad' | 'sslcommerz' | 'rocket'
 
 interface OrderCalculation {
   currentPackage: string
@@ -135,11 +140,12 @@ function PurchaseContent() {
   const [orderCalculation, setOrderCalculation] = useState<OrderCalculation | null>(null)
 
   // Payment Form State
-  const [selectedGateway, setSelectedGateway] = useState<PaymentGateway>('card')
-  const [cardNumber, setCardNumber] = useState('4242 •••• •••• 4242')
+  //
+  // The gateway collects the payment details itself — the portal never sees a
+  // card number. The customer is sent to the gateway checkout and the
+  // subscription is activated when the gateway confirms the payment.
+  const [selectedGateway, setSelectedGateway] = useState<PaymentGateway>('bkash')
   const [cardHolder, setCardHolder] = useState('')
-  const [cardExpiry, setCardExpiry] = useState('12/28')
-  const [cardCvc, setCardCvc] = useState('888')
   const [mobileWalletNumber, setMobileWalletNumber] = useState('')
   const [isSubmittingOrder, setIsSubmittingOrder] = useState(false)
   const [submitError, setSubmitError] = useState<string | null>(null)
@@ -161,11 +167,12 @@ function PurchaseContent() {
     isp?: string
     loading: boolean
   }>({
-    city: 'Azimpur',
-    postalCode: '1205',
-    state: 'Dhaka Division',
-    country: 'Bangladesh',
-    ip: '103.88.24.167',
+    // The location is filled in from the lookup below. Nothing is invented
+    // here — an unknown address stays empty.
+    city: '',
+    postalCode: '',
+    state: '',
+    country: '',
     loading: true
   })
 
@@ -183,12 +190,12 @@ function PurchaseContent() {
         const data = await res.json()
         if (data && data.success) {
           setPurchaseLocation({
-            city: data.city || 'Azimpur',
-            postalCode: data.postalCode || '1205',
-            state: data.state || 'Dhaka Division',
-            country: data.country || 'Bangladesh',
-            ip: data.ip || '103.88.24.167',
-            isp: data.isp || 'NextLink Optical Fiber',
+            city: data.city || '',
+            postalCode: data.postalCode || '',
+            state: data.state || '',
+            country: data.country || '',
+            ip: data.ip || '',
+            isp: data.isp || '',
             loading: false
           })
         } else {
@@ -407,7 +414,7 @@ function PurchaseContent() {
           sessionGeolocation: formattedLocation,
           paymentMethod: selectedGateway,
           paymentDetails: {
-            cardNumber: selectedGateway === 'card' ? cardNumber : undefined,
+            cardHolder: selectedGateway === 'sslcommerz' ? cardHolder : undefined,
             walletNumber: mobileWalletNumber || undefined
           },
           termsAccepted: true
@@ -419,6 +426,14 @@ function PurchaseContent() {
       if (!res.ok || !result.success) {
         setSubmitError(result.error || 'Failed to complete transaction. Please check your payment details.')
         setIsSubmittingOrder(false)
+        return
+      }
+
+      // The payment is authorised at the gateway. The customer is sent to the
+      // gateway checkout; the plan is activated when the gateway confirms the
+      // payment and the browser returns to the portal with the receipt.
+      if (result.payment?.redirectUrl) {
+        window.location.href = result.payment.redirectUrl
         return
       }
 
@@ -1151,13 +1166,12 @@ function PurchaseContent() {
                 )}
 
                 {/* Gateway Options */}
-                <div className="grid grid-cols-2 sm:grid-cols-3 gap-2.5">
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
                   {[
-                    { id: 'card', label: 'Credit / Debit Card', icon: CreditCard },
-                    { id: 'payoneer', label: 'Payoneer Wallet', icon: Globe2 },
-                    { id: 'applepay', label: 'Apple / Google Pay', icon: Smartphone },
-                    { id: 'bkash', label: 'bKash Merchant', icon: Smartphone },
-                    { id: 'upi', label: 'UPI / Regional', icon: RefreshCw },
+                    { id: 'bkash', label: 'bKash', icon: Smartphone },
+                    { id: 'nagad', label: 'Nagad', icon: Smartphone },
+                    { id: 'sslcommerz', label: 'SSLCommerz', icon: CreditCard },
+                    { id: 'rocket', label: 'Rocket', icon: Globe2 },
                   ].map((gw) => {
                     const Icon = gw.icon
                     const isSelected = selectedGateway === gw.id
@@ -1179,79 +1193,29 @@ function PurchaseContent() {
                   })}
                 </div>
 
-                {/* Payment Form Fields */}
+                {/* Payment details — the gateway collects the credentials itself */}
                 <Card className="border shadow-sm">
                   <CardContent className="p-5 space-y-4">
-                    {selectedGateway === 'card' && (
-                      <div className="space-y-3">
-                        <div>
-                          <Label className="text-xs">Cardholder Full Name</Label>
-                          <Input
-                            placeholder="e.g. Alexander Wright"
-                            value={cardHolder}
-                            onChange={(e) => setCardHolder(e.target.value)}
-                            className="mt-1 text-xs"
-                          />
-                        </div>
-                        <div>
-                          <Label className="text-xs">Card Number</Label>
-                          <Input
-                            placeholder="4242 •••• •••• 4242"
-                            value={cardNumber}
-                            onChange={(e) => setCardNumber(e.target.value)}
-                            className="mt-1 text-xs font-mono"
-                          />
-                        </div>
-                        <div className="grid grid-cols-2 gap-3">
-                          <div>
-                            <Label className="text-xs">Expiration Date</Label>
-                            <Input
-                              placeholder="MM/YY"
-                              value={cardExpiry}
-                              onChange={(e) => setCardExpiry(e.target.value)}
-                              className="mt-1 text-xs font-mono"
-                            />
-                          </div>
-                          <div>
-                            <Label className="text-xs">Security CVV</Label>
-                            <Input
-                              placeholder="•••"
-                              type="password"
-                              value={cardCvc}
-                              onChange={(e) => setCardCvc(e.target.value)}
-                              className="mt-1 text-xs font-mono"
-                            />
-                          </div>
-                        </div>
-                      </div>
-                    )}
-
-                    {(selectedGateway === 'bkash' || selectedGateway === 'upi' || selectedGateway === 'payoneer') && (
-                      <div className="space-y-3">
+                    <div className="space-y-3">
+                      <div>
                         <Label className="text-xs">
-                          {selectedGateway === 'bkash' ? 'bKash Mobile Account Number' : selectedGateway === 'upi' ? 'UPI Virtual Payment Address (VPA)' : 'Payoneer Linked Email / ID'}
+                          {selectedGateway === 'sslcommerz' ? 'Cardholder Full Name' : `${selectedGateway.toUpperCase()} Account Number`}
                         </Label>
                         <Input
-                          placeholder={selectedGateway === 'bkash' ? '+880 1700 000000' : selectedGateway === 'upi' ? 'subscriber@okaxis' : 'billing@company.com'}
-                          value={mobileWalletNumber}
-                          onChange={(e) => setMobileWalletNumber(e.target.value)}
+                          placeholder={selectedGateway === 'sslcommerz' ? 'e.g. Alexander Wright' : '+880 1700 000000'}
+                          value={selectedGateway === 'sslcommerz' ? cardHolder : mobileWalletNumber}
+                          onChange={(e) =>
+                            selectedGateway === 'sslcommerz'
+                              ? setCardHolder(e.target.value)
+                              : setMobileWalletNumber(e.target.value)
+                          }
                           className="text-xs font-mono"
                         />
-                        <p className="text-[11px] text-muted-foreground">
-                          Secure instant authorization will trigger an automated verification challenge on your registered terminal.
-                        </p>
                       </div>
-                    )}
-
-                    {selectedGateway === 'applepay' && (
-                      <div className="text-center py-6 space-y-2">
-                        <Smartphone className="h-10 w-10 text-primary mx-auto" />
-                        <p className="font-bold text-sm">One-Touch Device Authentication</p>
-                        <p className="text-xs text-muted-foreground max-w-sm mx-auto">
-                          Clicking confirm will open your device biometric Apple Pay / Google Wallet confirmation sheet.
-                        </p>
-                      </div>
-                    )}
+                      <p className="text-[11px] text-muted-foreground">
+                        You will be redirected to the {selectedGateway === 'sslcommerz' ? 'SSLCommerz' : selectedGateway.toUpperCase()} checkout to authorise the payment. The plan is activated as soon as the gateway confirms it.
+                      </p>
+                    </div>
 
                     {/* Payable summary line */}
                     <div className="pt-3 border-t flex justify-between items-center text-xs">

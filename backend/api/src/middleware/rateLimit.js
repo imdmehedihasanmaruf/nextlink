@@ -1,6 +1,7 @@
 'use strict';
 
 const rateLimit = require('express-rate-limit');
+const { ipKeyGenerator } = rateLimit;
 
 /**
  * Rate limiters.
@@ -16,7 +17,10 @@ const json = (message) => ({ success: false, error: message });
 /** Shared key: the authenticated subject when there is one, the IP otherwise. */
 function keyGenerator(req) {
   if (req.user && req.user.id) return `user:${req.user.id}`;
-  return `ip:${req.ip}`;
+  // The IPv6 address is normalised by the library's helper. Without it an
+  // IPv6 client could rotate through its own address range and never hit
+  // the limit.
+  return `ip:${ipKeyGenerator(req.ip)}`;
 }
 
 /**

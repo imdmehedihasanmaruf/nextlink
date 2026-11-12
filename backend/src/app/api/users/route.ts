@@ -69,19 +69,22 @@ export async function POST(request: Request) {
       id: body.id || `NL-${new Date().getFullYear()}-${crypto.randomBytes(4).toString('hex').toUpperCase()}`,
       name: body.name || 'Subscriber User',
       username: body.username || (body.email ? body.email.split('@')[0] : `user_${crypto.randomBytes(4).toString('hex')}`),
-      phone: body.phone || '01700000000',
-      email: body.email || 'user@example.com',
+      phone: body.phone || '',
+      email: body.email || '',
       password: '',
-      address: body.address || 'Dhaka Metro Fiber Loop',
-      zone: body.zone || 'Dhaka Metro',
+      // The installation details are what the operator records. Nothing is
+      // invented here — the previous version wrote a made-up address, a
+      // random public IP address and a fixed MAC onto every new account.
+      address: body.address || '',
+      zone: body.zone || '',
       packageId: wantsPlan ? body.packageId : '',
-      packageName: wantsPlan ? (body.packageName || body.package || 'Standard 200M') : '',
+      packageName: wantsPlan ? (body.packageName || body.package || '') : '',
       status,
       dueDate: body.dueDate || new Date(Date.now() + 30 * 86400000).toISOString().split('T')[0],
       joinDate: body.joinDate || new Date().toISOString().split('T')[0],
       connectionType: body.connectionType || 'Optical Fiber GPON',
-      ipAddress: body.ipAddress || `103.147.218.${Math.floor(10 + Math.random() * 240)}`,
-      macAddress: body.macAddress || 'AA:BB:CC:DD:EE:FF',
+      ipAddress: body.ipAddress || '',
+      macAddress: body.macAddress || '',
       balance: body.balance || 0,
       totalPaid: body.totalPaid || 0,
       isVpn: !!body.isVpn,
@@ -89,7 +92,7 @@ export async function POST(request: Request) {
       isSpam: !!body.isSpam,
       isScam: !!body.isScam,
       riskScore: body.riskScore || 'low',
-      riskReason: body.riskReason || 'Clean Connection',
+      riskReason: body.riskReason || '',
     } as Subscriber;
 
     const updated = [newSub, ...subscribers];

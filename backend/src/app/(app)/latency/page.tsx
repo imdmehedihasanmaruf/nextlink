@@ -29,7 +29,7 @@ export default function LiveLatencyPage() {
   const [dialogOpen, setDialogOpen] = useState(false);
   const [targetName, setTargetName] = useState('');
   const [targetHost, setTargetHost] = useState('');
-  const [targetPing, setTargetPing] = useState('1.5 ms');
+  const [targetPing, setTargetPing] = useState('');
   const [targetStatus, setTargetStatus] = useState('optimal');
 
   useEffect(() => {
@@ -68,12 +68,18 @@ export default function LiveLatencyPage() {
   const handleAddTarget = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!targetName.trim() || !targetHost.trim()) return;
+    // The round-trip time is a measurement — it has to come from the
+    // monitoring run. There is no default value.
+    if (!targetPing.trim()) {
+      toast.error('Enter the measured round-trip time.');
+      return;
+    }
 
     const newTarget = {
       id: `LAT-${Date.now().toString().slice(-4)}`,
       name: targetName,
       host: targetHost,
-      ping: targetPing || '1.8 ms',
+      ping: targetPing.trim(),
       status: targetStatus,
     };
 
@@ -102,20 +108,21 @@ export default function LiveLatencyPage() {
     }
   };
 
+  /**
+   * Remove every target.
+   *
+   * The previous version restored a fixed list of Tier-1 hosts with made-up
+   * ping times (1.2 ms to 4.8 ms). Those numbers are presented to customers
+   * as the operator's measurements, so they must not be invented here.
+   */
   const handleResetDefaults = async () => {
-    if (confirm('Reset to standard Tier-1 backbone targets?')) {
-      const defaultTargets = [
-        { id: 'LAT-1', name: 'Direct POP Peering', host: 'pop.nextlink.net', ping: '1.2 ms', status: 'optimal' },
-        { id: 'LAT-2', name: 'Cloudflare Edge (1.1.1.1)', host: '1.1.1.1', ping: '2.4 ms', status: 'optimal' },
-        { id: 'LAT-3', name: 'Google DNS (8.8.8.8)', host: '8.8.8.8', ping: '3.1 ms', status: 'optimal' },
-        { id: 'LAT-4', name: 'AWS Cloud Peering', host: 'aws.amazon.com', ping: '4.8 ms', status: 'optimal' },
-      ];
+    if (confirm('Remove every latency target? The portal will show no measurements until real ones are added.')) {
       setEnabled(true);
       setTitle('Realtime Ping & Latency');
       setDescription('Real-time response to Tier-1 international backbones');
-      setTargets(defaultTargets);
-      await handleSave(defaultTargets);
-      toast.success('Standard Tier-1 targets restored!');
+      setTargets([]);
+      await handleSave([]);
+      toast.success('All latency targets removed.');
     }
   };
 
@@ -135,7 +142,7 @@ export default function LiveLatencyPage() {
         <div className="flex items-center gap-2">
           <Button variant="outline" size="sm" onClick={handleResetDefaults} className="gap-1.5 text-xs text-rose-600 border-rose-200 hover:bg-rose-50">
             <Trash2 className="h-3.5 w-3.5" />
-            Reset Defaults
+            Clear Targets
           </Button>
           <Button onClick={() => handleSave()} disabled={loading} className="gap-1.5 shadow">
             {loading ? <RefreshCw className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
@@ -150,7 +157,7 @@ export default function LiveLatencyPage() {
           <CardHeader className="pb-2">
             <CardDescription className="text-xs uppercase font-bold text-primary">Direct POP Edge Latency</CardDescription>
             <CardTitle className="text-2xl font-extrabold text-primary font-mono">
-              {targets[0]?.ping || '< 1.8 ms'}
+              {targets[0]?.ping || '—'}
             </CardTitle>
           </CardHeader>
           <CardContent>
@@ -171,10 +178,10 @@ export default function LiveLatencyPage() {
         <Card className="shadow-sm">
           <CardHeader className="pb-2">
             <CardDescription className="text-xs uppercase font-bold">Packet Loss Ratio</CardDescription>
-            <CardTitle className="text-2xl font-extrabold text-emerald-600 font-mono">0.00%</CardTitle>
+            <CardTitle className="text-2xl font-extrabold text-emerald-600 font-mono">—</CardTitle>
           </CardHeader>
           <CardContent>
-            <p className="text-xs text-muted-foreground">Zero dropped ICMP frames</p>
+            <p className="text-xs text-muted-foreground">Reported by the monitoring run</p>
           </CardContent>
         </Card>
 
@@ -182,7 +189,7 @@ export default function LiveLatencyPage() {
           <CardHeader className="pb-2">
             <CardDescription className="text-xs uppercase font-bold">Cloudflare Anycast</CardDescription>
             <CardTitle className="text-2xl font-extrabold font-mono text-blue-600">
-              {targets.find(t => t.name.toLowerCase().includes('cloudflare'))?.ping || '2.4 ms'}
+              {targets.find(t => t.name.toLowerCase().includes('cloudflare'))?.ping || '—'}
             </CardTitle>
           </CardHeader>
           <CardContent>

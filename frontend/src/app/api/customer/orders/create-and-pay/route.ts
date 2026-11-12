@@ -93,8 +93,12 @@ export async function POST(request: Request) {
     }
 
     // 4. Payment Method Validation
-    const allowedMethods = ['card', 'payoneer', 'applepay', 'bkash', 'upi'];
-    const chosenMethod = (paymentMethod || 'card').toLowerCase();
+    //
+    // Only the gateways the billing engine can actually charge through are
+    // accepted. The portal does not collect the card or wallet credentials —
+    // the customer is redirected to the gateway checkout.
+    const allowedMethods = ['bkash', 'nagad', 'sslcommerz', 'rocket'];
+    const chosenMethod = String(paymentMethod || 'bkash').toLowerCase();
     if (!allowedMethods.includes(chosenMethod)) {
       return NextResponse.json(
         { success: false, error: `Payment method ${paymentMethod} is not configured or supported.` },
@@ -124,12 +128,12 @@ export async function POST(request: Request) {
     const taxes = 0;
     const totalPayable = Number((targetPrice + installationFee + lateFee).toFixed(2));
 
-    // 6. Generate Server Verified Tokens
-    // The ids are unique: the previous values came from small spaces that
-    // repeated, so an order or an invoice could overwrite another one.
+    // 6. Generate the order id
+    // The order ids are unique: the previous values came from small spaces that
+    // repeated, so an order or an invoice could overwrite another one. The
+    // transaction id is written by the gateway, not invented here.
     const orderId = `ORD-${new Date().getFullYear()}-${crypto.randomUUID().slice(0, 10).toUpperCase()}`;
-    const trxId = `TRX-${crypto.randomUUID().slice(0, 10).toUpperCase()}`;
-    const orderStatus = type === 'UPGRADE' ? 'Pending Activation' : 'Pending Activation';
+    const orderStatus = 'Pending Activation';
     const activationTime = type === 'UPGRADE' 
       ? 'Instant Zero-Downtime Provisioning (Activated)' 
       : 'Estimated 24-48 Hours (Physical Drop Scheduling & OLT Calibration)';
@@ -149,9 +153,9 @@ export async function POST(request: Request) {
     const minutesStr = String(now.getMinutes()).padStart(2, '0');
     const defaultTimestamp = `${dayStr}/${monthStr}/${yearStr} · ${hoursStr}:${minutesStr}${ampm}`;
 
-    const defaultLocation = subscriber.address 
-      ? `${subscriber.address}, Dhaka Division, Bangladesh` 
-      : 'Azimpur, 1205, Dhaka Division, Bangladesh';
+    // The installation address comes from the account. When it is unknown the
+    // field stays empty — a made-up address would end up on the invoice.
+    const defaultLocation = subscriber.address ? String(subscriber.address) : '';
 
     const finalTimestamp = purchaseTimestamp || defaultTimestamp;
     const finalGeolocation = sessionGeolocation || defaultLocation;
@@ -182,12 +186,15 @@ export async function POST(request: Request) {
       totalPayable,
       paymentMethod: chosenMethod,
       payment_method: chosenMethod,
-      paymentStatus: 'Payment Verified',
-      payment_status: 'Payment Verified',
+      // The payment is not verified until the gateway confirms it. The order
+      // is created as pending and the transaction id is written by the
+      // gateway, not invented here.
+      paymentStatus: 'Payment Pending',
+      payment_status: 'Payment Pending',
       orderStatus,
       order_status: orderStatus,
-      trxId,
-      trx_id: trxId,
+      trxId: null,
+      trx_id: null,
       package_id: targetPkg.id,
       package_name: targetPkg.name,
       total_payable: totalPayable,
@@ -198,56 +205,65 @@ export async function POST(request: Request) {
       purchase_timestamp: finalTimestamp,
       sessionGeolocation: finalGeolocation,
       session_geolocation: finalGeolocation,
-      nextBillingDate: subscriber.dueDate || '2026-02-15',
-      next_billing_date: subscriber.dueDate || '2026-02-15',
+      nextBillingDate: subscriber.dueDate || new Date().toISOString().split('T')[0],
+      next_billing_date: subscriber.dueDate || new Date().toISOString().split('T')[0],
       expectedActivationTime: activationTime,
       expected_activation_time: activationTime,
       paymentDetails: paymentDetails || {},
     };
 
-    // 7. Persist to PostgreSQL orders & invoices, and update subscriber
-    await createOrderRecord(newOrder);
+    // 7. Persist to PostgreSQL orders & invoices
+    const savedOrder = await createOrderRecord(newOrder);
+    const invoiceId = savedOrder.invoiceId;
 
-    // 8. A registered (not-yet-subscribed) account becomes a subscriber the
-    // moment their first package purchase completes. The billing engine owns
-    // that transition - it creates the billing profile and provisions the
-    // router line - so the portal asks it to do so instead of writing the
-    // status itself.
-    if (status === 'registered') {
-      const activation = await fetch(`${billingApiBase()}/api/customer/subscription/activate`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${bearerToken(request)}`,
-        },
-        body: JSON.stringify({
-          packageId: targetPkg.id,
-          packageName: targetPkg.name,
+    // 8. Start the payment at the gateway. The portal never marks the order
+    // or the invoice as paid — the billing engine does that when the gateway
+    // confirms the transaction, and the subscription is activated by that
+    // same settlement.
+    const gatewayName = chosenMethod;
+    const paymentResponse = await fetch(`${billingApiBase()}/api/portal/purchase`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${bearerToken(request)}`,
+      },
+      body: JSON.stringify({
+        invoiceId,
+        orderId,
+        packageId: targetPkg.id,
+        packageName: targetPkg.name,
+        gateway: gatewayName,
+      }),
+    });
+    const paymentResult = await paymentResponse.json().catch(() => ({}));
+    if (!paymentResponse.ok || !paymentResult.success || !paymentResult.redirectUrl) {
+      console.error('Payment could not be started:', paymentResult.error);
+      return NextResponse.json(
+        {
+          success: false,
+          error:
+            paymentResult.error ||
+            'The payment could not be started. The order was recorded but no money was taken - please try again.',
           orderId,
-        }),
-      });
-      const activationResult = await activation.json().catch(() => ({}));
-      if (!activation.ok || !activationResult.success) {
-        console.error('Subscription activation failed:', activationResult.error);
-        return NextResponse.json(
-          {
-            success: false,
-            error:
-              activationResult.error ||
-              'The payment was taken but the subscription could not be activated. Please contact support.',
-          },
-          { status: 500, headers: corsHeaders },
-        );
-      }
+          invoiceId,
+        },
+        { status: 502, headers: corsHeaders },
+      );
     }
 
     return NextResponse.json(
       {
         success: true,
-        message: type === 'UPGRADE' 
-          ? 'Payment verified and package upgraded successfully!' 
-          : 'Payment verified! Additional line order is submitted and awaiting NOC activation.',
-        order: newOrder,
+        message:
+          'The order was placed. Complete the payment at the gateway to activate the plan.',
+        order: { ...newOrder, invoice_id: invoiceId, trx_id: paymentResult.gatewayTransactionId || null },
+        payment: {
+          redirectUrl: paymentResult.redirectUrl,
+          gatewayTransactionId: paymentResult.gatewayTransactionId || null,
+          invoiceId,
+          amount: paymentResult.amount,
+          currency: paymentResult.currency,
+        },
       },
       { headers: corsHeaders }
     );

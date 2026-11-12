@@ -216,8 +216,11 @@ async function handleCallback(gatewayName, req) {
     return { status: 404, body: { success: false, error: 'No matching payment transaction found' } };
   }
 
-  // A callback may only settle the transaction it belongs to.
-  if (transaction.gateway !== gatewayName && gatewayName !== 'mock') {
+  // A callback may only settle the transaction it belongs to. The mock
+  // gateway is the exception — it settles the transaction that was opened
+  // under the real gateway name — but it only exists in mock mode.
+  const mockMode = require('../config').payments.mode !== 'live';
+  if (transaction.gateway !== gatewayName && !(gatewayName === 'mock' && mockMode)) {
     await db.query(
       `UPDATE payment_webhooks SET status = 'gateway_mismatch', processed_at = NOW() WHERE id = (
          SELECT id FROM payment_webhooks WHERE gateway_txn_id = $1 ORDER BY created_at DESC LIMIT 1
@@ -317,6 +320,39 @@ async function handleCallback(gatewayName, req) {
     raw: parsed.raw,
   });
 
+  // A settled purchase turns a registered account into a subscriber. The
+  // billing engine owns the transition, so the subscription is activated here
+  // — never by the portal, and never before the money arrived.
+  let activation = null;
+  try {
+    const subscriberRow = await db.queryOne(
+      'SELECT id, status FROM subscribers WHERE id = $1',
+      [transaction.subscriber_id],
+    );
+    if (subscriberRow && subscriberRow.status === 'registered') {
+      const invoiceRow = await db.queryOne('SELECT raw_data FROM invoices WHERE id = $1', [transaction.invoice_id]);
+      const invoiceRaw = (invoiceRow && invoiceRow.raw_data) || {};
+      const packageId = invoiceRaw.packageId || null;
+      const packageName = invoiceRaw.packageName || null;
+      if (packageId) {
+        activation = await require('../services/subscriptions').activateAfterPurchase({
+          subscriberId: transaction.subscriber_id,
+          packageId,
+          packageName,
+          orderId: invoiceRaw.orderId || null,
+        });
+      }
+    }
+  } catch (activationError) {
+    // The payment is settled either way — the account is activated by the
+    // daily sweep if the router was unreachable.
+    logger.error('the payment was settled but the subscription could not be activated', {
+      subscriberId: transaction.subscriber_id,
+      invoiceId: transaction.invoice_id,
+      message: activationError.message,
+    });
+  }
+
   await db.query(
     `UPDATE payment_transactions SET status = 'success', updated_at = NOW() WHERE id = $1`,
     [transaction.id],
@@ -345,6 +381,7 @@ async function handleCallback(gatewayName, req) {
       status: 'success',
       invoiceId: transaction.invoice_id,
       alreadyPaid: result.alreadyPaid,
+      activated: Boolean(activation && activation.alreadyActive === false),
     },
   };
 }
@@ -364,6 +401,14 @@ router.all(
     const gatewayName = String(req.params.gateway).toLowerCase();
     if (!['bkash', 'nagad', 'sslcommerz', 'rocket', 'mock'].includes(gatewayName)) {
       return res.status(404).json({ success: false, error: `Unknown gateway: ${gatewayName}` });
+    }
+    // The mock gateway settles payments without a gateway. It only exists
+    // while the deployment runs in mock mode.
+    if (gatewayName === 'mock' && require('../config').payments.mode === 'live') {
+      return res.status(404).json({
+        success: false,
+        error: 'The mock payment gateway is disabled while the deployment runs in live mode.',
+      });
     }
     const result = await handleCallback(gatewayName, req);
 

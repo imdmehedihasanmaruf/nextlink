@@ -18,23 +18,27 @@ export default function InterfaceTrafficPage() {
   const [loading, setLoading] = useState(false);
 
   // Configuration State
-  const [allocatedSpeed, setAllocatedSpeed] = useState(500);
-  const [downloadRateMbps, setDownloadRateMbps] = useState(498.2);
-  const [uploadRateMbps, setUploadRateMbps] = useState(494.7);
-  const [consumedDataGB, setConsumedDataGB] = useState('648.2 GB');
-  const [totalQuota, setTotalQuota] = useState('Unlimited Symmetrical');
-  const [gatewayIPv4, setGatewayIPv4] = useState('198.51.100.12');
-  const [gatewayIPv6, setGatewayIPv6] = useState('2001:db8:85a3::8a2e:370:7334');
-  const [oltPort, setOltPort] = useState('2/1/4');
-  const [terminalStatus, setTerminalStatus] = useState('Synchronized');
+  //
+  // These are the figures the operator reports from the monitoring run.
+  // Nothing is filled in with made-up numbers: an empty field means "not
+  // reported", and the portal shows a dash instead of a fabricated value.
+  const [allocatedSpeed, setAllocatedSpeed] = useState<number | ''>('');
+  const [downloadRateMbps, setDownloadRateMbps] = useState<number | ''>('');
+  const [uploadRateMbps, setUploadRateMbps] = useState<number | ''>('');
+  const [consumedDataGB, setConsumedDataGB] = useState('');
+  const [totalQuota, setTotalQuota] = useState('');
+  const [gatewayIPv4, setGatewayIPv4] = useState('');
+  const [gatewayIPv6, setGatewayIPv6] = useState('');
+  const [oltPort, setOltPort] = useState('');
+  const [terminalStatus, setTerminalStatus] = useState('');
   const [interfaces, setInterfaces] = useState<any[]>([]);
 
   // Add Interface Modal
   const [dialogOpen, setDialogOpen] = useState(false);
   const [ifName, setIfName] = useState('');
   const [ifType, setIfType] = useState('Gigabit Ethernet');
-  const [ifRx, setIfRx] = useState('500 Mbps');
-  const [ifTx, setIfTx] = useState('500 Mbps');
+  const [ifRx, setIfRx] = useState('');
+  const [ifTx, setIfTx] = useState('');
 
   useEffect(() => {
     fetchData();
@@ -42,15 +46,15 @@ export default function InterfaceTrafficPage() {
 
   useEffect(() => {
     if (interfaceTraffic) {
-      setAllocatedSpeed(interfaceTraffic.allocatedSpeed ?? 500);
-      setDownloadRateMbps(interfaceTraffic.downloadRateMbps ?? 498.2);
-      setUploadRateMbps(interfaceTraffic.uploadRateMbps ?? 494.7);
-      setConsumedDataGB(interfaceTraffic.consumedDataGB || '648.2 GB');
-      setTotalQuota(interfaceTraffic.totalQuota || 'Unlimited Symmetrical');
-      setGatewayIPv4(interfaceTraffic.gatewayIPv4 || '198.51.100.12');
-      setGatewayIPv6(interfaceTraffic.gatewayIPv6 || '2001:db8:85a3::8a2e:370:7334');
-      setOltPort(interfaceTraffic.oltPort || '2/1/4');
-      setTerminalStatus(interfaceTraffic.terminalStatus || 'Synchronized');
+      setAllocatedSpeed(interfaceTraffic.allocatedSpeed ?? '');
+      setDownloadRateMbps(interfaceTraffic.downloadRateMbps ?? '');
+      setUploadRateMbps(interfaceTraffic.uploadRateMbps ?? '');
+      setConsumedDataGB(interfaceTraffic.consumedDataGB || '');
+      setTotalQuota(interfaceTraffic.totalQuota || '');
+      setGatewayIPv4(interfaceTraffic.gatewayIPv4 || '');
+      setGatewayIPv6(interfaceTraffic.gatewayIPv6 || '');
+      setOltPort(interfaceTraffic.oltPort || '');
+      setTerminalStatus(interfaceTraffic.terminalStatus || '');
       setInterfaces(Array.isArray(interfaceTraffic.interfaces) ? interfaceTraffic.interfaces : []);
     }
   }, [interfaceTraffic]);
@@ -59,9 +63,9 @@ export default function InterfaceTrafficPage() {
     setLoading(true);
     const activeList = updatedInterfaces !== undefined ? updatedInterfaces : interfaces;
     const payload = {
-      allocatedSpeed: Number(allocatedSpeed),
-      downloadRateMbps: Number(downloadRateMbps),
-      uploadRateMbps: Number(uploadRateMbps),
+      allocatedSpeed: allocatedSpeed === '' ? null : Number(allocatedSpeed),
+      downloadRateMbps: downloadRateMbps === '' ? null : Number(downloadRateMbps),
+      uploadRateMbps: uploadRateMbps === '' ? null : Number(uploadRateMbps),
       consumedDataGB,
       totalQuota,
       gatewayIPv4,
@@ -118,25 +122,27 @@ export default function InterfaceTrafficPage() {
     }
   };
 
+  /**
+   * Clear every reported figure.
+   *
+   * The previous version restored a fixed GPON profile (498.2 Mbps down,
+   * 494.7 Mbps up, 648.2 GB consumed). Those numbers were presented to
+   * customers as their own traffic, so they must not be invented here.
+   */
   const handleResetDefaults = async () => {
-    if (confirm('Reset Bandwidth & Interface metrics to the standard GPON profile?')) {
-      const defaultIfs = [
-        { id: 'IF-1', name: 'sfp-sfpplus1 (Uplink)', type: 'Optical 10G SFP+', rx: '4.82 Gbps', tx: '3.91 Gbps', status: 'Up' },
-        { id: 'IF-2', name: 'ether1-gateway (Client Drop)', type: 'Gigabit Ethernet', rx: '498.2 Mbps', tx: '494.7 Mbps', status: 'Up' },
-        { id: 'IF-3', name: 'gpon-olt-port (Fiber PON)', type: 'GPON ITU-T G.984', rx: '1.24 Gbps', tx: '1.18 Gbps', status: 'Up' },
-      ];
-      setAllocatedSpeed(500);
-      setDownloadRateMbps(498.2);
-      setUploadRateMbps(494.7);
-      setConsumedDataGB('648.2 GB');
-      setTotalQuota('Unlimited Symmetrical');
-      setGatewayIPv4('198.51.100.12');
-      setGatewayIPv6('2001:db8:85a3::8a2e:370:7334');
-      setOltPort('2/1/4');
-      setTerminalStatus('Synchronized');
-      setInterfaces(defaultIfs);
-      await handleSave(defaultIfs);
-      toast.success('GPON defaults restored!');
+    if (confirm('Clear every reported traffic figure? The portal will show no traffic data until real figures are entered.')) {
+      setAllocatedSpeed('');
+      setDownloadRateMbps('');
+      setUploadRateMbps('');
+      setConsumedDataGB('');
+      setTotalQuota('');
+      setGatewayIPv4('');
+      setGatewayIPv6('');
+      setOltPort('');
+      setTerminalStatus('');
+      setInterfaces([]);
+      await handleSave([]);
+      toast.success('All traffic figures cleared.');
     }
   };
 
@@ -156,7 +162,7 @@ export default function InterfaceTrafficPage() {
         <div className="flex items-center gap-2">
           <Button variant="outline" size="sm" onClick={handleResetDefaults} className="gap-1.5 text-xs text-rose-600 border-rose-200 hover:bg-rose-50">
             <Trash2 className="h-3.5 w-3.5" />
-            Reset Defaults
+            Clear Figures
           </Button>
           <Button onClick={() => handleSave()} disabled={loading} className="gap-1.5 shadow">
             {loading ? <RefreshCw className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
@@ -172,11 +178,11 @@ export default function InterfaceTrafficPage() {
             <CardDescription className="text-xs uppercase font-bold text-emerald-700 dark:text-emerald-400">Live Download Throughput</CardDescription>
             <CardTitle className="text-2xl font-extrabold text-emerald-600 font-mono flex items-center gap-2">
               <Download className="h-5 w-5" />
-              {downloadRateMbps} Mbps
+              {downloadRateMbps === '' ? '—' : downloadRateMbps} Mbps
             </CardTitle>
           </CardHeader>
           <CardContent>
-            <p className="text-xs text-muted-foreground">Allocated: {allocatedSpeed} Mbps Symmetrical</p>
+            <p className="text-xs text-muted-foreground">Allocated: {allocatedSpeed === '' ? '—' : allocatedSpeed} Mbps Symmetrical</p>
           </CardContent>
         </Card>
 
@@ -185,7 +191,7 @@ export default function InterfaceTrafficPage() {
             <CardDescription className="text-xs uppercase font-bold text-blue-700 dark:text-blue-400">Live Upload Throughput</CardDescription>
             <CardTitle className="text-2xl font-extrabold text-blue-600 font-mono flex items-center gap-2">
               <Upload className="h-5 w-5" />
-              {uploadRateMbps} Mbps
+              {uploadRateMbps === '' ? '—' : uploadRateMbps} Mbps
             </CardTitle>
           </CardHeader>
           <CardContent>
@@ -196,21 +202,21 @@ export default function InterfaceTrafficPage() {
         <Card className="shadow-sm">
           <CardHeader className="pb-2">
             <CardDescription className="text-xs uppercase font-bold">Billing Cycle Consumed</CardDescription>
-            <CardTitle className="text-2xl font-extrabold font-mono">{consumedDataGB}</CardTitle>
+            <CardTitle className="text-2xl font-extrabold font-mono">{consumedDataGB || '—'}</CardTitle>
           </CardHeader>
           <CardContent>
-            <p className="text-xs text-muted-foreground">Quota: {totalQuota}</p>
+            <p className="text-xs text-muted-foreground">Quota: {totalQuota || '—'}</p>
           </CardContent>
         </Card>
 
         <Card className="shadow-sm">
           <CardHeader className="pb-2">
             <CardDescription className="text-xs uppercase font-bold">Optical Terminal Status</CardDescription>
-            <CardTitle className="text-lg font-bold text-foreground">OLT Port {oltPort}</CardTitle>
+            <CardTitle className="text-lg font-bold text-foreground">OLT Port {oltPort || '—'}</CardTitle>
           </CardHeader>
           <CardContent>
             <Badge className="bg-emerald-500/10 text-emerald-600 border-emerald-500/30 text-xs">
-              {terminalStatus}
+              {terminalStatus || 'Not reported'}
             </Badge>
           </CardContent>
         </Card>
@@ -232,7 +238,7 @@ export default function InterfaceTrafficPage() {
               <Input
                 type="number"
                 value={allocatedSpeed}
-                onChange={(e) => setAllocatedSpeed(Number(e.target.value))}
+                onChange={(e) => setAllocatedSpeed(e.target.value === '' ? '' : Number(e.target.value))}
                 className="mt-1 font-bold"
               />
             </div>
@@ -242,7 +248,7 @@ export default function InterfaceTrafficPage() {
                 type="number"
                 step="0.1"
                 value={downloadRateMbps}
-                onChange={(e) => setDownloadRateMbps(Number(e.target.value))}
+                onChange={(e) => setDownloadRateMbps(e.target.value === '' ? '' : Number(e.target.value))}
                 className="mt-1 font-mono"
               />
             </div>
@@ -252,7 +258,7 @@ export default function InterfaceTrafficPage() {
                 type="number"
                 step="0.1"
                 value={uploadRateMbps}
-                onChange={(e) => setUploadRateMbps(Number(e.target.value))}
+                onChange={(e) => setUploadRateMbps(e.target.value === '' ? '' : Number(e.target.value))}
                 className="mt-1 font-mono"
               />
             </div>

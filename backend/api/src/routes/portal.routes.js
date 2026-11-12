@@ -250,6 +250,147 @@ router.post(
 );
 
 /**
+ * POST /api/portal/purchase
+ * Start the payment for a package purchase.
+ *
+ * The portal creates the order and its invoice, then hands the invoice to the
+ * gateway here. Nothing is marked as paid before the gateway confirms the
+ * transaction — the subscription is activated by the settlement callback, not
+ * by the portal.
+ *
+ * The monthly payment window does not apply: that window governs the regular
+ * bill, not the first purchase of a plan.
+ */
+router.post(
+  '/purchase',
+  requireAuth,
+  requireSelfOrRole(ROLES.SUPER_ADMIN, ROLES.BILLING, ROLES.SUPPORT),
+  validate({
+    body: z.object({
+      invoiceId: z.string().min(1, 'invoiceId is required'),
+      orderId: z.string().max(64).optional().nullable(),
+      packageId: z.string().max(64).optional().nullable(),
+      packageName: z.string().max(255).optional().nullable(),
+      gateway: z.enum(['bkash', 'nagad', 'sslcommerz', 'rocket']),
+    }),
+  }),
+  asyncHandler(async (req, res) => {
+    const body = req.validatedBody;
+    const principalSubscriberId = resolveSubscriberId(req);
+
+    const invoice = await db.queryOne('SELECT * FROM invoices WHERE id = $1', [body.invoiceId]);
+    if (!invoice) {
+      return res.status(404).json({ success: false, error: 'Invoice not found' });
+    }
+
+    if (req.user.type === 'subscriber' && invoice.subscriber_id !== principalSubscriberId) {
+      return res.status(403).json({ success: false, error: 'You can only pay for your own purchase' });
+    }
+
+    if (invoice.status === 'paid') {
+      return res.status(409).json({ success: false, error: 'This purchase has already been paid' });
+    }
+
+    // The package has to exist in the catalogue — the price is never taken
+    // from the request.
+    let packageRow = null;
+    if (body.packageId) {
+      packageRow = await db.queryOne('SELECT id, name, price FROM packages WHERE id = $1', [body.packageId]);
+      if (!packageRow) {
+        return res.status(404).json({ success: false, error: 'The selected package is not in the catalogue' });
+      }
+    }
+
+    const subscriber = await db.queryOne('SELECT * FROM subscribers WHERE id = $1', [invoice.subscriber_id]);
+    const raw = subscriber ? subscriber.raw_data || {} : {};
+
+    // The purchase details are written onto the invoice so the settlement
+    // callback can activate the subscription without guessing.
+    if (body.orderId || packageRow) {
+      await db.query(
+        `UPDATE invoices
+            SET raw_data = COALESCE(raw_data, '{}'::jsonb) || $2::jsonb,
+                updated_at = NOW()
+          WHERE id = $1`,
+        [
+          invoice.id,
+          JSON.stringify({
+            orderId: body.orderId || invoice.raw_data?.orderId || null,
+            packageId: packageRow ? packageRow.id : invoice.raw_data?.packageId || null,
+            packageName: packageRow ? packageRow.name : body.packageName || invoice.raw_data?.packageName || null,
+            source: 'package-order',
+          }),
+        ],
+      );
+    }
+
+    const gateway = gateways.resolveGateway(body.gateway);
+
+    try {
+      const result = await gateway.createPayment({
+        invoiceId: invoice.id,
+        subscriberId: invoice.subscriber_id,
+        amount: Number(invoice.amount),
+        customer: {
+          name: subscriber ? subscriber.name : '',
+          email: subscriber ? subscriber.email : '',
+          phone: subscriber ? subscriber.phone : '',
+          address: raw.address || '',
+        },
+      });
+
+      const transactionId = utils.generateId('PAY');
+      await db.query(
+        `INSERT INTO payment_transactions
+           (id, invoice_id, subscriber_id, gateway, amount, currency, status, gateway_txn_id, reference, method, raw_data)
+         VALUES ($1, $2, $3, $4, $5, $6, 'pending', $7, $7, $4, $8)`,
+        [
+          transactionId,
+          invoice.id,
+          invoice.subscriber_id,
+          body.gateway,
+          Number(invoice.amount),
+          config.billing.currency,
+          result.transactionId,
+          JSON.stringify(result.raw),
+        ],
+      );
+
+      await audit({
+        actorId: req.user.id,
+        actorRole: req.user.role,
+        action: 'payment.initiated',
+        entityType: 'invoice',
+        entityId: invoice.id,
+        details: { gateway: body.gateway, transactionId: result.transactionId, purpose: 'package-purchase' },
+        ip: req.ip,
+      });
+
+      return res.json({
+        success: true,
+        transactionId,
+        gatewayTransactionId: result.transactionId,
+        redirectUrl: result.redirectUrl,
+        invoiceId: invoice.id,
+        amount: Number(invoice.amount),
+        currency: config.billing.currency,
+      });
+    } catch (error) {
+      logger.error('purchase payment failed', {
+        gateway: body.gateway,
+        invoiceId: invoice.id,
+        message: error.message,
+      });
+      return res.status(502).json({
+        success: false,
+        error: `Payment gateway error: ${error.message}`,
+        code: error.code,
+      });
+    }
+  }),
+);
+
+/**
  * GET /api/billing/my-events
  * Billing history for the subscriber (invoices + suspensions + restorations).
  */

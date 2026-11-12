@@ -2,14 +2,15 @@
 setlocal
 chcp 65001 >nul
 rem ===================================================================
-rem  NextLink Global — start everything
+rem  NextLink Global — start everything (development)
 rem  1. Redis            (job queue, port 6379)
-rem  2. Express API      (Backend Engine)  http://localhost:3000
-rem  3. Frontend         (Client Portal)   http://localhost:3001 (web + /api proxy)
-rem  4. Admin Panel      (Operations)      http://localhost:8000 (web + /api proxy)
+rem  2. Express API      (Backend Engine)  http://localhost:3100  (internal)
+rem  3. Frontend         (Client Portal)   http://localhost:3000  (web + /api proxy)
+rem  4. Admin Panel      (Operations)      http://localhost:8000  (web + /api proxy)
 rem
-rem  Browsers never reach the Express port directly — /api/* is proxied
-rem  to the API on 3000 by each Next.js app.
+rem  The Express API is internal. Browsers never reach it directly —
+rem  /api/* is proxied to port 3100 by each Next.js app, so the browser
+rem  only ever talks to 3000 (customer portal) and 8000 (admin).
 rem  Folders: ./frontend  ./backend     (nothing else lives at the repo root)
 rem ===================================================================
 
@@ -43,17 +44,17 @@ pushd "%API%"
 call node scripts\migrate.js >nul 2>&1
 popd
 
-start "NextLink API (Port 3000)" cmd /k "cd /d "%API%" && npm run dev"
-timeout /t 2 /nobreak >nul
+start "NextLink API (Port 3100, internal)" cmd /k "cd /d "%API%" && npm run dev"
+timeout /t 3 /nobreak >nul
 
-start "NextLink Frontend (Port 3001)" cmd /k "cd /d "%FRONTEND%" && npm run dev"
+start "NextLink Portal (Port 3000)" cmd /k "cd /d "%FRONTEND%" && npm run dev"
 start "NextLink Admin (Port 8000)" cmd /k "cd /d "%BACKEND%" && npm run dev"
 
 echo.
 echo  ------------------------------------------------------------
-echo   API          http://localhost:3000
-echo   Frontend     http://localhost:3001
+echo   Portal       http://localhost:3000
 echo   Admin        http://localhost:8000
+echo   API          http://localhost:3100  (internal, proxied at /api)
 echo   Redis        localhost:6379
 echo.
 echo   Admin logins:
@@ -62,6 +63,8 @@ echo     billing@nextlink.com / billing123  (Accounts)
 echo     support@nextlink.com / support123  (Helpdesk)
 echo     field@nextlink.com   / field123    (Field Technician)
 echo  ------------------------------------------------------------
+echo.
+echo  For production: see backend\docs\PRODUCTION.md
 echo.
 endlocal
 pause

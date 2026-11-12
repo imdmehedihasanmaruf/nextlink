@@ -227,7 +227,14 @@ export default function SettingsPage() {
     setTesting(false);
 
     if (result.success && result.success === true) {
-      toast.success(`Router reachable — ${result.router?.identity || 'MikroTik'} (${result.latencyMs}ms)`);
+      // The identity comes from the router itself. When the router did not
+      // report one the message says so instead of naming a made-up device.
+      const identity = result.router?.identity;
+      toast.success(
+        identity
+          ? `Router reachable — ${identity} (${result.latencyMs}ms)`
+          : `Router reachable (${result.latencyMs}ms)`,
+      );
     } else if (result.error) {
       toast.error(result.error);
     }

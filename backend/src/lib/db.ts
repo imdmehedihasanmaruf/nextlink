@@ -1,6 +1,7 @@
 import { Pool } from 'pg';
 import fs from 'fs';
 import path from 'path';
+import crypto from 'crypto';
 
 let pool: Pool | null = null;
 
@@ -194,6 +195,16 @@ export async function getAdminStore(): Promise<Record<string, any>> {
     // mock accounts. A read path must never write.
     return result;
   } catch (error) {
+    // In production the panel must not answer with the stale disk mirror: the
+    // operator would act on numbers that are no longer the truth, and the
+    // panel would look healthy while the database is down. The error is
+    // surfaced instead — the client shows it and refuses to save.
+    if (process.env.NODE_ENV === 'production') {
+      console.error('[PostgreSQL] The admin store could not be read:', error);
+      throw new Error(
+        `The database could not be read: ${(error as Error)?.message || 'unknown error'}`,
+      );
+    }
     console.warn('[PostgreSQL] Could not read from DB, falling back to disk:', error);
     const storePath = path.join(getDataDir(), 'adminStore.json');
     if (fs.existsSync(storePath)) {
@@ -620,27 +631,30 @@ export async function findSubscriber(identifier: string): Promise<any | null> {
     if (res.rows.length > 0) {
       const row = res.rows[0];
       const raw = row.raw_data || {};
+      // Only the recorded values are returned. The previous version filled the
+      // gaps with a made-up plan, IP address, MAC, due date and installation
+      // address, so an account without a plan appeared to have one.
       return {
         id: row.id,
         name: row.name,
         email: row.email,
         phone: row.phone,
         status: row.status,
-        packageId: row.package_id || raw.packageId || raw.package_id || 'PKG-003',
-        packageName: raw.packageName || raw.package || 'Advanced',
+        packageId: row.package_id || raw.packageId || raw.package_id || '',
+        packageName: raw.packageName || raw.package || '',
         balance: Number(raw.balance || 0),
-        dueDate: raw.dueDate || '2026-02-15',
-        joinDate: raw.joinDate || '2024-01-01',
+        dueDate: raw.dueDate || '',
+        joinDate: raw.joinDate || raw.joinedAt || '',
         // Subscription lifecycle dates — written by the billing engine when a
         // plan is purchased and when the subscription is cancelled. They stay
         // on the account after a cancellation.
         subscriptionStartedAt: raw.subscriptionStartedAt || null,
         subscriptionCancelledAt: raw.subscriptionCancelledAt || null,
-        connectionType: raw.connectionType || 'Optical Fiber GPON',
-        ipAddress: raw.ipAddress || '198.51.100.12',
-        macAddress: raw.macAddress || 'AA:BB:CC:DD:EE:01',
-        address: raw.address || 'Connected Premises',
-        zone: raw.zone || 'Global Network',
+        connectionType: raw.connectionType || '',
+        ipAddress: raw.ipAddress || '',
+        macAddress: raw.macAddress || '',
+        address: raw.address || '',
+        zone: raw.zone || '',
         username: raw.username || clean.toLowerCase(),
         password: raw.password || '',
         raw_data: raw,
@@ -689,7 +703,7 @@ export async function createOrderRecord(order: any): Promise<any> {
         discount NUMERIC(10,2) DEFAULT 0.00,
         total_payable NUMERIC(10,2) DEFAULT 0.00,
         payment_method VARCHAR(50),
-        payment_status VARCHAR(50) DEFAULT 'Payment Verified',
+        payment_status VARCHAR(50) DEFAULT 'Payment Pending',
         order_status VARCHAR(50) DEFAULT 'Pending Activation',
         trx_id VARCHAR(100),
         next_billing_date VARCHAR(50),
@@ -729,7 +743,8 @@ export async function createOrderRecord(order: any): Promise<any> {
         Number(order.discount || 0),
         Number(order.totalPayable || 0),
         order.paymentMethod,
-        order.paymentStatus || 'Payment Verified',
+        // The payment is not verified until the gateway confirms it.
+        order.paymentStatus || 'Payment Pending',
         order.orderStatus || (order.purchaseType === 'upgrade' ? 'Active' : 'Pending Activation'),
         order.trxId,
         order.nextBillingDate,
@@ -756,7 +771,10 @@ export async function createOrderRecord(order: any): Promise<any> {
       }
     }
 
-    const invoiceId = `INV-${Date.now().toString().slice(-6)}`;
+    // The invoice is created as UNPAID. The billing engine marks it paid when
+    // the gateway confirms the payment — nothing here may claim a payment
+    // that never happened.
+    const invoiceId = `INV-${crypto.randomUUID().slice(0, 12).toUpperCase()}`;
     await client.query(
       `INSERT INTO invoices (id, subscriber_id, amount, status, due_date, raw_data, created_at, updated_at)
        VALUES ($1, $2, $3, $4, $5, $6, NOW(), NOW())
@@ -765,17 +783,16 @@ export async function createOrderRecord(order: any): Promise<any> {
         invoiceId,
         order.customerId,
         Number(order.totalPayable || 0),
-        'paid',
+        'unpaid',
         order.nextBillingDate || new Date().toISOString().split('T')[0],
         JSON.stringify({
           id: invoiceId,
           orderId: order.id,
           subscriberId: order.customerId,
           amount: Number(order.totalPayable || 0),
-          status: 'paid',
+          status: 'unpaid',
           date: new Date().toISOString().split('T')[0],
           paymentMethod: order.paymentMethod,
-          trxId: order.trxId,
           package: order.packageName,
           purchaseType: order.purchaseType,
         }),

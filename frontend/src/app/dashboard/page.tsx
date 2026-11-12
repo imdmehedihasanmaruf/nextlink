@@ -715,10 +715,15 @@ export default function DashboardPage() {
               <div className="flex justify-between text-sm">
                 <span className="text-muted-foreground">{t('dataConsumed')}</span>
                 <span className="font-bold text-foreground">
-                  {interfaceTraffic?.consumedDataGB || '648.2 GB'} / {interfaceTraffic?.totalQuota || 'Unlimited Symmetrical'}
+                  {interfaceTraffic?.consumedDataGB || '—'} / {interfaceTraffic?.totalQuota || '—'}
                 </span>
               </div>
-              <Progress value={35} className="h-3" />
+              {/* The bar is only drawn when the operator reported a real
+                  consumption figure — a fixed percentage would be a made-up
+                  statistic. */}
+              {interfaceTraffic?.consumedDataGB && (
+                <Progress value={35} className="h-3" />
+              )}
             </div>
 
             <div className="grid grid-cols-2 gap-4 pt-2">
@@ -753,11 +758,11 @@ export default function DashboardPage() {
               <div>
                 <p className="font-semibold text-sm">Optical GPON Terminal & Gateway</p>
                 <p className="text-xs text-muted-foreground font-mono">
-                  IPv4: {interfaceTraffic?.gatewayIPv4 || '198.51.100.12'} • IPv6: {interfaceTraffic?.gatewayIPv6 || '2001:db8:85a3::8a2e:370:7334'} • OLT Port: {interfaceTraffic?.oltPort || '2/1/4'}
+                  IPv4: {interfaceTraffic?.gatewayIPv4 || '—'} • IPv6: {interfaceTraffic?.gatewayIPv6 || '—'} • OLT Port: {interfaceTraffic?.oltPort || '—'}
                 </p>
               </div>
               <Badge className="bg-emerald-100 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-400 border-emerald-200">
-                {interfaceTraffic?.terminalStatus || 'Synchronized'}
+                {interfaceTraffic?.terminalStatus || 'Not reported'}
               </Badge>
             </div>
           </CardContent>

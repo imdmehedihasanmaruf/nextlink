@@ -58,18 +58,25 @@ export async function POST(request: Request) {
       );
     }
 
-    const currentPkg = packages.find(p => p.id === subscriber.packageId || p.name.toLowerCase() === (subscriber.packageName || '').toLowerCase()) || {
-      id: subscriber.packageId || 'PKG-002',
-      name: subscriber.packageName || 'Standard 200M',
-      price: 29.99,
-      speed: 200,
-    };
-
-    const targetPrice = Number(targetPkg.price || 0);
-    const currentPrice = Number(currentPkg.price || 0);
-
     const pTypeStr = String(purchaseType || '').toLowerCase();
     const type = pTypeStr.includes('add') ? 'ADDITIONAL' : 'UPGRADE';
+
+    // The current plan is looked up in the catalogue. An account without a
+    // plan has no current plan — the previous version invented one (a made-up
+    // package, price and speed) and priced the upgrade against it.
+    const currentPkg = packages.find(
+      p => (subscriber.packageId && p.id === subscriber.packageId) ||
+           (subscriber.packageName && p.name.toLowerCase() === String(subscriber.packageName).toLowerCase())
+    );
+    if (!currentPkg && type === 'UPGRADE') {
+      return NextResponse.json(
+        { success: false, error: 'The current plan is not in the catalogue — the operator has to set it before an upgrade can be priced.' },
+        { status: 409, headers: corsHeaders }
+      );
+    }
+
+    const targetPrice = Number(targetPkg.price || 0);
+    const currentPrice = Number(currentPkg?.price || 0);
 
     // The operator's pricing rule: every package purchase is charged the plan
     // price PLUS a fixed $18 installation fee. The $5 late fee is only added
@@ -94,18 +101,20 @@ export async function POST(request: Request) {
     // fixed fees.
 
     // Determine next billing date
-    const nextBillingDate = subscriber.dueDate || '2026-02-15';
+    const nextBillingDate = subscriber.dueDate || '';
 
     const calculation = {
       customerName: subscriber.name,
       customerId: subscriber.id,
       connectionId: `CONN-${subscriber.id.replace('SUB-', 'OPT-')}-01`,
-      currentPackage: {
-        id: currentPkg.id,
-        name: currentPkg.name,
-        speed: currentPkg.speed || 100,
-        price: currentPrice,
-      },
+      currentPackage: currentPkg
+        ? {
+            id: currentPkg.id,
+            name: currentPkg.name,
+            speed: currentPkg.speed || 100,
+            price: currentPrice,
+          }
+        : null,
       selectedPackage: {
         id: targetPkg.id,
         name: targetPkg.name,
@@ -131,7 +140,7 @@ export async function POST(request: Request) {
       {
         success: true,
         calculation,
-        currentPackage: currentPkg.name,
+        currentPackage: currentPkg?.name || '',
         newPackage: targetPkg.name,
         currentPrice,
         newPrice: targetPrice,
