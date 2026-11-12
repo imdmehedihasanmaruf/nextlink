@@ -40,21 +40,50 @@ function limiter({ windowMs, max, message, skipSuccessful = false }) {
  * The values can be overridden through the environment, which is what the
  * test suite uses so a test run does not lock itself out.
  */
+const isProduction = (process.env.NODE_ENV || 'development') === 'production';
+
+/**
+ * The budgets outside production.
+ *
+ * In production the sign-in budget is strict — 10 attempts per 15 minutes from
+ * one address — so a password cannot be brute forced. A test run signs in far
+ * more often than that (every suite opens its own session), so the very same
+ * limiter would lock the suite out of its own API and fail the run for a
+ * reason that has nothing to do with the code under test. Development and
+ * test therefore get generous budgets. An explicit environment variable
+ * always wins, and production is never affected.
+ */
+const DEV_BUDGETS = {
+  auth: 500,
+  ticket: 500,
+  application: 500,
+  payment: 500,
+  sms: 1000,
+  global: 10000,
+  portal: 5000,
+};
+
+function budget(name, envName, productionValue) {
+  const fromEnv = process.env[envName];
+  if (fromEnv !== undefined && fromEnv !== '') return Number(fromEnv);
+  return isProduction ? productionValue : DEV_BUDGETS[name];
+}
+
 const WINDOWS = {
   auth: Number(process.env.RATE_LIMIT_AUTH_WINDOW_MS || 15 * 60 * 1000),
-  authMax: Number(process.env.RATE_LIMIT_AUTH_MAX || 10),
+  authMax: budget('auth', 'RATE_LIMIT_AUTH_MAX', 10),
   ticket: Number(process.env.RATE_LIMIT_TICKET_WINDOW_MS || 60 * 60 * 1000),
-  ticketMax: Number(process.env.RATE_LIMIT_TICKET_MAX || 10),
+  ticketMax: budget('ticket', 'RATE_LIMIT_TICKET_MAX', 10),
   application: Number(process.env.RATE_LIMIT_APPLICATION_WINDOW_MS || 60 * 60 * 1000),
-  applicationMax: Number(process.env.RATE_LIMIT_APPLICATION_MAX || 10),
+  applicationMax: budget('application', 'RATE_LIMIT_APPLICATION_MAX', 10),
   payment: Number(process.env.RATE_LIMIT_PAYMENT_WINDOW_MS || 15 * 60 * 1000),
-  paymentMax: Number(process.env.RATE_LIMIT_PAYMENT_MAX || 30),
+  paymentMax: budget('payment', 'RATE_LIMIT_PAYMENT_MAX', 30),
   sms: Number(process.env.RATE_LIMIT_SMS_WINDOW_MS || 60 * 60 * 1000),
-  smsMax: Number(process.env.RATE_LIMIT_SMS_MAX || 100),
+  smsMax: budget('sms', 'RATE_LIMIT_SMS_MAX', 100),
   global: Number(process.env.RATE_LIMIT_GLOBAL_WINDOW_MS || 60 * 1000),
-  globalMax: Number(process.env.RATE_LIMIT_GLOBAL_MAX || 300),
+  globalMax: budget('global', 'RATE_LIMIT_GLOBAL_MAX', 300),
   portal: Number(process.env.RATE_LIMIT_PORTAL_WINDOW_MS || 15 * 60 * 1000),
-  portalMax: Number(process.env.RATE_LIMIT_PORTAL_MAX || 60),
+  portalMax: budget('portal', 'RATE_LIMIT_PORTAL_MAX', 60),
 };
 
 /** Sign in attempts — strict, so a password cannot be brute forced. */

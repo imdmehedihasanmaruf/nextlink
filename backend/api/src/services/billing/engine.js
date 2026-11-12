@@ -187,7 +187,7 @@ async function generateInvoice({ subscriber, period, amount, dueDate, lateFee = 
       const nextCredit = Math.max(0, currentCredit - creditUsed);
       await deductClient.query(
         `UPDATE subscribers
-            SET raw_data = COALESCE(raw_data, '{}'::jsonb) || jsonb_build_object('credit_balance', $2),
+            SET raw_data = COALESCE(raw_data, '{}'::jsonb) || jsonb_build_object('credit_balance', $2::numeric),
                 updated_at = NOW()
           WHERE id = $1`,
         [subscriber.id, nextCredit],

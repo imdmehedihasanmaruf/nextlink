@@ -1,6 +1,6 @@
 'use client';
 import { useEffect, useMemo, useState } from 'react';
-import { Users, Wifi, WifiOff, BanknoteIcon, AlertCircle, CheckCircle, Trash2, RefreshCw } from 'lucide-react';
+import { Users, Wifi, WifiOff, UserPlus, BanknoteIcon, AlertCircle, CheckCircle, Trash2, RefreshCw } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { Button } from '@/components/ui/button';
 import {
@@ -32,9 +32,13 @@ export default function DashboardPage() {
     };
   }, []);
 
-  const totalSubscribers = subscribers.length;
+  // Accounts vs subscribers: an account exists as soon as someone registers;
+  // a subscriber is an account with a live plan.
+  const totalUsers = subscribers.length;
   const activeSubscribers = subscribers.filter(s => s.status === 'active').length;
+  const registeredUsers = subscribers.filter(s => s.status === 'registered').length;
   const suspendedSubscribers = subscribers.filter(s => s.status === 'suspended').length;
+  const cancelledUsers = subscribers.filter(s => s.status === 'cancelled').length;
   const collectedRevenue = invoices.filter(i => i.status === 'paid').reduce((sum, inv) => sum + inv.amount, 0);
   const openTickets = tickets.filter(tk => tk.status === 'open' || tk.status === 'in_progress');
   const pendingInvoices = invoices.filter(i => i.status !== 'paid');
@@ -80,22 +84,38 @@ export default function DashboardPage() {
       </div>
 
       {/* KPI Cards */}
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
         <StatsCard
-          title="Total Subscribers"
-          value={totalSubscribers}
+          title="Total Users"
+          value={totalUsers}
           icon={<Users className="h-5 w-5 text-primary" />}
           trend="up"
-          trendValue="Live database count"
+          trendValue="Every registered account"
           iconBg="bg-primary/10"
         />
         <StatsCard
-          title="Active Connections"
+          title="Active Subscribers"
           value={activeSubscribers}
           icon={<Wifi className="h-5 w-5 text-green-600" />}
           trend="up"
-          trendValue={totalSubscribers > 0 ? `${Math.round((activeSubscribers / totalSubscribers) * 100)}% active` : '0 active'}
+          trendValue={totalUsers > 0 ? `${Math.round((activeSubscribers / totalUsers) * 100)}% of all users` : '0 subscribers'}
           iconBg="bg-green-100 dark:bg-green-900/30"
+        />
+        <StatsCard
+          title="Registered (No Plan)"
+          value={registeredUsers}
+          icon={<UserPlus className="h-5 w-5 text-blue-600" />}
+          trend="neutral"
+          trendValue={registeredUsers > 0 ? 'Awaiting a package purchase' : 'All users have a plan'}
+          iconBg="bg-blue-100 dark:bg-blue-900/30"
+        />
+        <StatsCard
+          title="Cancelled"
+          value={cancelledUsers}
+          icon={<WifiOff className="h-5 w-5 text-amber-600" />}
+          trend="neutral"
+          trendValue={cancelledUsers > 0 ? 'Left the subscriber list' : 'None cancelled'}
+          iconBg="bg-amber-100 dark:bg-amber-900/30"
         />
         <StatsCard
           title="Suspended"

@@ -57,6 +57,10 @@ export interface Subscriber {
   status: SubscriberStatus;
   dueDate: string;
   joinDate: string;
+  // Subscription lifecycle — written by the billing engine when a purchase
+  // activates the account and when a subscription is cancelled.
+  subscriptionStartedAt?: string | null;
+  subscriptionCancelledAt?: string | null;
   connectionType: string;
   ipAddress: string;
   macAddress: string;

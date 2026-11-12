@@ -26,7 +26,7 @@ interface NavItem {
 const navItems: NavItem[] = [
   { label: 'Dashboard', key: 'dashboard', href: '/dashboard', icon: <LayoutDashboard className="h-5 w-5" />, roles: ['super_admin', 'billing', 'support', 'technician', 'noc_operator'], permission: 'dashboard' },
   { label: 'Frontend CMS', key: 'cms', href: '/cms', icon: <Globe className="h-5 w-5" />, roles: ['super_admin', 'billing', 'support'], permission: 'cms' },
-  { label: 'Subscribers', key: 'subscribers', href: '/users', icon: <Users className="h-5 w-5" />, roles: ['super_admin', 'billing', 'support'], permission: 'subscribers' },
+  { label: 'User Details', key: 'subscribers', href: '/users', icon: <Users className="h-5 w-5" />, roles: ['super_admin', 'billing', 'support'], permission: 'subscribers' },
   { label: 'Packages', key: 'packages', href: '/packages', icon: <Package className="h-5 w-5" />, roles: ['super_admin'], permission: 'packages' },
   { label: 'Subscriber Details', key: 'orders', href: '/orders', icon: <PackageCheck className="h-5 w-5" />, roles: ['super_admin', 'billing', 'support'], permission: 'billing' },
   { label: 'Billing', key: 'billing', href: '/billing', icon: <Receipt className="h-5 w-5" />, roles: ['super_admin', 'billing'], permission: 'billing' },

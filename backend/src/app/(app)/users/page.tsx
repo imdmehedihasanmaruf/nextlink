@@ -2,7 +2,7 @@
 
 import React, { useState, useEffect, useMemo } from 'react';
 import {
-  Users, ShieldAlert, ShieldCheck, Eye, Ban, CheckCircle2,
+  Users, ShieldAlert, ShieldCheck, Eye, Ban, CheckCircle2, UserPlus,
   Trash2, KeyRound, Search, Plus, RefreshCw, AlertTriangle, Globe,
   Shield, MapPin, Phone, Mail, Wifi, Copy, Check, Lock, AlertOctagon,
   ExternalLink, UserCheck
@@ -24,7 +24,7 @@ export default function UserDetailsPage() {
   const { subscribers, packages, updateSubscriber, deleteSubscriber, fetchData, isLoading } = useAdminDataStore();
   
   // State
-  const [activeTab, setActiveTab] = useState<'all' | 'active' | 'vpn' | 'spam' | 'scam' | 'blocked'>('all');
+  const [activeTab, setActiveTab] = useState<'all' | 'active' | 'registered' | 'cancelled' | 'vpn' | 'spam' | 'scam' | 'blocked'>('all');
   const [searchQuery, setSearchQuery] = useState('');
   const [riskFilter, setRiskFilter] = useState('all');
   const [copiedId, setCopiedId] = useState<string | null>(null);
@@ -65,17 +65,19 @@ export default function UserDetailsPage() {
     setTimeout(() => setCopiedId(null), 2000);
   };
 
-  // Filter users based on tabs and search
+  // Filter users based on tabs and search.
+  //
+  // This page is "User Details": everyone who has an account on the portal.
+  // That includes accounts that registered but have not bought a plan yet, and
+  // accounts whose subscription was cancelled — their purchase and cancellation
+  // dates stay on their profile. The subscriber list (those with a live plan)
+  // is the "Subscriber Details" page.
   const filteredUsers = useMemo(() => {
     return subscribers.filter((user) => {
-      // Only show actual subscribers. Registered-but-not-subscribed users and
-      // cancelled accounts are not in this list — their records are preserved
-      // for history and shown on their profile page.
-      if (user.status === 'registered') return false;
-      if (user.status === 'cancelled') return false;
-
       // Tab filter
       if (activeTab === 'active' && user.status !== 'active') return false;
+      if (activeTab === 'registered' && user.status !== 'registered') return false;
+      if (activeTab === 'cancelled' && user.status !== 'cancelled') return false;
       if (activeTab === 'vpn' && !user.isVpn) return false;
       if (activeTab === 'spam' && !user.isSpam) return false;
       if (activeTab === 'scam' && !user.isScam && user.riskScore !== 'high') return false;
@@ -109,11 +111,13 @@ export default function UserDetailsPage() {
   const stats = useMemo(() => {
     const total = subscribers.length;
     const active = subscribers.filter(s => s.status === 'active').length;
+    const registered = subscribers.filter(s => s.status === 'registered').length;
+    const cancelled = subscribers.filter(s => s.status === 'cancelled').length;
     const vpn = subscribers.filter(s => s.isVpn).length;
     const spam = subscribers.filter(s => s.isSpam).length;
     const scam = subscribers.filter(s => s.isScam || s.riskScore === 'high').length;
     const blocked = subscribers.filter(s => s.status === 'blocked' || s.status === 'suspended').length;
-    return { total, active, vpn, spam, scam, blocked };
+    return { total, active, registered, cancelled, vpn, spam, scam, blocked };
   }, [subscribers]);
 
   // Block / Unblock handler. Blocking goes through the billing service,
@@ -237,11 +241,9 @@ export default function UserDetailsPage() {
       return;
     }
 
-    if (!newUserForm.packageId) {
-      toast.error('Please choose a package for this customer');
-      return;
-    }
-
+    // A package plan is optional here: an operator can create a portal
+    // account that has no service yet. The account becomes a subscriber when
+    // a plan is purchased.
     setBusyUser('creating');
     const result = await apiPost('/api/users', {
       name: newUserForm.name,
@@ -251,7 +253,7 @@ export default function UserDetailsPage() {
       // Never the operator's own input — the API generates a one-time
       // password and returns it exactly once.
       password: '',
-      packageId: newUserForm.packageId,
+      packageId: newUserForm.packageId || '',
       address: newUserForm.address,
       isVpn: newUserForm.isVpn,
       isSpam: newUserForm.isSpam,
@@ -332,22 +334,33 @@ export default function UserDetailsPage() {
         <Card className="cursor-pointer hover:border-primary/50 transition-all shadow-sm" onClick={() => setActiveTab('all')}>
           <CardContent className="p-4">
             <div className="flex items-center justify-between">
-              <span className="text-xs font-medium text-muted-foreground">Total Subscribers</span>
+              <span className="text-xs font-medium text-muted-foreground">Total Users</span>
               <Users className="h-4 w-4 text-primary" />
             </div>
             <div className="text-2xl font-bold mt-1 text-foreground">{stats.total}</div>
-            <p className="text-[11px] text-muted-foreground mt-0.5">All registrations</p>
+            <p className="text-[11px] text-muted-foreground mt-0.5">Every registered account</p>
           </CardContent>
         </Card>
 
         <Card className="cursor-pointer hover:border-emerald-500/50 transition-all shadow-sm" onClick={() => setActiveTab('active')}>
           <CardContent className="p-4">
             <div className="flex items-center justify-between">
-              <span className="text-xs font-medium text-muted-foreground">Active</span>
+              <span className="text-xs font-medium text-muted-foreground">Active Subscribers</span>
               <CheckCircle2 className="h-4 w-4 text-emerald-500" />
             </div>
             <div className="text-2xl font-bold mt-1 text-emerald-600 dark:text-emerald-400">{stats.active}</div>
             <p className="text-[11px] text-muted-foreground mt-0.5">Online & verified</p>
+          </CardContent>
+        </Card>
+
+        <Card className="cursor-pointer hover:border-blue-500/50 transition-all shadow-sm" onClick={() => setActiveTab('registered')}>
+          <CardContent className="p-4">
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-medium text-muted-foreground">Registered</span>
+              <UserPlus className="h-4 w-4 text-blue-500" />
+            </div>
+            <div className="text-2xl font-bold mt-1 text-blue-600 dark:text-blue-400">{stats.registered}</div>
+            <p className="text-[11px] text-muted-foreground mt-0.5">Account created, no plan yet</p>
           </CardContent>
         </Card>
 
@@ -405,7 +418,7 @@ export default function UserDetailsPage() {
           className="gap-2 rounded-lg"
         >
           <Users className="h-4 w-4" />
-          All Subscribers
+          All Users
           <span className="ml-1 text-xs px-1.5 py-0.2 rounded-full bg-background/20 font-mono">
             {stats.total}
           </span>
@@ -418,9 +431,35 @@ export default function UserDetailsPage() {
           className="gap-2 rounded-lg text-emerald-600 dark:text-emerald-400"
         >
           <CheckCircle2 className="h-4 w-4" />
-          Active
+          Active Subscribers
           <span className="ml-1 text-xs px-1.5 py-0.2 rounded-full bg-emerald-500/10 font-mono">
             {stats.active}
+          </span>
+        </Button>
+
+        <Button
+          variant={activeTab === 'registered' ? 'default' : 'ghost'}
+          size="sm"
+          onClick={() => setActiveTab('registered')}
+          className="gap-2 rounded-lg text-blue-600 dark:text-blue-400"
+        >
+          <UserPlus className="h-4 w-4" />
+          Registered
+          <span className="ml-1 text-xs px-1.5 py-0.2 rounded-full bg-blue-500/10 font-mono">
+            {stats.registered}
+          </span>
+        </Button>
+
+        <Button
+          variant={activeTab === 'cancelled' ? 'default' : 'ghost'}
+          size="sm"
+          onClick={() => setActiveTab('cancelled')}
+          className="gap-2 rounded-lg text-amber-600 dark:text-amber-400"
+        >
+          <Ban className="h-4 w-4" />
+          Cancelled
+          <span className="ml-1 text-xs px-1.5 py-0.2 rounded-full bg-amber-500/10 font-mono">
+            {stats.cancelled}
           </span>
         </Button>
 
@@ -602,12 +641,17 @@ export default function UserDetailsPage() {
                         </div>
                       </td>
 
-                      {/* Internet Plan */}
+                      {/* Internet Plan — a registered account has no plan until
+                          it purchases one. */}
                       <td className="py-3.5 px-4 whitespace-nowrap">
-                        <div className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-secondary text-secondary-foreground text-xs font-medium border">
-                          <Wifi className="h-3 w-3 text-primary" />
-                          <span>{user.packageName || 'Gigabit Fiber'}</span>
-                        </div>
+                        {user.packageName ? (
+                          <div className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-secondary text-secondary-foreground text-xs font-medium border">
+                            <Wifi className="h-3 w-3 text-primary" />
+                            <span>{user.packageName}</span>
+                          </div>
+                        ) : (
+                          <span className="text-xs text-muted-foreground">No plan yet</span>
+                        )}
                       </td>
 
                       {/* Password — never stored or shown; must be reset */}
@@ -670,16 +714,29 @@ export default function UserDetailsPage() {
                         </div>
                       </td>
 
-                      {/* Status */}
+                      {/* Status — a registered account is not a subscriber, and a
+                          cancelled account is no longer one either. */}
                       <td className="py-3.5 px-4 whitespace-nowrap">
-                        <span className={`inline-flex items-center gap-1 rounded-full px-2.5 py-0.5 text-xs font-semibold ${
-                          isBlocked
-                            ? 'bg-rose-500/15 text-rose-600 dark:text-rose-400 border border-rose-500/30'
-                            : 'bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border border-emerald-500/30'
-                        }`}>
-                          <span className={`h-1.5 w-1.5 rounded-full ${isBlocked ? 'bg-rose-500' : 'bg-emerald-500'}`} />
-                          {user.status === 'blocked' ? 'Blocked' : user.status === 'suspended' ? 'Suspended' : 'Active'}
-                        </span>
+                        {(() => {
+                          const s = String(user.status || '').toLowerCase();
+                          const map: Record<string, { label: string; cls: string; dot: string }> = {
+                            active:      { label: 'Subscriber',     cls: 'bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border-emerald-500/30', dot: 'bg-emerald-500' },
+                            registered:  { label: 'Registered',     cls: 'bg-blue-500/15 text-blue-600 dark:text-blue-400 border-blue-500/30', dot: 'bg-blue-500' },
+                            cancelled:   { label: 'Cancelled',      cls: 'bg-amber-500/15 text-amber-600 dark:text-amber-400 border-amber-500/30', dot: 'bg-amber-500' },
+                            suspended:   { label: 'Suspended',      cls: 'bg-rose-500/15 text-rose-600 dark:text-rose-400 border-rose-500/30', dot: 'bg-rose-500' },
+                            blocked:     { label: 'Blocked',        cls: 'bg-rose-500/15 text-rose-600 dark:text-rose-400 border-rose-500/30', dot: 'bg-rose-500' },
+                            pending:     { label: 'Pending',        cls: 'bg-blue-500/15 text-blue-600 dark:text-blue-400 border-blue-500/30', dot: 'bg-blue-500' },
+                            inactive:    { label: 'Inactive',       cls: 'bg-muted text-muted-foreground border-border', dot: 'bg-muted-foreground' },
+                            deactivated: { label: 'Deactivated',    cls: 'bg-muted text-muted-foreground border-border', dot: 'bg-muted-foreground' },
+                          };
+                          const v = map[s] || { label: s || 'On File', cls: 'bg-muted text-muted-foreground border-border', dot: 'bg-muted-foreground' };
+                          return (
+                            <span className={`inline-flex items-center gap-1 rounded-full px-2.5 py-0.5 text-xs font-semibold border ${v.cls}`}>
+                              <span className={`h-1.5 w-1.5 rounded-full ${v.dot}`} />
+                              {v.label}
+                            </span>
+                          );
+                        })()}
                       </td>
 
                       {/* Actions */}
@@ -802,12 +859,30 @@ export default function UserDetailsPage() {
                     <span className="text-xs text-muted-foreground font-medium">Internet Plan</span>
                     <p className="text-sm font-semibold text-foreground flex items-center gap-1.5 mt-0.5">
                       <Wifi className="h-3.5 w-3.5 text-primary" />
-                      {selectedUser.packageName || 'Gigabit Fiber'}
+                      {selectedUser.packageName || 'No plan yet'}
                     </p>
                   </div>
                   <div>
                     <span className="text-xs text-muted-foreground font-medium">Joined Date</span>
                     <p className="text-sm font-medium">{formatDate(selectedUser.joinDate)}</p>
+                  </div>
+                  {/* Subscription lifecycle — kept on the profile so the
+                      purchase and cancellation dates are always available. */}
+                  <div>
+                    <span className="text-xs text-muted-foreground font-medium">Subscribed On</span>
+                    <p className="text-sm font-medium">
+                      {selectedUser.subscriptionStartedAt
+                        ? formatDate(selectedUser.subscriptionStartedAt)
+                        : 'Not yet'}
+                    </p>
+                  </div>
+                  <div>
+                    <span className="text-xs text-muted-foreground font-medium">Cancelled On</span>
+                    <p className="text-sm font-medium">
+                      {selectedUser.subscriptionCancelledAt
+                        ? formatDate(selectedUser.subscriptionCancelledAt)
+                        : '—'}
+                    </p>
                   </div>
                   <div className="col-span-2">
                     <span className="text-xs text-muted-foreground font-medium">Installation Address</span>
@@ -1209,13 +1284,18 @@ export default function UserDetailsPage() {
               <div className="space-y-1.5">
                 <Label>Internet Plan</Label>
                 <Select
-                  value={newUserForm.packageId}
-                  onValueChange={(val) => setNewUserForm({ ...newUserForm, packageId: val })}
+                  value={newUserForm.packageId || 'none'}
+                  onValueChange={(val) =>
+                    setNewUserForm({ ...newUserForm, packageId: val === 'none' ? '' : val })
+                  }
                 >
                   <SelectTrigger>
                     <SelectValue placeholder="Select Plan" />
                   </SelectTrigger>
                   <SelectContent>
+                    {/* No plan is valid: the account is created as a portal
+                        account and becomes a subscriber when a plan is bought. */}
+                    <SelectItem value="none">No plan yet (account only)</SelectItem>
                     {packages.map((p) => (
                       <SelectItem key={p.id} value={p.id}>
                         {p.name} - ${p.price}

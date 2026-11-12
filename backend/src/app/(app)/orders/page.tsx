@@ -49,6 +49,9 @@ interface AdminOrder {
   payment_method: string;
   payment_status: string;
   order_status: string;
+  // The live status of the subscriber behind the order — a cancelled
+  // subscription belongs to an account that is no longer a subscriber.
+  subscriber_status?: string | null;
   trx_id: string;
   next_billing_date: string;
   expected_activation_time: string;
@@ -114,8 +117,12 @@ export default function AdminOrdersPage() {
     }
   };
 
-  // Filtered orders
+  // Filtered orders. This page is "Subscriber Details": the accounts that
+  // bought a package plan. An account whose subscription was cancelled is no
+  // longer a subscriber, so its record leaves this list — the purchase and
+  // cancellation dates stay on the account's own profile (User Details).
   const filteredOrders = orders.filter((ord) => {
+    if (String(ord.subscriber_status || '').toLowerCase() === 'cancelled') return false;
     const matchesStatus = statusFilter === 'ALL' || ord.order_status === statusFilter;
     const query = search.toLowerCase();
     const matchesSearch =
@@ -128,12 +135,12 @@ export default function AdminOrdersPage() {
     return matchesStatus && matchesSearch;
   });
 
-  // KPI Calculations
-  const totalCount = orders.length;
-  const pendingCount = orders.filter(o => o.order_status === 'Pending Activation').length;
-  const activeCount = orders.filter(o => o.order_status === 'Active').length;
+  // KPI Calculations — based on the visible (subscriber) rows.
+  const totalCount = filteredOrders.length;
+  const pendingCount = filteredOrders.filter(o => o.order_status === 'Pending Activation').length;
+  const activeCount = filteredOrders.filter(o => o.order_status === 'Active').length;
   // Cancelled orders never produced revenue — they are excluded.
-  const totalRevenue = orders
+  const totalRevenue = filteredOrders
     .filter((o) => String(o.order_status || '').toLowerCase() !== 'cancelled')
     .reduce((sum, o) => sum + Number(o.total_payable || 0), 0);
 
@@ -264,7 +271,8 @@ export default function AdminOrdersPage() {
           <div>
             <CardTitle className="text-base font-bold">Subscriber Plan Registry</CardTitle>
             <CardDescription className="text-xs">
-              Showing {filteredOrders.length} of {orders.length} total subscriber plan records
+              Showing {filteredOrders.length} subscriber plan record{filteredOrders.length === 1 ? '' : 's'}
+              {orders.length > filteredOrders.length && ` (${orders.length - filteredOrders.length} belonging to cancelled subscriptions are hidden)`}
             </CardDescription>
           </div>
         </CardHeader>
@@ -350,6 +358,11 @@ export default function AdminOrdersPage() {
                           >
                             {ord.order_status}
                           </Badge>
+                          {String(ord.subscriber_status || '').toLowerCase() === 'suspended' && (
+                            <Badge variant="outline" className="ml-1 text-[10px] border-rose-500/30 text-rose-600">
+                              Suspended
+                            </Badge>
+                          )}
                         </td>
 
                         <td className="py-3 px-4 text-muted-foreground">

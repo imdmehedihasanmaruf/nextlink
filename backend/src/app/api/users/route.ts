@@ -59,6 +59,12 @@ export async function POST(request: Request) {
     const generatedPassword = body.password || crypto.randomBytes(9).toString('base64url');
     const passwordHash = await bcrypt.hash(generatedPassword, 10);
 
+    // An account created by an operator is a portal account. It only becomes a
+    // subscriber when a package plan is purchased — the same rule the customer
+    // registration follows.
+    const wantsPlan = Boolean(body.packageId);
+    const status = body.status || (wantsPlan ? 'active' : 'registered');
+
     const newSub: Subscriber = {
       id: body.id || `NL-${new Date().getFullYear()}-${crypto.randomBytes(4).toString('hex').toUpperCase()}`,
       name: body.name || 'Subscriber User',
@@ -68,9 +74,9 @@ export async function POST(request: Request) {
       password: '',
       address: body.address || 'Dhaka Metro Fiber Loop',
       zone: body.zone || 'Dhaka Metro',
-      packageId: body.packageId || 'PKG-002',
-      packageName: body.packageName || body.package || 'Standard 200M',
-      status: body.status || 'active',
+      packageId: wantsPlan ? body.packageId : '',
+      packageName: wantsPlan ? (body.packageName || body.package || 'Standard 200M') : '',
+      status,
       dueDate: body.dueDate || new Date(Date.now() + 30 * 86400000).toISOString().split('T')[0],
       joinDate: body.joinDate || new Date().toISOString().split('T')[0],
       connectionType: body.connectionType || 'Optical Fiber GPON',

@@ -60,24 +60,123 @@ export async function getAdminStore(): Promise<Record<string, any>> {
       rolesRes,
       settingsRes,
     ] = await Promise.all([
-      p.query('SELECT raw_data FROM packages ORDER BY created_at ASC'),
-      p.query('SELECT raw_data FROM subscribers ORDER BY created_at ASC'),
-      p.query('SELECT raw_data FROM invoices ORDER BY created_at ASC'),
-      p.query('SELECT raw_data FROM tickets ORDER BY created_at ASC'),
-      p.query('SELECT raw_data FROM technicians ORDER BY created_at ASC'),
-      p.query('SELECT raw_data FROM admin_users ORDER BY created_at ASC'),
-      p.query('SELECT raw_data FROM roles ORDER BY created_at ASC'),
+      p.query(
+        `SELECT id, name, speed, upload_speed, price, duration, description,
+                subscriber_count, bdix_speed, popular, raw_data
+           FROM packages ORDER BY created_at ASC`,
+      ),
+      p.query(
+        `SELECT id, name, email, phone, package_id, status, created_at, raw_data
+           FROM subscribers ORDER BY created_at ASC`,
+      ),
+      p.query(
+        `SELECT id, subscriber_id, amount, status, due_date, created_at, raw_data
+           FROM invoices ORDER BY created_at ASC`,
+      ),
+      p.query(
+        `SELECT id, title, status, priority, created_at, raw_data
+           FROM tickets ORDER BY created_at ASC`,
+      ),
+      p.query(`SELECT id, name, status, created_at, raw_data FROM technicians ORDER BY created_at ASC`),
+      p.query(
+        `SELECT id, name, email, role, status, created_at, raw_data
+           FROM admin_users ORDER BY created_at ASC`,
+      ),
+      p.query(`SELECT id, name, created_at, raw_data FROM roles ORDER BY created_at ASC`),
       p.query('SELECT key, value FROM app_settings'),
     ]);
 
+    // The rows are merged with their `raw_data` instead of returning the JSON
+    // blob alone. The API engine writes the identity fields into real columns
+    // (id, name, email, phone, status) and only the extra fields into
+    // `raw_data` — so an account that registered itself on the portal came
+    // back with an empty id, no name and no status, and the admin panel showed
+    // a blank row for it. The column is the authority for the identity and
+    // the lifecycle status; `raw_data` carries everything else.
     const result: Record<string, any> = {
-      packages: packagesRes.rows.map((r) => r.raw_data).filter(Boolean),
-      subscribers: subscribersRes.rows.map((r) => r.raw_data).filter(Boolean),
-      invoices: invoicesRes.rows.map((r) => r.raw_data).filter(Boolean),
-      tickets: ticketsRes.rows.map((r) => r.raw_data).filter(Boolean),
-      technicians: techniciansRes.rows.map((r) => r.raw_data).filter(Boolean),
-      adminUsers: adminUsersRes.rows.map((r) => r.raw_data).filter(Boolean),
-      roles: rolesRes.rows.map((r) => r.raw_data).filter(Boolean),
+      packages: packagesRes.rows.map((r) => {
+        const raw = r.raw_data || {};
+        return {
+          ...raw,
+          id: r.id,
+          name: r.name || raw.name || '',
+          downloadSpeed: raw.downloadSpeed ?? r.speed,
+          uploadSpeed: raw.uploadSpeed ?? r.upload_speed,
+          price: Number(raw.price ?? r.price ?? 0),
+          duration: Number(raw.duration ?? r.duration ?? 30),
+          description: raw.description ?? r.description ?? '',
+          subscriberCount: Number(raw.subscriberCount ?? r.subscriber_count ?? 0),
+          bdixSpeed: raw.bdixSpeed ?? r.bdix_speed,
+          popular: raw.popular ?? r.popular,
+        };
+      }),
+      subscribers: subscribersRes.rows.map((r) => {
+        const raw = r.raw_data || {};
+        return {
+          ...raw,
+          id: r.id,
+          name: raw.name || r.name || '',
+          email: raw.email || r.email || '',
+          phone: raw.phone || r.phone || '',
+          username: raw.username || '',
+          packageId: raw.packageId || raw.package_id || r.package_id || '',
+          status: r.status || raw.status || 'active',
+          joinDate: raw.joinDate || raw.joinedAt || r.created_at || '',
+        };
+      }),
+      invoices: invoicesRes.rows.map((r) => {
+        const raw = r.raw_data || {};
+        return {
+          ...raw,
+          id: r.id,
+          invoiceNumber: raw.invoiceNumber || r.id,
+          subscriberId: raw.subscriberId || raw.subscriber_id || r.subscriber_id || '',
+          amount: Number(raw.amount ?? r.amount ?? 0),
+          status: r.status || raw.status || 'unpaid',
+          dueDate: raw.dueDate || r.due_date || '',
+          issueDate: raw.issueDate || r.created_at || '',
+        };
+      }),
+      tickets: ticketsRes.rows.map((r) => {
+        const raw = r.raw_data || {};
+        return {
+          ...raw,
+          id: r.id,
+          title: raw.title || r.title || '',
+          status: r.status || raw.status || 'open',
+          priority: raw.priority || r.priority || 'medium',
+          createdAt: raw.createdAt || r.created_at || '',
+        };
+      }),
+      technicians: techniciansRes.rows.map((r) => {
+        const raw = r.raw_data || {};
+        return {
+          ...raw,
+          id: r.id,
+          name: r.name || raw.name || '',
+          status: r.status || raw.status || 'active',
+        };
+      }),
+      adminUsers: adminUsersRes.rows.map((r) => {
+        const raw = r.raw_data || {};
+        return {
+          ...raw,
+          id: r.id,
+          name: r.name || raw.name || '',
+          email: r.email || raw.email || '',
+          role: r.role || raw.role || 'admin',
+          status: r.status || raw.status || 'active',
+        };
+      }),
+      roles: rolesRes.rows.map((r) => {
+        const raw = r.raw_data || {};
+        return {
+          ...raw,
+          id: r.id,
+          name: r.name || raw.name || '',
+          key: raw.key || r.id,
+        };
+      }),
       lastUpdated: new Date().toISOString(),
     };
 
@@ -532,6 +631,11 @@ export async function findSubscriber(identifier: string): Promise<any | null> {
         balance: Number(raw.balance || 0),
         dueDate: raw.dueDate || '2026-02-15',
         joinDate: raw.joinDate || '2024-01-01',
+        // Subscription lifecycle dates — written by the billing engine when a
+        // plan is purchased and when the subscription is cancelled. They stay
+        // on the account after a cancellation.
+        subscriptionStartedAt: raw.subscriptionStartedAt || null,
+        subscriptionCancelledAt: raw.subscriptionCancelledAt || null,
         connectionType: raw.connectionType || 'Optical Fiber GPON',
         ipAddress: raw.ipAddress || '198.51.100.12',
         macAddress: raw.macAddress || 'AA:BB:CC:DD:EE:01',
@@ -740,7 +844,14 @@ export async function getCustomerOrders(customerId: string): Promise<any[]> {
 export async function getAllOrders(): Promise<any[]> {
   try {
     const p = getDbPool();
-    const res = await p.query(`SELECT * FROM orders ORDER BY created_at DESC`);
+    // The subscriber status is joined in so the page can tell a live
+    // subscriber from an account whose subscription was cancelled.
+    const res = await p.query(
+      `SELECT o.*, s.status AS subscriber_status
+         FROM orders o
+         LEFT JOIN subscribers s ON s.id = o.customer_id
+        ORDER BY o.created_at DESC`,
+    );
     return res.rows.map((row) => ({
       ...row,
       id: row.id,
@@ -763,6 +874,7 @@ export async function getAllOrders(): Promise<any[]> {
       paymentStatus: row.payment_status,
       orderStatus: row.order_status,
       order_status: row.order_status,
+      subscriberStatus: row.subscriber_status || null,
       trxId: row.trx_id,
       trx_id: row.trx_id,
       nextBillingDate: row.next_billing_date,

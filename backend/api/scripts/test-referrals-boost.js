@@ -66,6 +66,15 @@ async function run() {
   });
   const subscriberToken = subscriberLogin.body?.token;
   assert(subscriberLogin.status === 200 && subscriberToken, 'subscriber token obtained');
+  if (!subscriberToken) {
+    console.error(
+      `\nThe demo subscriber could not sign in (HTTP ${subscriberLogin.status}): ` +
+        `${subscriberLogin.body?.error || 'no error message'}. The referral and ` +
+        'Turbo Boost checks need a signed-in customer, so the suite stops here.',
+    );
+    console.log(`\n=== Result: ${passed} passed, ${failed} failed ===\n`);
+    process.exit(1);
+  }
 
   // === 0. Tear down any leftover boost requests so the test starts clean =====
   const preQueue = await api('/api/admin/turbo-boost', { token: staffToken });
@@ -85,7 +94,7 @@ async function run() {
   const codeInfo = await api('/api/customer/referral', { token: subscriberToken });
   assert(codeInfo.status === 200 && codeInfo.body.success, 'referral info is returned');
   assert(/^NL-/.test(codeInfo.body.code || ''), 'the referral code has the expected shape');
-  assert(codeInfo.body.code.length >= 8, 'the referral code is unique enough');
+  assert((codeInfo.body.code || '').length >= 8, 'the referral code is unique enough');
 
   const anon = await api('/api/customer/referral');
   assert(anon.status === 401 || anon.status === 403, 'an anonymous caller cannot read the referral card');
