@@ -262,6 +262,32 @@ export interface PortalTicket {
   updated_at: string;
 }
 
+/** The signed-in subscriber's subscription state and lifecycle dates. */
+export async function fetchMySubscription() {
+  return portalFetch<{
+    subscription: {
+      status: string;
+      isSubscriber: boolean;
+      packageId: string;
+      packageName: string;
+      subscriptionStartedAt: string | null;
+      subscriptionCancelledAt: string | null;
+      billingProfile: { status: string; amount: number; nextInvoiceDate: string | null } | null;
+      lastPurchase: { id: string; packageName: string; amount: number; createdAt: string } | null;
+      invoices: Array<{ id: string; amount: number; status: string; dueDate: string; createdAt: string }>;
+      canCancel: boolean;
+    };
+  }>('/api/customer/subscription');
+}
+
+/** Cancel the current subscription. */
+export async function cancelSubscription(reason?: string) {
+  return portalFetch<{ cancelledAt: string | null }>('/api/customer/subscription/cancel', {
+    method: 'POST',
+    body: JSON.stringify({ reason: reason || null }),
+  });
+}
+
 /** The signed-in subscriber's referral information. */
 export async function fetchMyReferral() {
   return portalFetch<{

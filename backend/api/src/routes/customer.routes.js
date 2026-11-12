@@ -15,6 +15,7 @@ const { requireAuth, requireSelfOrRole, ROLES } = require('../middleware/auth');
 const { portalLimiter } = require('../middleware/rateLimit');
 const referrals = require('../services/referrals');
 const turboBoost = require('../services/turboBoost');
+const subscriptions = require('../services/subscriptions');
 
 const router = express.Router();
 
@@ -128,6 +129,88 @@ router.post(
           createdAt: created.created_at,
         },
       });
+    } catch (error) {
+      res.status(400).json({ success: false, error: error.message });
+    }
+  }),
+);
+
+/**
+ * GET /api/customer/subscription
+ * The caller's subscription state: whether they are a subscriber, the plan they
+ * are on, when the plan started and when it was cancelled.
+ */
+router.get(
+  '/subscription',
+  requireAuth,
+  requireSelfOrRole(ROLES.SUPER_ADMIN, ROLES.BILLING, ROLES.SUPPORT),
+  asyncHandler(async (req, res) => {
+    const subscriberId = resolveSubscriber(req);
+    if (!subscriberId) return res.status(400).json({ success: false, error: 'subscriberId is required' });
+    const subscription = await subscriptions.getSubscription(subscriberId);
+    if (!subscription) return res.status(404).json({ success: false, error: 'Account not found' });
+    res.json({ success: true, subscription });
+  }),
+);
+
+/**
+ * POST /api/customer/subscription/activate
+ * Called by the portal after a package purchase has been paid. A registered
+ * account becomes a subscriber here — with a billing profile and a router line.
+ */
+router.post(
+  '/subscription/activate',
+  requireAuth,
+  requireSelfOrRole(ROLES.SUPER_ADMIN, ROLES.BILLING, ROLES.SUPPORT),
+  portalLimiter,
+  validate({
+    body: z.object({
+      packageId: z.string().min(1, 'packageId is required'),
+      packageName: z.string().max(255).optional().nullable(),
+      orderId: z.string().max(64).optional().nullable(),
+    }),
+  }),
+  asyncHandler(async (req, res) => {
+    const subscriberId = resolveSubscriber(req);
+    if (!subscriberId) return res.status(400).json({ success: false, error: 'subscriberId is required' });
+    try {
+      const result = await subscriptions.activateAfterPurchase({
+        subscriberId,
+        packageId: req.validatedBody.packageId,
+        packageName: req.validatedBody.packageName || null,
+        orderId: req.validatedBody.orderId || null,
+      });
+      res.json({ success: true, ...result });
+    } catch (error) {
+      res.status(400).json({ success: false, error: error.message });
+    }
+  }),
+);
+
+/**
+ * POST /api/customer/subscription/cancel
+ * Cancel the caller's subscription. The account leaves the subscriber list but
+ * the purchase and cancellation dates stay on the profile.
+ */
+router.post(
+  '/subscription/cancel',
+  requireAuth,
+  requireSelfOrRole(ROLES.SUPER_ADMIN, ROLES.BILLING, ROLES.SUPPORT),
+  portalLimiter,
+  validate({
+    body: z.object({
+      reason: z.string().max(500).optional().nullable(),
+    }),
+  }),
+  asyncHandler(async (req, res) => {
+    const subscriberId = resolveSubscriber(req);
+    if (!subscriberId) return res.status(400).json({ success: false, error: 'subscriberId is required' });
+    try {
+      const result = await subscriptions.cancel({
+        subscriberId,
+        reason: req.validatedBody.reason || null,
+      });
+      res.json({ success: true, ...result });
     } catch (error) {
       res.status(400).json({ success: false, error: error.message });
     }

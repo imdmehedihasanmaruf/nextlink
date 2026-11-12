@@ -428,7 +428,17 @@ export default function DashboardPage() {
               {/* The pill reflects the account's real status from the login
                   payload — a suspended line must not be shown as
                   "connection active", and there is no tier system to badge. */}
-              {user?.status === 'suspended' || user?.status === 'blocked' ? (
+              {user?.status === 'registered' ? (
+                <div className="inline-flex items-center gap-1.5 rounded-full bg-blue-400/20 text-blue-100 border border-blue-300/40 px-3 py-1 text-xs font-semibold backdrop-blur-sm">
+                  <span className="h-2 w-2 rounded-full bg-blue-300"></span>
+                  Registered — buy a plan to activate
+                </div>
+              ) : user?.status === 'cancelled' ? (
+                <div className="inline-flex items-center gap-1.5 rounded-full bg-amber-400/20 text-amber-100 border border-amber-300/40 px-3 py-1 text-xs font-semibold backdrop-blur-sm">
+                  <span className="h-2 w-2 rounded-full bg-amber-300"></span>
+                  Subscription cancelled
+                </div>
+              ) : user?.status === 'suspended' || user?.status === 'blocked' ? (
                 <div className="inline-flex items-center gap-1.5 rounded-full bg-amber-400/20 text-amber-100 border border-amber-300/40 px-3 py-1 text-xs font-semibold backdrop-blur-sm">
                   <span className="h-2 w-2 rounded-full bg-amber-300"></span>
                   Line suspended — contact support
@@ -479,15 +489,23 @@ export default function DashboardPage() {
             </div>
             <div className="mt-3">
               <h3 className="text-2xl font-bold">
-                {boostRequested ? 'Boost Requested' : (user?.packageName || user?.package || 'Ultra Gigabit 500')}
+                {boostRequested
+                  ? 'Boost Requested'
+                  : user?.status === 'registered'
+                    ? 'No active plan'
+                    : user?.packageName || user?.package || 'Ultra Gigabit 500'}
               </h3>
-              <p className="text-xs text-muted-foreground mt-1">Symmetrical 100% Optical Fiber</p>
+              <p className="text-xs text-muted-foreground mt-1">
+                {user?.status === 'registered'
+                  ? 'Purchase a package to activate your service'
+                  : 'Symmetrical 100% Optical Fiber'}
+              </p>
             </div>
             <div className="pt-3 mt-3 border-t">
               <Link href="/dashboard/purchase">
                 <Button size="sm" variant="outline" className="w-full text-xs font-bold gap-1.5 h-8">
                   <ArrowUpRight className="h-3.5 w-3.5" />
-                  <span>Upgrade Fiber Plan</span>
+                  <span>{user?.status === 'registered' ? 'Buy a Package Plan' : 'Upgrade Fiber Plan'}</span>
                 </Button>
               </Link>
             </div>

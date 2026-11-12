@@ -26,7 +26,7 @@ import { Textarea } from '@/components/ui/textarea'
 import { Badge } from '@/components/ui/badge'
 import { useAuthStore } from '@/store/authStore'
 import { useTranslation } from '@/store/settingsStore'
-import { subscriberAuthHeader } from '@/lib/portalApi'
+import { subscriberAuthHeader, fetchMySubscription, cancelSubscription } from '@/lib/portalApi'
 import { useModalA11y } from '@/lib/useModalA11y'
 
 export default function ProfilePage() {
@@ -45,8 +45,25 @@ export default function ProfilePage() {
   const [deactivating, setDeactivating] = useState(false)
   const [deactivateError, setDeactivateError] = useState<string | null>(null)
 
+  // Subscription lifecycle — the plan the customer is on, when it started and
+  // when it was cancelled. Cancelling keeps both dates on the profile.
+  const [subscription, setSubscription] = useState<{
+    status: string
+    isSubscriber: boolean
+    packageName: string
+    subscriptionStartedAt: string | null
+    subscriptionCancelledAt: string | null
+    canCancel: boolean
+    lastPurchase: { packageName: string; amount: number; createdAt: string } | null
+  } | null>(null)
+  const [cancelModalOpen, setCancelModalOpen] = useState(false)
+  const [cancelling, setCancelling] = useState(false)
+  const [cancelError, setCancelError] = useState<string | null>(null)
+  const [cancelNotice, setCancelNotice] = useState<string | null>(null)
+
   // Escape closes the confirmation and the page does not scroll behind it.
   useModalA11y(deleteModalOpen, () => setDeleteModalOpen(false))
+  useModalA11y(cancelModalOpen, () => setCancelModalOpen(false))
 
   useEffect(() => {
     if (hasHydrated && !isAuthenticated) {
@@ -62,6 +79,33 @@ export default function ProfilePage() {
       setAddress(user.address || '')
     }
   }, [user])
+
+  const loadSubscription = React.useCallback(async () => {
+    const result = await fetchMySubscription()
+    if (result.success && result.subscription) {
+      setSubscription(result.subscription)
+    }
+  }, [])
+
+  useEffect(() => {
+    if (isAuthenticated) {
+      loadSubscription()
+    }
+  }, [isAuthenticated, loadSubscription])
+
+  const handleConfirmCancel = async () => {
+    setCancelError(null)
+    setCancelling(true)
+    const result = await cancelSubscription('Cancelled from the customer portal')
+    setCancelling(false)
+    if (!result.success) {
+      setCancelError(result.error || 'The subscription could not be cancelled.')
+      return
+    }
+    setCancelModalOpen(false)
+    setCancelNotice('Your subscription has been cancelled. The purchase and cancellation dates stay on your profile.')
+    await loadSubscription()
+  }
 
   const handleSaveProfile = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -167,6 +211,13 @@ export default function ProfilePage() {
         </div>
       )}
 
+      {cancelNotice && (
+        <div className="rounded-xl border border-emerald-500/50 bg-emerald-500/10 p-4 text-emerald-600 flex items-center gap-2 animate-in fade-in">
+          <Check className="h-5 w-5 shrink-0" />
+          <span>{cancelNotice}</span>
+        </div>
+      )}
+
       {/* Account Overview Card */}
       <Card className="border shadow-sm">
         <CardContent className="p-6">
@@ -195,24 +246,41 @@ export default function ProfilePage() {
         </CardContent>
       </Card>
 
-      {/* Subscription lifecycle */}
-      {(user.status === 'active' || user.status === 'cancelled') && (
+      {/* Subscription lifecycle — the plan, the purchase date and the
+          cancellation date stay on the profile either way. */}
+      {subscription && (
         <Card className="border shadow-sm">
           <CardHeader>
             <CardTitle className="text-lg flex items-center gap-2">
-              <Calendar size={18} className="text-primary" /> Lifecycle
+              <Calendar size={18} className="text-primary" /> Subscription
             </CardTitle>
-            <CardDescription>When you purchased and when the subscription ended.</CardDescription>
+            <CardDescription>
+              {subscription.isSubscriber
+                ? 'Your plan and the dates it covers.'
+                : subscription.status === 'registered'
+                  ? 'Your account is registered. Buy a package plan to activate your service.'
+                  : 'Your subscription history — the dates stay on your profile.'}
+            </CardDescription>
           </CardHeader>
-          <CardContent className="space-y-1.5 text-sm">
+          <CardContent className="space-y-2 text-sm">
             <div className="flex items-center justify-between">
-              <span className="text-muted-foreground">Subscribed on</span>
-              <span className="font-medium">{user.subscriptionStartedAt ? new Date(user.subscriptionStartedAt).toLocaleDateString() : 'Not yet'}</span>
+              <span className="text-muted-foreground">Current plan</span>
+              <span className="font-medium">{subscription.packageName || 'No active plan'}</span>
             </div>
-            {user.status === 'cancelled' && user.subscriptionCancelledAt && (
+            <div className="flex items-center justify-between">
+              <span className="text-muted-foreground">Purchased on</span>
+              <span className="font-medium">
+                {subscription.subscriptionStartedAt
+                  ? new Date(subscription.subscriptionStartedAt).toLocaleDateString()
+                  : subscription.lastPurchase
+                    ? new Date(subscription.lastPurchase.createdAt).toLocaleDateString()
+                    : 'Not yet'}
+              </span>
+            </div>
+            {subscription.subscriptionCancelledAt && (
               <div className="flex items-center justify-between">
                 <span className="text-muted-foreground">Cancelled on</span>
-                <span className="font-medium">{new Date(user.subscriptionCancelledAt).toLocaleDateString()}</span>
+                <span className="font-medium">{new Date(subscription.subscriptionCancelledAt).toLocaleDateString()}</span>
               </div>
             )}
           </CardContent>
@@ -295,6 +363,35 @@ export default function ProfilePage() {
         </Card>
       </form>
 
+      {/* Cancel the plan — the account leaves the subscriber list, the dates
+          stay on the profile. */}
+      {subscription?.canCancel && (
+        <Card className="border border-amber-500/30 bg-amber-500/5 shadow-sm">
+          <CardHeader>
+            <CardTitle className="text-lg text-amber-700 dark:text-amber-400 flex items-center gap-2">
+              <ShieldAlert size={18} />
+              Cancel Subscription
+            </CardTitle>
+            <CardDescription>
+              Stops the plan, closes the billing profile and takes the line down. Your purchase and cancellation dates stay on this profile.
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pt-2">
+            <p className="text-xs text-muted-foreground">
+              You are on <span className="text-foreground font-medium">{subscription.packageName}</span>. After cancelling you can buy a plan again at any time.
+            </p>
+            <Button
+              variant="outline"
+              onClick={() => setCancelModalOpen(true)}
+              className="gap-2 font-bold flex-shrink-0 border-amber-500/40 text-amber-700 hover:bg-amber-500/10"
+            >
+              <ShieldAlert size={16} />
+              <span>Cancel Subscription</span>
+            </Button>
+          </CardContent>
+        </Card>
+      )}
+
       {/* Danger Zone: Delete / Deactivate Account */}
       <Card className="border border-destructive/30 bg-destructive/5 shadow-sm">
         <CardHeader>
@@ -364,6 +461,56 @@ export default function ProfilePage() {
                   className="flex-1 font-bold"
                 >
                   {deactivating ? 'Deactivating…' : 'Yes, Deactivate Account'}
+                </Button>
+              </div>
+            </CardContent>
+          </Card>
+        </div>
+      )}
+      {/* Cancel-subscription confirmation */}
+      {cancelModalOpen && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4 animate-in fade-in overflow-y-auto"
+          role="dialog"
+          aria-modal="true"
+          aria-label="Cancel subscription"
+        >
+          <Card className="w-full max-w-md shadow-2xl border-2 border-amber-500 animate-in zoom-in-95">
+            <CardHeader className="text-center pb-2">
+              <div className="h-14 w-14 rounded-full bg-amber-500/10 text-amber-600 flex items-center justify-center mx-auto mb-2">
+                <ShieldAlert size={30} />
+              </div>
+              <CardTitle className="text-xl font-bold">Cancel your subscription?</CardTitle>
+              <CardDescription className="text-xs">
+                Your plan {subscription?.packageName ? `(${subscription.packageName})` : ''} will be cancelled.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4 pt-4">
+              <p className="text-xs text-muted-foreground text-center">
+                Billing stops, the router line is taken down and you leave the subscriber list. The date you bought the
+                plan and the date you cancelled it stay on your profile.
+              </p>
+              {cancelError && (
+                <p className="text-[11px] text-destructive text-center">{cancelError}</p>
+              )}
+              <div className="flex gap-2">
+                <Button
+                  variant="outline"
+                  onClick={() => {
+                    setCancelModalOpen(false)
+                    setCancelError(null)
+                  }}
+                  className="flex-1 font-semibold"
+                >
+                  Keep my plan
+                </Button>
+                <Button
+                  variant="destructive"
+                  onClick={handleConfirmCancel}
+                  disabled={cancelling}
+                  className="flex-1 font-bold"
+                >
+                  {cancelling ? 'Cancelling…' : 'Yes, Cancel'}
                 </Button>
               </div>
             </CardContent>

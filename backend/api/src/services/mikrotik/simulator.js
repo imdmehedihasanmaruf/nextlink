@@ -152,6 +152,131 @@ class RouterOsSimulator {
   }
 
   /**
+   * The generic RouterOS command API, exactly like the real client.
+   *
+   * The service layer talks to the router through `send()`, so the simulator
+   * has to implement the same contract — otherwise provisioning a new secret
+   * fails in simulator mode with "client.send is not a function".
+   */
+  async send(command, attrs = {}) {
+    const path = String(command || '');
+
+    if (path === '/login') {
+      return { status: 'success' };
+    }
+
+    if (path === '/ppp/secret/print') {
+      const name = attrs['?name'];
+      const rows = Array.from(this.secrets.values()).filter(
+        (entry) => !name || entry.name === name,
+      );
+      return rows.map((entry, index) => ({ '.id': `*${index}`, ...entry }));
+    }
+
+    if (path === '/ppp/secret/add') {
+      const name = attrs.name;
+      if (!name) {
+        const error = new Error('name is required');
+        error.code = 'SIMULATOR_ERROR';
+        throw error;
+      }
+      if (!this.secrets.has(name)) {
+        this.secrets.set(name, {
+          name,
+          profile: attrs.profile || 'default-10m',
+          service: attrs.service || 'pppoe',
+          'remote-address': attrs['remote-address'] || '',
+          address: attrs.address || '',
+          disabled: attrs.disabled === 'yes' || attrs.disabled === true,
+          comment: attrs.comment || '',
+        });
+      }
+      return { ret: `*${Array.from(this.secrets.keys()).indexOf(name)}` };
+    }
+
+    if (path === '/ppp/secret/set') {
+      const target = attrs['.id'];
+      const name = attrs['?name'];
+      const entry = this._findSecret(target, name);
+      if (!entry) {
+        const error = new Error(`no such item (${target || name})`);
+        error.code = 'SIMULATOR_ERROR';
+        throw error;
+      }
+      if (attrs.disabled !== undefined) {
+        entry.disabled = attrs.disabled === 'yes' || attrs.disabled === true;
+      }
+      if (attrs.profile) entry.profile = attrs.profile;
+      if (attrs.password) entry.password = attrs.password;
+      if (attrs.comment !== undefined) entry.comment = attrs.comment;
+      return { ret: target || entry.name };
+    }
+
+    if (path === '/ppp/secret/remove') {
+      const target = attrs['.id'];
+      const name = attrs['?name'];
+      const entry = this._findSecret(target, name);
+      if (entry) this.secrets.delete(entry.name);
+      return { ret: target || name };
+    }
+
+    if (path === '/ppp/active/print') {
+      return Array.from(this.sessions.entries()).map(([id, session]) => ({ '.id': id, ...session }));
+    }
+
+    if (path === '/ppp/active/remove') {
+      const id = attrs['.id'];
+      this.sessions.delete(id);
+      return { ret: id };
+    }
+
+    if (path === '/queue/simple/print') {
+      const name = attrs['?name'];
+      return Array.from(this.queues.values())
+        .filter((queue) => !name || queue.name === name)
+        .map((queue, index) => ({ '.id': `*${index}`, ...queue }));
+    }
+
+    if (path === '/queue/simple/set') {
+      const id = attrs['.id'];
+      const target = Array.from(this.queues.values()).find(
+        (queue, index) => `*${index}` === id || queue.name === id,
+      );
+      if (!target) {
+        const error = new Error(`no such item (${id})`);
+        error.code = 'SIMULATOR_ERROR';
+        throw error;
+      }
+      if (attrs['max-limit']) target.maxLimit = attrs['max-limit'];
+      if (attrs.disabled !== undefined) target.disabled = attrs.disabled === 'yes' || attrs.disabled === true;
+      return { ret: id };
+    }
+
+    if (path === '/system/identity/print') {
+      return { name: this.identity };
+    }
+
+    if (path === '/system/resource/print') {
+      return { version: this.version, boardName: this.boardName, uptime: '1w2d3h4m' };
+    }
+
+    const error = new Error(`Simulator does not implement: ${path}`);
+    error.code = 'SIMULATOR_ERROR';
+    throw error;
+  }
+
+  _findSecret(id, name) {
+    if (name) return this.secrets.get(name) || null;
+    if (!id) return null;
+    const match = /^\*(\d+)$/.exec(String(id));
+    if (match) {
+      const index = Number(match[1]);
+      return Array.from(this.secrets.values())[index] || null;
+    }
+    return this.secrets.get(String(id)) || null;
+  }
+
+  /**
    * Simulate a subscriber logging in (used by tests and the "connect" demo).
    */
   simulateLogin(name) {

@@ -17,6 +17,23 @@ const BILLING_API =
   process.env.NEXT_PUBLIC_BILLING_API_URL?.replace(/\/api$/, '') ||
   'http://localhost:3000';
 
+/**
+ * The base URL of the internal Express service. Server-side routes use it to
+ * delegate work that the billing engine owns (activation, cancellation).
+ */
+export function billingApiBase(): string {
+  return BILLING_API;
+}
+
+/**
+ * The bearer token of the incoming request, so a server-side route can
+ * forward the caller's identity to the Express service.
+ */
+export function bearerToken(request: Request): string {
+  const header = request.headers.get('authorization') || '';
+  return header.startsWith('Bearer ') ? header.slice(7).trim() : '';
+}
+
 export interface AuthenticatedSubscriber {
   id: string;
   name: string;

@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 import crypto from 'crypto';
 import { getSubscriberById, getSiteContent, createOrderRecord, countOverdueInvoices } from '@/lib/db';
-import { authenticate, authError, ownsAccount } from '@/lib/customerAuth';
+import { authenticate, authError, ownsAccount, billingApiBase, bearerToken } from '@/lib/customerAuth';
 
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
@@ -209,30 +209,35 @@ export async function POST(request: Request) {
     await createOrderRecord(newOrder);
 
     // 8. A registered (not-yet-subscribed) account becomes a subscriber the
-    // moment their first package purchase completes. The activation timestamp is
-    // kept in raw_data so the profile page can show it. If the user later cancels,
-    // those timestamps are also preserved on the profile.
+    // moment their first package purchase completes. The billing engine owns
+    // that transition - it creates the billing profile and provisions the
+    // router line - so the portal asks it to do so instead of writing the
+    // status itself.
     if (status === 'registered') {
-      try {
-        const pool = (await import('@/lib/db')).getDbPool();
-        if (pool) {
-          await pool.query(
-            `UPDATE subscribers
-                SET status = 'active',
-                    raw_data = COALESCE(raw_data, '{}'::jsonb) || jsonb_build_object(
-                      'status', 'active',
-                      'packageId', $2,
-                      'packageName', $3,
-                      'subscriptionStartedAt', NOW()::text,
-                      'joinedAt', NOW()::text
-                    ),
-                    updated_at = NOW()
-              WHERE id = $1`,
-            [subscriber.id, targetPkg.id, targetPkg.name],
-          );
-        }
-      } catch (error) {
-        console.error('Failed to activate account after purchase:', error);
+      const activation = await fetch(`${billingApiBase()}/api/customer/subscription/activate`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${bearerToken(request)}`,
+        },
+        body: JSON.stringify({
+          packageId: targetPkg.id,
+          packageName: targetPkg.name,
+          orderId,
+        }),
+      });
+      const activationResult = await activation.json().catch(() => ({}));
+      if (!activation.ok || !activationResult.success) {
+        console.error('Subscription activation failed:', activationResult.error);
+        return NextResponse.json(
+          {
+            success: false,
+            error:
+              activationResult.error ||
+              'The payment was taken but the subscription could not be activated. Please contact support.',
+          },
+          { status: 500, headers: corsHeaders },
+        );
       }
     }
 
