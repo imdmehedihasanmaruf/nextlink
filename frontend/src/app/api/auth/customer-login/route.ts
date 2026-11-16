@@ -19,7 +19,7 @@ const corsHeaders = {
 const API_BASE_URL =
   process.env.INTERNAL_API_URL?.replace(/\/api$/, '') ||
   process.env.NEXT_PUBLIC_BILLING_API_URL?.replace(/\/api$/, '') ||
-  'http://localhost:3000';
+  'http://localhost:3100';
 
 export async function OPTIONS() {
   return NextResponse.json({}, { headers: corsHeaders });
@@ -95,11 +95,14 @@ export async function POST(request: Request) {
     // Return the sanitized subscriber customer record.
     const customerUser = {
       id: subscriber.id,
+      firstName: subscriber.firstName,
+      lastName: subscriber.lastName,
       name: subscriber.name,
       username: subscriber.username,
       email: subscriber.email,
       phone: subscriber.phone,
       package: subscriber.packageName,
+      packageName: subscriber.packageName,
       packageId: subscriber.packageId,
       address: subscriber.address,
       joinDate: subscriber.joinDate,
@@ -112,12 +115,14 @@ export async function POST(request: Request) {
       macAddress: subscriber.macAddress,
       connectionType: subscriber.connectionType,
       zone: subscriber.zone,
+      theme: subscriber.theme || 'system',
     };
 
     return NextResponse.json(
       {
         success: true,
         message: 'Existing customer authenticated successfully',
+        token: apiResult.token || null,
         user: customerUser,
       },
       { headers: corsHeaders }

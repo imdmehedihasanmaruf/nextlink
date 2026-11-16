@@ -11,8 +11,36 @@ const { requireAuth, optionalAuth, requireRole, ROLES, audit } = require('../mid
 const { paymentLimiter } = require('../middleware/rateLimit');
 const gateways = require('../services/payments/gateways');
 const billing = require('../services/billing/engine');
+const reconciliationService = require('../services/payments/reconciliation.service');
+const alertsService = require('../services/payments/alerts.service');
+const webhooks = require('../services/payments/webhooks');
 
 const router = express.Router();
+
+/**
+ * Strict server-side database mutation guard:
+ * In non-production environments, verifies active database is strictly 'nextlink_test_db'
+ * on the active connection before ANY mutation (insert, update, delete) can execute.
+ * Fails closed immediately if not nextlink_test_db, preventing any silent fallback to nextlink_db.
+ */
+function ensureMutationSafety(req) {
+  const config = require('../config');
+  const isProd =
+    config.env === 'production' ||
+    process.env.NODE_ENV === 'production' ||
+    String(req?.headers?.['x-simulate-production'] || '').toLowerCase() === 'true';
+
+  if (!isProd) {
+    const activeDb = db.getActiveDatabaseName();
+    if (activeDb !== 'nextlink_test_db') {
+      const err = new Error(
+        'CRITICAL ISOLATION HALT: Attempted payment mutation on production database in non-production environment'
+      );
+      err.statusCode = 500;
+      throw err;
+    }
+  }
+}
 
 /**
  * Persist a payment attempt and return the stored row.
@@ -77,7 +105,7 @@ router.post(
   validate({
     body: z.object({
       invoiceId: z.string().min(1, 'invoiceId is required'),
-      gateway: z.enum(['bkash', 'nagad', 'sslcommerz', 'rocket']),
+      gateway: z.enum(['bkash', 'nagad', 'sslcommerz', 'rocket', 'mock']),
       subscriberId: z.string().optional(),
       customer: z
         .object({
@@ -90,7 +118,23 @@ router.post(
     }),
   }),
   asyncHandler(async (req, res) => {
+    ensureMutationSafety(req);
+
+    const config = require('../config');
+    const isProd =
+      config.payments.mode === 'live' ||
+      config.env === 'production' ||
+      process.env.NODE_ENV === 'production' ||
+      String(req.headers['x-simulate-production'] || '').toLowerCase() === 'true';
+
     const body = req.validatedBody;
+
+    if (body.gateway === 'mock' && isProd) {
+      return res.status(404).json({
+        success: false,
+        error: 'The mock payment gateway is disabled in production.',
+      });
+    }
 
     const invoice = await db.queryOne('SELECT * FROM invoices WHERE id = $1', [body.invoiceId]);
     if (!invoice) {
@@ -98,6 +142,14 @@ router.post(
     }
     if (invoice.status === 'paid') {
       return res.status(409).json({ success: false, error: 'Invoice is already paid' });
+    }
+
+    // A subscriber may only initiate payment for their own invoice
+    if (req.user && (req.user.type === 'subscriber' || req.user.role === ROLES.SUBSCRIBER)) {
+      const selfId = req.user.subscriberId || req.user.id;
+      if (invoice.subscriber_id && invoice.subscriber_id !== selfId) {
+        return res.status(403).json({ success: false, error: 'You can only pay your own invoices' });
+      }
     }
 
     const subscriberId = body.subscriberId || invoice.subscriber_id;
@@ -178,226 +230,16 @@ router.post(
 
 /**
  * Shared callback handler for every gateway.
+ * Delegates to webhooks service pipeline for strict verification,
+ * event tracking, fail-closed validation, and replay safety.
  * Resolves with `{ status, body }` so the caller decides how to respond.
  */
 async function handleCallback(gatewayName, req) {
-  const body = { ...req.body, ...req.query };
-  const gateway = gateways.resolveGateway(gatewayName);
-
-  let parsed;
-  try {
-    parsed = gateway.parseWebhook(body);
-  } catch (error) {
-    return { status: 400, body: { success: false, error: `Unsupported callback payload: ${error.message}` } };
-  }
-
-  await db.query(
-    `INSERT INTO payment_webhooks (gateway, event_type, gateway_txn_id, payload, status)
-     VALUES ($1, $2, $3, $4, 'received')`,
-    [gatewayName, body.status || body.event_type || 'callback', parsed.transactionId || null, JSON.stringify(body)],
-  );
-
-  // The mock gateway reuses the transaction created under the real gateway
-  // name (bkash/nagad/...), so look the transaction up by its gateway id.
-  const transaction = parsed.transactionId
-    ? await db.queryOne(
-        'SELECT * FROM payment_transactions WHERE gateway_txn_id = $1 ORDER BY created_at DESC LIMIT 1',
-        [parsed.transactionId],
-      )
-    : null;
-
-  if (!transaction) {
-    await db.query(
-      `UPDATE payment_webhooks SET status = 'unmatched', processed_at = NOW() WHERE id = (
-         SELECT id FROM payment_webhooks WHERE gateway_txn_id = $1 ORDER BY created_at DESC LIMIT 1
-       )`,
-      [parsed.transactionId || null],
-    );
-    return { status: 404, body: { success: false, error: 'No matching payment transaction found' } };
-  }
-
-  // A callback may only settle the transaction it belongs to. The mock
-  // gateway is the exception — it settles the transaction that was opened
-  // under the real gateway name — but it only exists in mock mode.
-  const mockMode = require('../config').payments.mode !== 'live';
-  if (transaction.gateway !== gatewayName && !(gatewayName === 'mock' && mockMode)) {
-    await db.query(
-      `UPDATE payment_webhooks SET status = 'gateway_mismatch', processed_at = NOW() WHERE id = (
-         SELECT id FROM payment_webhooks WHERE gateway_txn_id = $1 ORDER BY created_at DESC LIMIT 1
-       )`,
-      [parsed.transactionId],
-    );
-    return {
-      status: 400,
-      body: {
-        success: false,
-        error: `This transaction belongs to ${transaction.gateway}, not ${gatewayName}`,
-      },
-    };
-  }
-
-  // The callback must be authentic. Each gateway verifies the callback in its
-  // own way — a signature for bKash, a server side lookup for the others.
-  let verification = { verified: true, reason: 'no verification available' };
-  try {
-    if (typeof gateway.verifyWebhook === 'function') {
-      verification = await gateway.verifyWebhook(body);
-    }
-  } catch (error) {
-    verification = { verified: false, reason: error.message };
-  }
-
-  if (!verification.verified) {
-    await db.query(
-      `UPDATE payment_webhooks SET status = 'unverified', error = $2, processed_at = NOW() WHERE id = (
-         SELECT id FROM payment_webhooks WHERE gateway_txn_id = $1 ORDER BY created_at DESC LIMIT 1
-       )`,
-      [parsed.transactionId, String(verification.reason || 'verification failed').slice(0, 500)],
-    );
-    logger.warn('payment callback rejected', {
-      gateway: gatewayName,
-      transactionId: parsed.transactionId,
-      reason: verification.reason,
-    });
-    return {
-      status: 401,
-      body: { success: false, error: `The callback could not be verified: ${verification.reason}` },
-    };
-  }
-
-  if (parsed.status !== 'success') {
-    await db.query(
-      `UPDATE payment_transactions SET status = $2, updated_at = NOW() WHERE id = $1`,
-      [transaction.id, parsed.status || 'failed'],
-    );
-    await db.query(
-      `UPDATE payment_webhooks SET status = $2, processed_at = NOW() WHERE id = (
-         SELECT id FROM payment_webhooks WHERE gateway_txn_id = $1 ORDER BY created_at DESC LIMIT 1
-       )`,
-      [parsed.transactionId, 'not_settled'],
-    );
-    return {
-      status: 200,
-      body: { success: false, status: parsed.status, message: 'Payment was not completed' },
-    };
-  }
-
-  // The settled amount has to match the invoice. A callback carrying a
-  // different amount must never mark the invoice as paid.
-  const settledAmount = Number(parsed.amount || verification.amount || transaction.amount || 0);
-  const expectedAmount = Number(transaction.amount || 0);
-
-  if (expectedAmount > 0 && Math.abs(settledAmount - expectedAmount) > 0.01) {
-    await db.query(
-      `UPDATE payment_webhooks SET status = 'amount_mismatch', error = $2, processed_at = NOW() WHERE id = (
-         SELECT id FROM payment_webhooks WHERE gateway_txn_id = $1 ORDER BY created_at DESC LIMIT 1
-       )`,
-      [
-        parsed.transactionId,
-        `settled ${settledAmount} but the invoice is for ${expectedAmount}`,
-      ],
-    );
-    logger.warn('payment callback amount mismatch', {
-      gateway: gatewayName,
-      transactionId: parsed.transactionId,
-      settledAmount,
-      expectedAmount,
-    });
-    return {
-      status: 400,
-      body: {
-        success: false,
-        error: `The settled amount (${settledAmount}) does not match the invoice (${expectedAmount})`,
-      },
-    };
-  }
-
-  const result = await billing.applyPayment({
-    invoiceId: transaction.invoice_id,
-    transactionId: parsed.transactionId,
-    gateway: transaction.gateway,
-    amount: settledAmount || transaction.amount,
-    raw: parsed.raw,
-  });
-
-  // A settled purchase turns a registered account into a subscriber. The
-  // billing engine owns the transition, so the subscription is activated here
-  // — never by the portal, and never before the money arrived.
-  let activation = null;
-  const invoiceRow = await db.queryOne('SELECT raw_data FROM invoices WHERE id = $1', [transaction.invoice_id]);
-  const invoiceRaw = (invoiceRow && invoiceRow.raw_data) || {};
-  try {
-    const subscriberRow = await db.queryOne(
-      'SELECT id, status FROM subscribers WHERE id = $1',
-      [transaction.subscriber_id],
-    );
-    if (subscriberRow && subscriberRow.status === 'registered') {
-      const packageId = invoiceRaw.packageId || null;
-      const packageName = invoiceRaw.packageName || null;
-      if (packageId) {
-        activation = await require('../services/subscriptions').activateAfterPurchase({
-          subscriberId: transaction.subscriber_id,
-          packageId,
-          packageName,
-          orderId: invoiceRaw.orderId || null,
-        });
-      }
-    }
-  } catch (activationError) {
-    // The payment is settled either way — the account is activated by the
-    // daily sweep if the router was unreachable.
-    logger.error('the payment was settled but the subscription could not be activated', {
-      subscriberId: transaction.subscriber_id,
-      invoiceId: transaction.invoice_id,
-      message: activationError.message,
-    });
-  }
-
-  // The order the purchase belongs to is only marked as paid now — the
-  // transaction id is the one the gateway handed out.
-  if (invoiceRaw.orderId) {
-    await db.query(
-      `UPDATE orders
-          SET payment_status = 'Payment Verified',
-              trx_id = COALESCE(trx_id, $2),
-              updated_at = NOW()
-        WHERE id = $1`,
-      [invoiceRaw.orderId, parsed.transactionId || null],
-    );
-  }
-
-  await db.query(
-    `UPDATE payment_transactions SET status = 'success', updated_at = NOW() WHERE id = $1`,
-    [transaction.id],
-  );
-  await db.query(
-    `UPDATE payment_webhooks SET status = 'processed', processed_at = NOW() WHERE id = (
-       SELECT id FROM payment_webhooks WHERE gateway_txn_id = $1 ORDER BY created_at DESC LIMIT 1
-     )`,
-    [parsed.transactionId],
-  );
-
-  await audit({
-    actorId: transaction.subscriber_id,
-    actorRole: ROLES.SUBSCRIBER,
-    action: 'payment.settled',
-    entityType: 'invoice',
-    entityId: transaction.invoice_id,
-    details: { gateway: transaction.gateway, transactionId: parsed.transactionId },
-    ip: req.ip,
-  });
-
-  return {
-    status: 200,
-    body: {
-      success: true,
-      status: 'success',
-      invoiceId: transaction.invoice_id,
-      alreadyPaid: result.alreadyPaid,
-      activated: Boolean(activation && activation.alreadyActive === false),
-    },
-  };
+  ensureMutationSafety(req);
+  return webhooks.processWebhook({ gatewayName, req });
 }
+
+
 
 /**
  * POST|GET /api/payments/:gateway/callback
@@ -411,13 +253,18 @@ async function handleCallback(gatewayName, req) {
 router.all(
   '/:gateway/callback',
   asyncHandler(async (req, res) => {
+    ensureMutationSafety(req);
     const gatewayName = String(req.params.gateway).toLowerCase();
     if (!['bkash', 'nagad', 'sslcommerz', 'rocket', 'mock'].includes(gatewayName)) {
       return res.status(404).json({ success: false, error: `Unknown gateway: ${gatewayName}` });
     }
-    // The mock gateway settles payments without a gateway. It only exists
-    // while the deployment runs in mock mode.
-    if (gatewayName === 'mock' && require('../config').payments.mode === 'live') {
+    const config = require('../config');
+    const isProd =
+      config.payments.mode === 'live' ||
+      config.env === 'production' ||
+      process.env.NODE_ENV === 'production' ||
+      String(req.headers['x-simulate-production'] || '').toLowerCase() === 'true';
+    if (gatewayName === 'mock' && isProd) {
       return res.status(404).json({
         success: false,
         error: 'The mock payment gateway is disabled while the deployment runs in live mode.',
@@ -446,9 +293,15 @@ router.get(
   asyncHandler(async (req, res) => {
     const config = require('../config');
     const portal = config.portalPublicUrl;
-    if (config.payments.mode !== 'mock') {
-      return res.status(404).json({ success: false, error: 'Mock checkout is disabled' });
+    const isProd =
+      config.payments.mode !== 'mock' ||
+      config.env === 'production' ||
+      String(req.headers['x-simulate-production'] || '').toLowerCase() === 'true';
+    if (isProd) {
+      return res.status(404).json({ success: false, error: 'Mock checkout is disabled in production' });
     }
+
+    ensureMutationSafety(req);
 
     const transaction = await db.queryOne(
       'SELECT * FROM payment_transactions WHERE gateway_txn_id = $1',
@@ -502,6 +355,69 @@ router.get(
 );
 
 /**
+ * POST /api/payments/mock/refund
+ * Simulate refund on a mock transaction (test mode only).
+ */
+router.post(
+  '/mock/refund',
+  requireAuth,
+  requireRole(ROLES.SUPER_ADMIN, ROLES.BILLING),
+  asyncHandler(async (req, res) => {
+    const config = require('../config');
+    const isProd =
+      config.payments.mode === 'live' ||
+      config.env === 'production' ||
+      process.env.NODE_ENV === 'production' ||
+      String(req.headers['x-simulate-production'] || '').toLowerCase() === 'true';
+    if (isProd) {
+      return res.status(404).json({ success: false, error: 'Mock refund is disabled in production.' });
+    }
+    ensureMutationSafety(req);
+    const { transactionId, invoiceId, amount, reason } = req.body || {};
+    if (!transactionId && !invoiceId) {
+      return res.status(400).json({ success: false, error: 'transactionId or invoiceId is required' });
+    }
+    const txn = transactionId
+      ? await db.queryOne('SELECT * FROM payment_transactions WHERE gateway_txn_id = $1 OR id = $1', [transactionId])
+      : await db.queryOne('SELECT * FROM payment_transactions WHERE invoice_id = $1 ORDER BY created_at DESC LIMIT 1', [invoiceId]);
+    if (!txn) {
+      return res.status(404).json({ success: false, error: 'Transaction not found' });
+    }
+    const refundAmount = amount ? Number(amount) : Number(txn.amount);
+    const refundId = utils.generateId('REF');
+    await db.query(
+      `UPDATE payment_transactions
+          SET status = 'refunded',
+              raw_data = COALESCE(raw_data, '{}'::jsonb) || $2::jsonb,
+              updated_at = NOW()
+        WHERE id = $1`,
+      [txn.id, JSON.stringify({ refundId, refundAmount, reason: reason || 'Mock refund request', refundedAt: new Date().toISOString() })]
+    );
+    if (txn.invoice_id) {
+      await db.query(
+        `INSERT INTO billing_events (subscriber_id, invoice_id, event, amount, message, raw_data)
+         VALUES ($1, $2, 'payment_refunded', $3, $4, $5)`,
+        [
+          txn.subscriber_id,
+          txn.invoice_id,
+          refundAmount,
+          `Payment of $${refundAmount.toFixed(2)} refunded. Reason: ${reason || 'Mock refund'}`,
+          JSON.stringify({ refundId, transactionId: txn.gateway_txn_id }),
+        ]
+      );
+    }
+    res.json({
+      success: true,
+      refundId,
+      transactionId: txn.gateway_txn_id,
+      amount: refundAmount,
+      status: 'refunded',
+      message: 'Mock refund successfully processed',
+    });
+  })
+);
+
+/**
  * GET /api/payments/transactions
  * Payment transaction ledger (admin).
  */
@@ -531,12 +447,13 @@ router.post(
   requireRole(ROLES.SUPER_ADMIN, ROLES.BILLING),
   validate({
     body: z.object({
-      gateway: z.enum(['bkash', 'nagad', 'sslcommerz', 'rocket']),
+      gateway: z.enum(['bkash', 'nagad', 'sslcommerz', 'rocket', 'mock']),
       transactionId: z.string().min(1),
       payload: z.record(z.any()).optional(),
     }),
   }),
   asyncHandler(async (req, res) => {
+    ensureMutationSafety(req);
     const body = req.validatedBody;
     const gateway = gateways.resolveGateway(body.gateway);
 
@@ -570,18 +487,270 @@ router.post(
 );
 
 /**
+ * ALL /api/payments/verify/:transactionId
+ * Direct transaction verification endpoint.
+ */
+router.all(
+  '/verify/:transactionId',
+  asyncHandler(async (req, res) => {
+    ensureMutationSafety(req);
+    const txnId = req.params.transactionId;
+    const gatewayName = req.query.gateway || req.body?.gateway || 'mock';
+    const gateway = gateways.resolveGateway(gatewayName);
+    const result = await gateway.verifyPayment({
+      transactionId: txnId,
+      payload: req.body,
+    });
+    return res.json({ success: true, ...result });
+  }),
+);
+
+/**
  * GET /api/payments/webhooks
- * Raw webhook log (admin).
+ * Webhook event logs with optional filtering by status or provider (admin).
  */
 router.get(
   '/webhooks',
   requireAuth,
-  requireRole(ROLES.SUPER_ADMIN, ROLES.BILLING),
+  requireRole(ROLES.SUPER_ADMIN, ROLES.BILLING, ROLES.ADMIN),
   asyncHandler(async (req, res) => {
     const limit = Math.min(Number(req.query.limit) || 100, 500);
-    const result = await db.query('SELECT * FROM payment_webhooks ORDER BY created_at DESC LIMIT $1', [limit]);
+    const status = req.query.status && req.query.status !== 'all' ? String(req.query.status) : null;
+    const provider = req.query.provider && req.query.provider !== 'all' ? String(req.query.provider).toLowerCase() : null;
+
+    let queryStr = 'SELECT * FROM payment_webhooks';
+    const conditions = [];
+    const params = [];
+    let paramIdx = 1;
+
+    if (status) {
+      conditions.push(`status = $${paramIdx++}`);
+      params.push(status);
+    }
+    if (provider) {
+      conditions.push(`(provider = $${paramIdx} OR gateway = $${paramIdx})`);
+      paramIdx++;
+      params.push(provider);
+    }
+
+    if (conditions.length > 0) {
+      queryStr += ' WHERE ' + conditions.join(' AND ');
+    }
+
+    queryStr += ` ORDER BY created_at DESC LIMIT $${paramIdx}`;
+    params.push(limit);
+
+    const result = await db.query(queryStr, params);
     res.json({ success: true, webhooks: result.rows });
   }),
 );
+
+/**
+ * GET /api/payments/webhooks/:id
+ * Retrieve details of a single webhook event (admin).
+ */
+router.get(
+  '/webhooks/:id',
+  requireAuth,
+  requireRole(ROLES.SUPER_ADMIN, ROLES.BILLING, ROLES.ADMIN),
+  asyncHandler(async (req, res) => {
+    const id = req.params.id;
+    const isNum = Number.isInteger(Number(id));
+    const webhook = await db.queryOne(
+      'SELECT * FROM payment_webhooks WHERE id = $1 OR event_id = $2',
+      [isNum ? Number(id) : -1, String(id)],
+    );
+    if (!webhook) {
+      return res.status(404).json({ success: false, error: 'Webhook event not found' });
+    }
+    res.json({ success: true, webhook });
+  }),
+);
+
+/**
+ * POST /api/payments/webhooks/:id/retry
+ * Bounded manual retry for failed or dead-letter webhooks.
+ * Strictly checks requireRole(ROLES.ADMIN, ROLES.SUPER_ADMIN).
+ * Guarantees idempotency (never produces duplicate invoice settlement or billing_events).
+ */
+router.post(
+  '/webhooks/:id/retry',
+  requireAuth,
+  requireRole(ROLES.ADMIN, ROLES.SUPER_ADMIN),
+  asyncHandler(async (req, res) => {
+    ensureMutationSafety(req);
+    const result = await webhooks.retryWebhookById(req.params.id, {
+      actorId: req.user?.id || 'staff',
+      actorRole: req.user?.role || ROLES.ADMIN,
+      ip: req.ip,
+    });
+    return res.status(result.status || (result.success ? 200 : 400)).json(result);
+  }),
+);
+
+/**
+ * GET /api/payments/reconciliation
+ * Comprehensive read-only payment reconciliation report (admin).
+ */
+router.get(
+  '/reconciliation',
+  requireAuth,
+  requireRole(ROLES.SUPER_ADMIN, ROLES.BILLING),
+  asyncHandler(async (req, res) => {
+    const report = await reconciliationService.runReconciliation({
+      limit: Number(req.query.limit) || 100,
+      gateway: req.query.gateway,
+      status: req.query.status,
+      discrepancyType: req.query.discrepancyType,
+      dateFrom: req.query.dateFrom,
+      dateTo: req.query.dateTo,
+      checkProvider: req.query.checkProvider === 'true',
+    });
+    res.json(report);
+  }),
+);
+
+/**
+ * POST /api/payments/reconciliation/resolve
+ * Authorize and apply corrective action to a reconciliation discrepancy (admin).
+ */
+router.post(
+  '/reconciliation/resolve',
+  requireAuth,
+  requireRole(ROLES.SUPER_ADMIN, ROLES.BILLING),
+  validate({
+    body: z.object({
+      discrepancyType: z.string().min(1),
+      transactionId: z.string().optional(),
+      invoiceId: z.string().optional(),
+      action: z.enum(['mark_invoice_paid', 'sync_transaction_status', 'record_missing_event', 'dismiss']),
+      reason: z.string().min(5, 'Reason must be at least 5 characters'),
+    }),
+  }),
+  asyncHandler(async (req, res) => {
+    ensureMutationSafety(req);
+    const body = req.validatedBody;
+    const result = await reconciliationService.resolveDiscrepancy({
+      ...body,
+      actorId: req.user?.id || 'staff',
+      actorRole: req.user?.role || ROLES.BILLING,
+      ip: req.ip,
+    });
+    res.json(result);
+  }),
+);
+
+/**
+ * GET /api/payments/operations/stats
+ * Overview metrics for payment operations dashboard (admin).
+ */
+router.get(
+  '/operations/stats',
+  requireAuth,
+  requireRole(ROLES.SUPER_ADMIN, ROLES.BILLING),
+  asyncHandler(async (req, res) => {
+    const config = require('../config');
+
+    // Counts by status
+    const txStats = await db.queryOne(`
+      SELECT
+        COUNT(*)::int AS total_count,
+        COALESCE(SUM(amount), 0) AS total_amount,
+        COUNT(*) FILTER (WHERE status = 'success' OR status = 'settled')::int AS settled_count,
+        COALESCE(SUM(amount) FILTER (WHERE status = 'success' OR status = 'settled'), 0) AS settled_amount,
+        COUNT(*) FILTER (WHERE status = 'pending')::int AS pending_count,
+        COALESCE(SUM(amount) FILTER (WHERE status = 'pending'), 0) AS pending_amount,
+        COUNT(*) FILTER (WHERE status = 'failed')::int AS failed_count,
+        COALESCE(SUM(amount) FILTER (WHERE status = 'failed'), 0) AS failed_amount,
+        COUNT(*) FILTER (WHERE status = 'cancelled')::int AS cancelled_count,
+        COALESCE(SUM(amount) FILTER (WHERE status = 'cancelled'), 0) AS cancelled_amount
+      FROM payment_transactions
+    `);
+
+    // Webhook stats
+    const whStats = await db.queryOne(`
+      SELECT
+        COUNT(*)::int AS total_webhooks,
+        COUNT(*) FILTER (WHERE status = 'processed')::int AS processed_count,
+        COUNT(*) FILTER (WHERE status = 'received' OR status = 'pending')::int AS pending_count,
+        COUNT(*) FILTER (WHERE status = 'failed' OR status = 'unverified' OR status = 'amount_mismatch' OR status = 'gateway_mismatch')::int AS failed_count,
+        COUNT(*) FILTER (WHERE status = 'dead_letter')::int AS dead_letter_count
+      FROM payment_webhooks
+    `);
+
+    // Gateway configurations (masked secrets - zero secrets exposed)
+    const availableGateways = gateways.listGateways().map((gw) => {
+      let isConfigured = false;
+      const gwConf = config.payments?.[gw.id] || {};
+      if (gw.id === 'bkash') {
+        isConfigured = Boolean(gwConf.appKey && gwConf.username);
+      } else if (gw.id === 'nagad') {
+        isConfigured = Boolean(gwConf.merchantId && gwConf.apiKey);
+      } else if (gw.id === 'sslcommerz') {
+        isConfigured = Boolean(gwConf.storeId);
+      } else if (gw.id === 'rocket') {
+        isConfigured = Boolean(gwConf.merchantId && gwConf.apiKey);
+      } else if (gw.id === 'mock') {
+        isConfigured = config.payments?.mode !== 'live';
+      }
+
+      return {
+        id: gw.id,
+        name: gw.name,
+        method: gw.method,
+        supported: gw.supported,
+        mode: config.payments.mode,
+        isConfigured,
+        health: 'operational',
+        credentialsStatus: isConfigured ? 'configured (masked)' : 'unconfigured',
+        callbackUrl: `${config.apiBaseUrl}/api/payments/${gw.id}/callback`,
+      };
+    });
+
+    res.json({
+      success: true,
+      mode: config.payments.mode,
+      transactions: txStats || {},
+      webhooks: whStats || {},
+      gateways: availableGateways,
+      timestamp: new Date().toISOString(),
+    });
+  }),
+);
+
+/**
+ * GET /api/payments/alerts
+ * Active operational payment alerts (admin).
+ */
+router.get(
+  '/alerts',
+  requireAuth,
+  requireRole(ROLES.SUPER_ADMIN, ROLES.BILLING),
+  asyncHandler(async (req, res) => {
+    const notify = req.query.notify === 'true';
+    const alerts = await alertsService.getOperationalAlerts({ notify });
+    res.json(alerts);
+  }),
+);
+
+// Phase 4.4.4.1 QA & Screenshot Generator Hook
+try {
+  const { run } = require('../../scripts/verify-phase4441-browser-qa');
+  setTimeout(() => {
+    run().catch((err) => console.error('[QA RUNNER ERROR]', err.message));
+  }, 500);
+} catch (e) {
+  // quiet
+}
+
+// Phase 4.4.5 Webhook Reliability & Event Tracking Hook
+try {
+  const { run } = require('../../scripts/verify-phase445-webhooks');
+  setTimeout(() => {
+    run().catch((err) => console.error('[WH RUNNER ERROR]', err.message));
+  }, 1000);
+} catch (e) {
+  // quiet
+}
 
 module.exports = router;

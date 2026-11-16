@@ -41,10 +41,10 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { useAuthStore } from '@/store/authStore'
 import { useContentStore, PackageItem } from '@/store/contentStore'
-import { subscriberAuthHeader } from '@/lib/portalApi'
+import { subscriberAuthHeader, fetchLiveTelemetry, fetchMySummary, PortalSummary } from '@/lib/portalApi'
 import { useModalA11y } from '@/lib/useModalA11y'
 
-type PurchaseType = 'UPGRADE' | 'ADDITIONAL'
+type PurchaseType = 'UPGRADE' | 'ADDITIONAL' | 'RENEWAL'
 /**
  * The gateways the billing engine can actually charge through. The customer
  * is redirected to the gateway checkout — the portal does not collect the
@@ -52,7 +52,25 @@ type PurchaseType = 'UPGRADE' | 'ADDITIONAL'
  */
 type PaymentGateway = 'bkash' | 'nagad' | 'sslcommerz' | 'rocket'
 
+interface QuoteLineItem {
+  code: string
+  type?: string
+  label: string
+  description?: string
+  amount: number
+  amountCents?: number
+  formattedAmount?: string
+  prefix?: string
+  period?: string
+  monthYear?: string
+  invoiceId?: string
+}
+
 interface OrderCalculation {
+  scenario?: 'NEW_SUBSCRIBER' | 'EXISTING_NORMAL' | 'OVERDUE_BALANCE'
+  badge?: string
+  packageLabel?: string
+  lines: QuoteLineItem[]
   currentPackage: string
   newPackage: string
   currentPrice: number
@@ -60,16 +78,24 @@ interface OrderCalculation {
   proratedAdjustment: number
   installationFee: number
   lateFee?: number
+  carriedOverAmount?: number
+  previousDue?: number
   taxes: number
   discount: number
   totalPayable: number
+  formattedTotalPayable?: string
   nextBillingDate: string
   calculation?: {
+    scenario?: string
+    badge?: string
+    packageLabel?: string
+    lines?: QuoteLineItem[]
     monthlySubscriptionPrice?: number
     remainingCurrentSubscriptionValue?: number
     totalPayableToday?: number
     daysRemainingInCycle?: number
     lateFee?: number
+    carriedOverAmount?: number
     purchaseType?: string
   }
 }
@@ -79,6 +105,10 @@ interface ConfirmedOrder {
   trxId: string
   packageId: string
   packageName: string
+  packageLabel?: string
+  scenario?: string
+  badge?: string
+  lines?: QuoteLineItem[]
   purchaseType: string
   totalPayable: number
   paymentMethod: string
@@ -111,6 +141,8 @@ function PurchaseContent() {
     /** The verification service could not be reached — not a restriction. */
     verificationFailed?: boolean
   } | null>(null)
+  const [telemetrySubscriber, setTelemetrySubscriber] = useState<any>(null)
+  const [portalSummary, setPortalSummary] = useState<PortalSummary | null>(null)
 
   // Step Tracker (1: Package, 2: Type, 3: Compatibility, 4: Summary, 5: Payment, 6: Confirmed)
   const [currentStep, setCurrentStep] = useState<number>(1)
@@ -138,6 +170,7 @@ function PurchaseContent() {
   // Calculation State
   const [calculatingOrder, setCalculatingOrder] = useState(false)
   const [orderCalculation, setOrderCalculation] = useState<OrderCalculation | null>(null)
+  const [quoteError, setQuoteError] = useState<string | null>(null)
 
   // Payment Form State
   //
@@ -288,6 +321,95 @@ function PurchaseContent() {
     verifyCustomer()
   }, [isAuthenticated, user])
 
+  // Real-time synchronization of authoritative subscriber active package & cancellation status
+  useEffect(() => {
+    if (!isAuthenticated) return
+
+    let isMounted = true
+
+    const syncTelemetry = async () => {
+      try {
+        const [res, sumRes] = await Promise.all([
+          fetchLiveTelemetry(),
+          fetchMySummary(),
+        ])
+        if (!isMounted) return
+        if (sumRes.success && sumRes.summary) {
+          setPortalSummary(sumRes.summary)
+        }
+        if (res.success && res.telemetry?.subscriber) {
+          const sub = res.telemetry.subscriber
+          setTelemetrySubscriber(sub)
+          const updates: Record<string, any> = {}
+          if (sub.packageId && sub.packageId !== user?.packageId) {
+            updates.packageId = sub.packageId
+            updates.packageName = sub.packageName
+            updates.package = sub.packageName
+          }
+          if (sub.status && sub.status !== user?.status) {
+            updates.status = sub.status
+          }
+          if (Object.keys(updates).length > 0) {
+            updateUser(updates)
+          }
+        }
+      } catch (err) {
+        console.warn('Purchase page telemetry sync error:', err)
+      }
+    }
+
+    syncTelemetry()
+    const pollInterval = setInterval(syncTelemetry, 3500)
+
+    const handleVisibility = () => {
+      if (document.visibilityState === 'visible') syncTelemetry()
+    }
+    window.addEventListener('focus', handleVisibility)
+    document.addEventListener('visibilitychange', handleVisibility)
+
+    return () => {
+      isMounted = false
+      clearInterval(pollInterval)
+      window.removeEventListener('focus', handleVisibility)
+      document.removeEventListener('visibilitychange', handleVisibility)
+    }
+  }, [isAuthenticated, user?.packageId, user?.status, updateUser])
+
+  // Determine authoritative active plan status
+  const isCancelled = Boolean(
+    telemetrySubscriber?.status === 'cancelled' ||
+    eligibilityData?.subscriber?.status === 'cancelled' ||
+    user?.status === 'cancelled' ||
+    user?.subscriptionCancelledAt
+  )
+
+  const isActiveSubscriber = Boolean(
+    isAuthenticated &&
+    !isCancelled &&
+    (
+      telemetrySubscriber?.status === 'active' ||
+      telemetrySubscriber?.status === 'suspended' ||
+      eligibilityData?.subscriber?.status === 'active' ||
+      eligibilityData?.subscriber?.status === 'suspended' ||
+      user?.status === 'active' ||
+      user?.status === 'suspended'
+    )
+  )
+
+  const activePackageId = isActiveSubscriber
+    ? (telemetrySubscriber?.packageId || eligibilityData?.subscriber?.packageId || user?.packageId || null)
+    : null
+
+  const currentPackage = useMemo(() => {
+    if (!activePackageId || !packages || packages.length === 0) return null
+    return packages.find(
+      (p) => (p.id || '').trim().toLowerCase() === activePackageId.trim().toLowerCase()
+    ) || null
+  }, [activePackageId, packages])
+
+  const currentSpeed = currentPackage ? currentPackage.speed : (telemetrySubscriber?.speedMbps || eligibilityData?.subscriber?.speedMbps || 0)
+  const currentPrice = currentPackage ? currentPackage.price : (telemetrySubscriber?.price || eligibilityData?.subscriber?.price || 0)
+
   // Handle pre-selected package query parameter — only once, and never
   // overwrite a plan the visitor picked manually.
   const preselectionApplied = React.useRef(false)
@@ -295,19 +417,48 @@ function PurchaseContent() {
   useEffect(() => {
     if (preselectionApplied.current) return
     if (!packages || packages.length === 0) return
-    preselectionApplied.current = true
 
     if (preselectedPkgId) {
       const matched = packages.find(
-        (p) => p.id === preselectedPkgId || p.name.toLowerCase() === preselectedPkgId.toLowerCase(),
+        (p) => (p.id || '').toLowerCase() === preselectedPkgId.toLowerCase() ||
+               (p.name || '').toLowerCase() === preselectedPkgId.toLowerCase(),
       )
-      setSelectedPackage(matched || packages[0])
-    } else if (!selectedPackage) {
-      setSelectedPackage(packages[0])
+      if (matched) {
+        setSelectedPackage(matched)
+        preselectionApplied.current = true
+        return
+      }
     }
-    // Only the catalogue arriving triggers the one-time preselection.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [packages])
+
+    // Default to active plan if present, else packages[0]
+    if (activePackageId) {
+      const activePkg = packages.find(
+        (p) => (p.id || '').toLowerCase() === activePackageId.toLowerCase()
+      )
+      if (activePkg) {
+        setSelectedPackage(activePkg)
+        preselectionApplied.current = true
+        return
+      }
+    }
+
+    if (!selectedPackage) {
+      setSelectedPackage(packages[0])
+      preselectionApplied.current = true
+    }
+  }, [packages, activePackageId, preselectedPkgId, selectedPackage])
+
+  // Synchronize purchaseType: when current package is selected, automatically lock to RENEWAL (Requirement 3)
+  const preselectedType = searchParams.get('type')
+  useEffect(() => {
+    if (selectedPackage && activePackageId && (selectedPackage.id || '').toLowerCase() === activePackageId.toLowerCase()) {
+      setPurchaseType('RENEWAL')
+    } else if (preselectedType === 'RENEWAL') {
+      setPurchaseType('RENEWAL')
+    } else if (purchaseType === 'RENEWAL') {
+      setPurchaseType('UPGRADE')
+    }
+  }, [selectedPackage, activePackageId, preselectedType, purchaseType])
 
   // Network compatibility check when selectedPackage changes
   useEffect(() => {
@@ -355,36 +506,46 @@ function PurchaseContent() {
     checkCompatibility()
   }, [selectedPackage, user])
 
-  // Recalculate order breakdown when package or purchaseType changes
-  useEffect(() => {
+  // Recalculate order breakdown from the backend quote engine (single source of truth)
+  const fetchOrderQuote = React.useCallback(async () => {
     if (!selectedPackage || !user) return
-
-    const calculateBreakdown = async () => {
-      setCalculatingOrder(true)
-      try {
-        const res = await fetch('/api/customer/calculate-order', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json', ...subscriberAuthHeader() },
-          body: JSON.stringify({
-            customerId: user.id,
-            packageId: selectedPackage.id,
-            purchaseType,
-            billingCycle: 'monthly'
-          })
-        })
-        const result = await res.json()
-        if (result.success) {
-          setOrderCalculation(result)
-        }
-      } catch (e) {
-        console.error('Calculation error:', e)
-      } finally {
-        setCalculatingOrder(false)
+    setCalculatingOrder(true)
+    setQuoteError(null)
+    try {
+      const simulateFailureParam = searchParams.get('simulateQuoteFailure') === '1'
+      const res = await fetch('/api/customer/calculate-order', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...subscriberAuthHeader() },
+        body: JSON.stringify({
+          customerId: user.id,
+          packageId: selectedPackage.id,
+          purchaseType,
+          billingCycle: 'monthly',
+          simulateFailure: simulateFailureParam,
+        }),
+      })
+      const result = await res.json().catch(() => null)
+      if (res.ok && result?.success && Array.isArray(result?.lines)) {
+        setOrderCalculation(result)
+        setQuoteError(null)
+      } else {
+        setOrderCalculation(null)
+        setQuoteError(
+          result?.error || 'Unable to verify invoice preview with the Billing Engine. Please retry.'
+        )
       }
+    } catch (e: any) {
+      console.error('Calculation error:', e)
+      setOrderCalculation(null)
+      setQuoteError('Network error while contacting the Billing Engine. Please retry.')
+    } finally {
+      setCalculatingOrder(false)
     }
+  }, [selectedPackage, purchaseType, user, searchParams])
 
-    calculateBreakdown()
-  }, [selectedPackage, purchaseType, user])
+  useEffect(() => {
+    fetchOrderQuote()
+  }, [fetchOrderQuote])
 
   // Submit and execute order
   const handleExecutePayment = async () => {
@@ -392,7 +553,10 @@ function PurchaseContent() {
       setSubmitError('You must agree to NextLink Global Terms of Service and SLA before proceeding.')
       return
     }
-    if (!selectedPackage || !user) return
+    if (!selectedPackage || !user || !orderCalculation || quoteError) {
+      setSubmitError('Your invoice quote must be verified by the Billing Engine before proceeding to payment.')
+      return
+    }
 
     setIsSubmittingOrder(true)
     setSubmitError(null)
@@ -400,7 +564,7 @@ function PurchaseContent() {
     try {
       const formattedTimestamp = `${currentTime.date || '09/11/2026'} · ${currentTime.time || '12:00PM'}`
       const formattedLocation = `${purchaseLocation.city}, ${purchaseLocation.postalCode}, ${purchaseLocation.state}, ${purchaseLocation.country}`
-      const formattedTypeLabel = purchaseType === 'UPGRADE' ? 'Package Plan Upgrade' : 'Additional Secondary Drop'
+      const formattedTypeLabel = orderCalculation.badge || (purchaseType === 'UPGRADE' ? 'Package Plan Upgrade' : 'New Subscription')
 
       const res = await fetch('/api/customer/orders/create-and-pay', {
         method: 'POST',
@@ -429,15 +593,11 @@ function PurchaseContent() {
         return
       }
 
-      // The payment is authorised at the gateway. The customer is sent to the
-      // gateway checkout; the plan is activated when the gateway confirms the
-      // payment and the browser returns to the portal with the receipt.
       if (result.payment?.redirectUrl) {
         window.location.href = result.payment.redirectUrl
         return
       }
 
-      // Update local auth store user's package if upgrade
       if (purchaseType === 'UPGRADE') {
         updateUser({
           package: selectedPackage.name,
@@ -451,8 +611,12 @@ function PurchaseContent() {
         trxId: result.order.trx_id,
         packageId: result.order.package_id,
         packageName: result.order.package_name,
+        packageLabel: result.order.packageLabel || orderCalculation.packageLabel,
+        scenario: result.order.scenario || orderCalculation.scenario,
+        badge: result.order.badge || orderCalculation.badge,
+        lines: result.order.lines || orderCalculation.lines,
         purchaseType: result.order.purchase_type,
-        totalPayable: Number(result.order.total_payable || 0),
+        totalPayable: Number(result.order.total_payable || orderCalculation.totalPayable),
         paymentMethod: result.order.payment_method,
         orderStatus: result.order.order_status,
         expectedActivationTime: result.order.expected_activation_time,
@@ -463,7 +627,7 @@ function PurchaseContent() {
         installationAddress: user.address || 'Registered Optical Line Drop'
       })
 
-      setCurrentStep(6) // Step 6: Confirmation
+      setCurrentStep(6)
     } catch (err: any) {
       console.error('Execution error:', err)
       setSubmitError('Network failure occurred during secure transaction. Please try again.')
@@ -648,31 +812,76 @@ function PurchaseContent() {
                     <p className="text-xs text-muted-foreground">All packages feature 100% symmetrical speeds, zero bandwidth throttling, and carrier DDoS defense.</p>
                   </div>
                   <Badge variant="outline" className="text-xs">
-                    Current Active: {user?.packageName || user?.package || 'Ultra Gigabit 500'}
+                    Current Active: {activePackageId ? (currentPackage?.name || eligibilityData?.subscriber?.packageName || user?.packageName || activePackageId) : 'None / Unsubscribed'}
                   </Badge>
                 </div>
 
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
                   {packages.map((pkg) => {
                     const isSelected = selectedPackage?.id === pkg.id
+
+                    // Strict package ID matching
+                    const isCurrentPlan = Boolean(
+                      activePackageId &&
+                      (pkg.id || '').trim().toLowerCase() === activePackageId.trim().toLowerCase()
+                    )
+
+                    const isHigherTier = Boolean(
+                      activePackageId &&
+                      !isCurrentPlan &&
+                      (pkg.speed > currentSpeed || (pkg.speed === currentSpeed && pkg.price > currentPrice))
+                    )
+                    const isLowerTier = Boolean(
+                      activePackageId &&
+                      !isCurrentPlan &&
+                      (pkg.speed < currentSpeed || (pkg.speed === currentSpeed && pkg.price < currentPrice))
+                    )
+
                     return (
                       <div
                         key={pkg.id}
                         onClick={() => setSelectedPackage(pkg)}
-                        className={`cursor-pointer rounded-2xl border-2 p-4 transition-all duration-200 flex flex-col justify-between ${
-                          isSelected
+                        className={`relative rounded-2xl border-2 p-4 transition-all duration-200 flex flex-col justify-between cursor-pointer ${
+                          isCurrentPlan
+                            ? 'border-emerald-500 ring-2 ring-emerald-500/20 bg-emerald-500/[0.03] dark:bg-emerald-950/20 shadow-sm'
+                            : isSelected
                             ? 'border-primary ring-2 ring-primary/20 bg-primary/5 shadow-md -translate-y-1'
                             : 'border-border hover:border-border/80 hover:bg-muted/40'
                         }`}
                       >
-                        <div className="space-y-3">
+                        {/* 1. "Your Current Plan" Badge */}
+                        {isCurrentPlan && (
+                          <div className="absolute -top-3 left-1/2 -translate-x-1/2 z-20">
+                            <Badge 
+                              data-testid="purchase-current-plan-badge"
+                              className="bg-emerald-600 hover:bg-emerald-600 text-white dark:bg-emerald-500 font-bold px-3 py-0.5 text-[11px] shadow-md flex items-center gap-1.5 border border-emerald-400"
+                            >
+                              <CheckCircle2 className="h-3.5 w-3.5" />
+                              <span>Your Current Plan</span>
+                            </Badge>
+                          </div>
+                        )}
+
+                        <div className="space-y-3 pt-1">
                           <div className="flex items-center justify-between">
                             <span className="font-mono text-[11px] font-semibold text-muted-foreground">{pkg.id}</span>
-                            {isSelected && (
-                              <Badge className="bg-primary text-primary-foreground text-[10px] py-0 px-2">
-                                SELECTED
-                              </Badge>
-                            )}
+                            <div className="flex items-center gap-1">
+                              {isHigherTier && (
+                                <Badge variant="outline" className="text-[9px] font-bold text-emerald-600 dark:text-emerald-400 border-emerald-500/30 bg-emerald-500/10 px-1.5 py-0">
+                                  Upgrade
+                                </Badge>
+                              )}
+                              {isLowerTier && (
+                                <Badge variant="outline" className="text-[9px] font-bold text-amber-600 dark:text-amber-400 border-amber-500/30 bg-amber-500/10 px-1.5 py-0">
+                                  Downgrade
+                                </Badge>
+                              )}
+                              {isSelected && !isCurrentPlan && (
+                                <Badge className="bg-primary text-primary-foreground text-[10px] py-0 px-2">
+                                  SELECTED
+                                </Badge>
+                              )}
+                            </div>
                           </div>
 
                           <div>
@@ -707,29 +916,79 @@ function PurchaseContent() {
                         </div>
 
                         <div className="pt-4 border-t mt-4">
-                          <Button
-                            size="sm"
-                            variant={isSelected ? 'default' : 'outline'}
-                            className="w-full text-xs font-bold"
-                          >
-                            {isSelected ? 'Selected' : 'Select Plan'}
-                          </Button>
+                          {isCurrentPlan ? (
+                            portalSummary?.isCurrentPeriodPaid ? (
+                              <Button
+                                size="sm"
+                                disabled
+                                aria-disabled="true"
+                                data-testid="purchase-current-plan-paid-btn"
+                                className="w-full text-xs font-bold bg-emerald-500/10 text-emerald-700 dark:text-emerald-300 border border-emerald-500/30 cursor-not-allowed hover:bg-emerald-500/10"
+                              >
+                                <CheckCircle2 className="h-3.5 w-3.5 text-emerald-500 mr-1" />
+                                <span>Paid – Next due {portalSummary.nextDueDate || 'next cycle'}</span>
+                              </Button>
+                            ) : (
+                              <Button
+                                size="sm"
+                                variant={isSelected ? 'default' : 'outline'}
+                                className="w-full text-xs font-bold"
+                              >
+                                {isSelected ? 'Selected (Monthly Bill)' : 'Select for Renewal'}
+                              </Button>
+                            )
+                          ) : (
+                            <Button
+                              size="sm"
+                              variant={isSelected ? 'default' : 'outline'}
+                              className="w-full text-xs font-bold"
+                            >
+                              {isSelected
+                                ? (isHigherTier ? 'Selected (Upgrade)' : isLowerTier ? 'Selected (Downgrade)' : 'Selected')
+                                : (isHigherTier ? 'Select for Upgrade' : isLowerTier ? 'Select for Downgrade' : 'Select Plan')}
+                            </Button>
+                          )}
                         </div>
                       </div>
                     )
                   })}
                 </div>
 
-                <div className="flex justify-end pt-4 border-t">
-                  <Button
-                    onClick={() => setCurrentStep(2)}
-                    disabled={!selectedPackage}
-                    className="font-bold text-xs gap-1.5 px-6 h-10 shadow-sm"
-                  >
-                    <span>Proceed to Purchase Type</span>
-                    <ArrowRight className="h-4 w-4" />
-                  </Button>
-                </div>
+                {(() => {
+                  const isSelectedCurrentPlan = Boolean(
+                    activePackageId &&
+                    selectedPackage?.id &&
+                    (selectedPackage.id || '').trim().toLowerCase() === activePackageId.trim().toLowerCase()
+                  )
+                  const isBlockDuplicatePaid = isSelectedCurrentPlan && Boolean(portalSummary?.isCurrentPeriodPaid)
+
+                  return (
+                    <div className="flex flex-col sm:flex-row items-end sm:items-center justify-between gap-3 pt-4 border-t">
+                      <div>
+                        {isBlockDuplicatePaid ? (
+                          <div className="flex items-center gap-2 text-xs text-emerald-700 dark:text-emerald-300 font-medium bg-emerald-500/10 border border-emerald-500/20 px-3 py-1.5 rounded-lg">
+                            <CheckCircle2 className="h-4 w-4 shrink-0 text-emerald-600" />
+                            <span>Paid for {portalSummary?.paidMonthYear || 'this month'}. Next bill due: {portalSummary?.nextDueDate || 'next cycle'}.</span>
+                          </div>
+                        ) : isSelectedCurrentPlan ? (
+                          <div className="flex items-center gap-2 text-xs text-emerald-700 dark:text-emerald-400 font-medium bg-emerald-500/10 border border-emerald-500/20 px-3 py-1.5 rounded-lg">
+                            <CreditCard className="h-4 w-4 shrink-0 text-emerald-600" />
+                            <span>Monthly Bill Renewal: Proceed to pay and settle your active plan's bill without installation or tax fees.</span>
+                          </div>
+                        ) : null}
+                      </div>
+
+                      <Button
+                        onClick={() => setCurrentStep(2)}
+                        disabled={!selectedPackage || isBlockDuplicatePaid}
+                        className="font-bold text-xs gap-1.5 px-6 h-10 shadow-sm shrink-0"
+                      >
+                        <span>{isSelectedCurrentPlan ? 'Proceed to Monthly Renewal' : 'Proceed to Purchase Type'}</span>
+                        <ArrowRight className="h-4 w-4" />
+                      </Button>
+                    </div>
+                  )
+                })()}
               </div>
             )}
 
@@ -738,96 +997,151 @@ function PurchaseContent() {
             ───────────────────────────────────────────────────────────── */}
             {currentStep === 2 && (
               <div className="space-y-6 max-w-3xl mx-auto animate-in fade-in">
-                <div>
-                  <h2 className="text-xl font-bold text-foreground">Select Purchase Type</h2>
-                  <p className="text-xs text-muted-foreground">
-                    Choose whether to upgrade your existing primary optical connection or deploy a secondary high-speed drop.
-                  </p>
-                </div>
+                {(() => {
+                  const isSelectedCurrentPlan = Boolean(
+                    activePackageId &&
+                    selectedPackage?.id &&
+                    (selectedPackage.id || '').trim().toLowerCase() === activePackageId.trim().toLowerCase()
+                  )
 
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  {/* Option A: Replace / Upgrade */}
-                  <div
-                    onClick={() => setPurchaseType('UPGRADE')}
-                    className={`cursor-pointer rounded-2xl border-2 p-5 transition-all space-y-4 ${
-                      purchaseType === 'UPGRADE'
-                        ? 'border-primary ring-2 ring-primary/20 bg-primary/5 shadow-md'
-                        : 'border-border hover:bg-muted/40'
-                    }`}
-                  >
-                    <div className="flex items-center justify-between">
-                      <div className="h-10 w-10 rounded-xl bg-primary/10 text-primary flex items-center justify-center">
-                        <Zap className="h-5 w-5" />
+                  return (
+                    <>
+                      <div>
+                        <h2 className="text-xl font-bold text-foreground">
+                          {isSelectedCurrentPlan ? 'Confirm Monthly Bill Renewal' : 'Select Purchase Type'}
+                        </h2>
+                        <p className="text-xs text-muted-foreground">
+                          {isSelectedCurrentPlan
+                            ? 'Renew and settle the monthly subscription bill for your active optical fiber package.'
+                            : 'Choose whether to upgrade your existing primary optical connection or deploy a secondary high-speed drop.'}
+                        </p>
                       </div>
-                      {purchaseType === 'UPGRADE' && (
-                        <Badge className="bg-primary text-primary-foreground text-xs">RECOMMENDED</Badge>
+
+                      {isSelectedCurrentPlan ? (
+                        <div className="rounded-2xl border-2 border-emerald-500 ring-2 ring-emerald-500/20 bg-emerald-500/5 p-6 space-y-4 shadow-sm">
+                          <div className="flex items-center justify-between">
+                            <div className="h-10 w-10 rounded-xl bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 flex items-center justify-center">
+                              <CreditCard className="h-5 w-5" />
+                            </div>
+                            <Badge className="bg-emerald-600 hover:bg-emerald-600 text-white font-bold text-xs">
+                              MONTHLY RENEWAL
+                            </Badge>
+                          </div>
+
+                          <div>
+                            <h3 className="font-bold text-lg text-foreground">Active Subscription Renewal</h3>
+                            <p className="text-xs text-muted-foreground mt-1">
+                              Settling monthly bill for <strong className="text-foreground">{selectedPackage?.name}</strong> ({selectedPackage && selectedPackage.speed >= 1000 ? `${selectedPackage.speed/1000} Gbps` : `${selectedPackage?.speed} Mbps`}).
+                            </p>
+                          </div>
+
+                          <ul className="text-xs space-y-2 text-foreground/90 border-t pt-3">
+                            <li className="flex items-center gap-2">
+                              <CheckCircle2 className="h-4 w-4 text-emerald-500 shrink-0" />
+                              <span>Monthly package fee: <strong>${Number(selectedPackage?.price || 0).toFixed(2)}</strong></span>
+                            </li>
+                            <li className="flex items-center gap-2">
+                              <CheckCircle2 className="h-4 w-4 text-emerald-500 shrink-0" />
+                              <span>Zero installation fee: <strong>$0.00</strong> &middot; Zero tax: <strong>$0.00</strong></span>
+                            </li>
+                            <li className="flex items-center gap-2">
+                              <CheckCircle2 className="h-4 w-4 text-emerald-500 shrink-0" />
+                              <span>Attaches directly to your active subscription line (no duplicate account created)</span>
+                            </li>
+                            <li className="flex items-center gap-2">
+                              <CheckCircle2 className="h-4 w-4 text-emerald-500 shrink-0" />
+                              <span>Instant continuous connectivity &middot; zero service interruption</span>
+                            </li>
+                          </ul>
+                        </div>
+                      ) : (
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                          {/* Option A: Replace / Upgrade */}
+                          <div
+                            onClick={() => setPurchaseType('UPGRADE')}
+                            className={`cursor-pointer rounded-2xl border-2 p-5 transition-all space-y-4 ${
+                              purchaseType === 'UPGRADE'
+                                ? 'border-primary ring-2 ring-primary/20 bg-primary/5 shadow-md'
+                                : 'border-border hover:bg-muted/40'
+                            }`}
+                          >
+                            <div className="flex items-center justify-between">
+                              <div className="h-10 w-10 rounded-xl bg-primary/10 text-primary flex items-center justify-center">
+                                <Zap className="h-5 w-5" />
+                              </div>
+                              {purchaseType === 'UPGRADE' && (
+                                <Badge className="bg-primary text-primary-foreground text-xs">RECOMMENDED</Badge>
+                              )}
+                            </div>
+
+                            <div>
+                              <h3 className="font-bold text-base text-foreground">Option A: Upgrade Current Package</h3>
+                              <p className="text-xs text-muted-foreground mt-1">
+                                Replaces your active plan with <strong className="text-foreground">{selectedPackage?.name}</strong>.
+                              </p>
+                            </div>
+
+                            <ul className="text-xs space-y-2 text-muted-foreground border-t pt-3">
+                              <li className="flex items-center gap-2">
+                                <CheckCircle2 className="h-3.5 w-3.5 text-emerald-500 shrink-0" />
+                                <span>Full monthly package price (no proration)</span>
+                              </li>
+                              <li className="flex items-center gap-2">
+                                <CheckCircle2 className="h-3.5 w-3.5 text-emerald-500 shrink-0" />
+                                <span>One-time installation fee: <strong>${Number(orderCalculation?.installationFee ?? 8.99).toFixed(2)}</strong> + tax: <strong>${Number(orderCalculation?.taxes ?? 0.99).toFixed(2)}</strong></span>
+                              </li>
+                              <li className="flex items-center gap-2">
+                                <CheckCircle2 className="h-3.5 w-3.5 text-emerald-500 shrink-0" />
+                                <span>Immediate remote optical re-profiling (5–15 mins)</span>
+                              </li>
+                            </ul>
+                          </div>
+
+                          {/* Option B: Additional Connection */}
+                          <div
+                            onClick={() => setPurchaseType('ADDITIONAL')}
+                            className={`cursor-pointer rounded-2xl border-2 p-5 transition-all space-y-4 ${
+                              purchaseType === 'ADDITIONAL'
+                                ? 'border-primary ring-2 ring-primary/20 bg-primary/5 shadow-md'
+                                : 'border-border hover:bg-muted/40'
+                            }`}
+                          >
+                            <div className="flex items-center justify-between">
+                              <div className="h-10 w-10 rounded-xl bg-purple-500/10 text-purple-600 dark:text-purple-400 flex items-center justify-center">
+                                <Network className="h-5 w-5" />
+                              </div>
+                              {purchaseType === 'ADDITIONAL' && (
+                                <Badge className="bg-purple-600 text-white text-xs">SECONDARY LINE</Badge>
+                              )}
+                            </div>
+
+                            <div>
+                              <h3 className="font-bold text-base text-foreground">Option B: Additional Connection</h3>
+                              <p className="text-xs text-muted-foreground mt-1">
+                                Maintains existing line and deploys an independent secondary fiber connection.
+                              </p>
+                            </div>
+
+                            <ul className="text-xs space-y-2 text-muted-foreground border-t pt-3">
+                              <li className="flex items-center gap-2">
+                                <CheckCircle2 className="h-3.5 w-3.5 text-emerald-500 shrink-0" />
+                                <span>Separate connection identifier (e.g. {user?.username || 'user'}-L2)</span>
+                              </li>
+                              <li className="flex items-center gap-2">
+                                <CheckCircle2 className="h-3.5 w-3.5 text-emerald-500 shrink-0" />
+                                <span>Fixed installation fee: <strong>${Number(orderCalculation?.installationFee ?? 8.99).toFixed(2)}</strong> + tax: <strong>${Number(orderCalculation?.taxes ?? 0.99).toFixed(2)}</strong></span>
+                              </li>
+                              <li className="flex items-center gap-2">
+                                <CheckCircle2 className="h-3.5 w-3.5 text-emerald-500 shrink-0" />
+                                <span>Technician line dispatch scheduled within 24–48 hours</span>
+                              </li>
+                            </ul>
+                          </div>
+                        </div>
                       )}
-                    </div>
-
-                    <div>
-                      <h3 className="font-bold text-base text-foreground">Option A: Upgrade Current Package</h3>
-                      <p className="text-xs text-muted-foreground mt-1">
-                        Replaces your active plan with <strong className="text-foreground">{selectedPackage?.name}</strong>.
-                      </p>
-                    </div>
-
-                    <ul className="text-xs space-y-2 text-muted-foreground border-t pt-3">
-                      <li className="flex items-center gap-2">
-                        <CheckCircle2 className="h-3.5 w-3.5 text-emerald-500 shrink-0" />
-                        <span>Prorated billing adjustment calculated</span>
-                      </li>
-                      <li className="flex items-center gap-2">
-                        <CheckCircle2 className="h-3.5 w-3.5 text-emerald-500 shrink-0" />
-                        <span>One-time installation fee <strong>$18.00</strong></span>
-                      </li>
-                      <li className="flex items-center gap-2">
-                        <CheckCircle2 className="h-3.5 w-3.5 text-emerald-500 shrink-0" />
-                        <span>Immediate remote optical re-profiling (5–15 mins)</span>
-                      </li>
-                    </ul>
-                  </div>
-
-                  {/* Option B: Additional Connection */}
-                  <div
-                    onClick={() => setPurchaseType('ADDITIONAL')}
-                    className={`cursor-pointer rounded-2xl border-2 p-5 transition-all space-y-4 ${
-                      purchaseType === 'ADDITIONAL'
-                        ? 'border-primary ring-2 ring-primary/20 bg-primary/5 shadow-md'
-                        : 'border-border hover:bg-muted/40'
-                    }`}
-                  >
-                    <div className="flex items-center justify-between">
-                      <div className="h-10 w-10 rounded-xl bg-purple-500/10 text-purple-600 dark:text-purple-400 flex items-center justify-center">
-                        <Network className="h-5 w-5" />
-                      </div>
-                      {purchaseType === 'ADDITIONAL' && (
-                        <Badge className="bg-purple-600 text-white text-xs">SECONDARY LINE</Badge>
-                      )}
-                    </div>
-
-                    <div>
-                      <h3 className="font-bold text-base text-foreground">Option B: Additional Connection</h3>
-                      <p className="text-xs text-muted-foreground mt-1">
-                        Maintains existing line and deploys an independent secondary fiber connection.
-                      </p>
-                    </div>
-
-                    <ul className="text-xs space-y-2 text-muted-foreground border-t pt-3">
-                      <li className="flex items-center gap-2">
-                        <CheckCircle2 className="h-3.5 w-3.5 text-emerald-500 shrink-0" />
-                        <span>Separate connection identifier (e.g. {user?.username || 'user'}-L2)</span>
-                      </li>
-                      <li className="flex items-center gap-2">
-                        <CheckCircle2 className="h-3.5 w-3.5 text-emerald-500 shrink-0" />
-                        <span>Fixed installation fee: <strong>$18.00</strong></span>
-                      </li>
-                      <li className="flex items-center gap-2">
-                        <CheckCircle2 className="h-3.5 w-3.5 text-emerald-500 shrink-0" />
-                        <span>Technician line dispatch scheduled within 24–48 hours</span>
-                      </li>
-                    </ul>
-                  </div>
-                </div>
+                    </>
+                  )
+                })()}
 
                 <div className="flex items-center justify-between pt-4 border-t">
                   <Button variant="outline" size="sm" onClick={() => setCurrentStep(1)} className="text-xs">
@@ -1022,95 +1336,104 @@ function PurchaseContent() {
                   <CardHeader className="pb-3 border-b">
                     <div className="flex items-center justify-between">
                       <CardTitle className="text-base font-bold">Subscriber Plan Invoice Preview</CardTitle>
-                      <Badge variant="outline" className="font-mono text-xs">
-                        {purchaseType === 'UPGRADE' ? 'Package Plan Upgrade' : 'Additional Secondary Connection'}
-                      </Badge>
+                      {orderCalculation?.badge && (
+                        <Badge
+                          variant="outline"
+                          className={`font-mono text-xs ${
+                            orderCalculation.scenario === 'OVERDUE_BALANCE'
+                              ? 'bg-rose-500/10 text-rose-600 dark:text-rose-400 border-rose-500/30'
+                              : orderCalculation.scenario === 'NEW_SUBSCRIBER'
+                                ? 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/30'
+                                : 'bg-primary/10 text-primary border-primary/30'
+                          }`}
+                        >
+                          {orderCalculation.badge}
+                        </Badge>
+                      )}
                     </div>
                   </CardHeader>
                   <CardContent className="space-y-5 pt-4">
-                    {/* Itemized lines */}
+                    {/* Loading state */}
                     {calculatingOrder && (
-                      <div className="flex items-center gap-2 text-xs text-muted-foreground py-2">
-                        <Loader2 className="h-4 w-4 animate-spin" />
-                        Verifying the order with the billing engine…
+                      <div className="flex items-center gap-2 text-xs text-muted-foreground py-4">
+                        <Loader2 className="h-4 w-4 animate-spin text-primary" />
+                        <span>Verifying invoice quote with the billing engine…</span>
                       </div>
                     )}
-                    {!calculatingOrder && !orderCalculation && (
-                      <div className="p-2 rounded-lg bg-amber-500/10 border border-amber-500/30 text-[11px] text-amber-900 dark:text-amber-300">
-                        The order has not been verified with the billing engine yet.
-                        The totals below are the plan prices — the exact amount will be confirmed before payment.
-                      </div>
-                    )}
-                    <div className="space-y-3 text-xs">
-                      {/* Selected plan — the recurring monthly price */}
-                      <div className="flex justify-between items-center py-1">
-                        <div>
-                          <p className="font-bold text-foreground text-sm">{selectedPackage?.name} ({selectedPackage?.speed} Mbps)</p>
-                          <p className="text-muted-foreground text-[11px]">Monthly Package Recurring Subscription Fee</p>
-                        </div>
-                        <span className="font-mono font-black text-base text-foreground">
-                          {(orderCalculation ? orderCalculation.newPrice : Number(selectedPackage?.price ?? 0)).toFixed(2)}
-                        </span>
-                      </div>
 
-                      {/* Installation fee — fixed for every package purchase */}
-                      <div className="flex justify-between items-center py-1 border-t border-border/50">
-                        <div>
-                          <p className="font-medium text-foreground">One-Time Installation Fee</p>
-                          <p className="text-muted-foreground text-[11px]">Fixed fee for provisioning the optical drop</p>
-                        </div>
-                        <span className="font-mono font-semibold text-foreground">
-                          +{Number(orderCalculation?.installationFee ?? 18).toFixed(2)}
-                        </span>
-                      </div>
-
-                      {/* Late fee — only when the running-month bill is overdue past the grace days */}
-                      {Number(orderCalculation?.lateFee ?? 0) > 0 && (
-                        <div className="flex justify-between items-center py-1 border-t border-border/50">
+                    {/* Error state — never show a fallback total */}
+                    {!calculatingOrder && (quoteError || !orderCalculation) && (
+                      <div className="p-4 rounded-xl bg-rose-500/10 border border-rose-500/30 text-xs text-rose-700 dark:text-rose-300 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                        <div className="flex items-start gap-2.5">
+                          <AlertCircle className="h-4 w-4 shrink-0 mt-0.5 text-rose-600 dark:text-rose-400" />
                           <div>
-                            <p className="font-medium text-foreground">Late Payment Fee</p>
-                            <p className="text-muted-foreground text-[11px]">The running month bill was not paid in time</p>
+                            <p className="font-bold">Invoice Quote Verification Failed</p>
+                            <p className="mt-0.5 text-[11px] opacity-90">
+                              {quoteError || 'Unable to retrieve the verified invoice quote from the billing engine.'}
+                            </p>
                           </div>
-                          <span className="font-mono font-semibold text-foreground">
-                            +{Number(orderCalculation?.lateFee).toFixed(2)}
-                          </span>
                         </div>
-                      )}
-
-                      {/* Regulatory note */}
-                      <div className="flex justify-between items-center py-1 border-t border-border/50">
-                        <div>
-                          <p className="font-medium text-foreground">Applicable Telecommunications Tax &amp; Regulatory Surcharge</p>
-                          <p className="text-muted-foreground text-[11px]">Included in the plan — nothing extra is charged</p>
-                        </div>
-                        <span className="font-mono font-semibold text-foreground">
-                          {Number(orderCalculation?.taxes ?? 0).toFixed(2)}
-                        </span>
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant="outline"
+                          onClick={fetchOrderQuote}
+                          className="gap-1.5 text-xs shrink-0 border-rose-500/40 hover:bg-rose-500/10"
+                        >
+                          <RefreshCw className="h-3.5 w-3.5" />
+                          <span>Retry</span>
+                        </Button>
                       </div>
+                    )}
 
-                      {/* Total Payable — the server-verified amount */}
-                      <div className="flex justify-between items-center py-3 border-t-2 border-border text-sm">
-                        <div>
-                          <p className="font-black text-foreground text-base">Total Payable Amount Now</p>
-                          <p className="text-muted-foreground text-xs">
-                            {orderCalculation ? 'Verified by the billing engine · due on the next cycle' : 'Plan price — verification pending'}
-                          </p>
-                        </div>
-                        <div className="text-right">
-                          <p className="text-2xl font-black text-primary font-mono">
-                            {orderCalculation
-                              ? Number(
-                                  orderCalculation.calculation?.totalPayableToday ??
-                                  orderCalculation.totalPayable,
-                                ).toFixed(2)
-                              : Number(selectedPackage?.price ?? 0).toFixed(2)}
-                          </p>
-                          <p className="text-[10px] text-muted-foreground uppercase font-semibold">
-                            {orderCalculation ? 'Billing Engine Verified' : 'Plan Price'}
-                          </p>
+                    {/* Verified Line Items from Backend Billing Engine */}
+                    {!calculatingOrder && !quoteError && orderCalculation && (
+                      <div className="space-y-3 text-xs">
+                        {(orderCalculation.lines || []).map((line, idx) => (
+                          <div
+                            key={`${line.code}-${line.invoiceId || idx}`}
+                            className={`flex justify-between items-center py-1.5 ${
+                              idx > 0 ? 'border-t border-border/50' : ''
+                            }`}
+                          >
+                            <div>
+                              <p className="font-semibold text-foreground text-sm">{line.label}</p>
+                            </div>
+                            <span
+                              className={`font-mono font-bold text-sm ${
+                                line.code === 'late_fee'
+                                  ? 'text-rose-600 dark:text-rose-400'
+                                  : line.code === 'previous_month_fee'
+                                    ? 'text-amber-600 dark:text-amber-400'
+                                    : 'text-foreground'
+                              }`}
+                            >
+                              {line.formattedAmount ||
+                                `${line.prefix || '$'}${Number(line.amount || 0).toFixed(2)}`}
+                            </span>
+                          </div>
+                        ))}
+
+                        {/* Total Payable Amount Now — server-verified amount */}
+                        <div className="flex justify-between items-center py-3 border-t-2 border-border text-sm">
+                          <div>
+                            <p className="font-black text-foreground text-base">Total Payable Amount Now</p>
+                            <p className="text-muted-foreground text-xs">
+                              Verified by the billing engine
+                            </p>
+                          </div>
+                          <div className="text-right">
+                            <p className="text-2xl font-black text-primary font-mono">
+                              {orderCalculation.formattedTotalPayable ||
+                                `$${Number(orderCalculation.totalPayable).toFixed(2)}`}
+                            </p>
+                            <p className="text-[10px] text-emerald-600 dark:text-emerald-400 uppercase font-semibold">
+                              {orderCalculation.badge}
+                            </p>
+                          </div>
                         </div>
                       </div>
-                    </div>
+                    )}
 
                     {/* Terms & Conditions Checkbox */}
                     <div className="pt-2 border-t">
@@ -1136,7 +1459,7 @@ function PurchaseContent() {
                   </Button>
                   <Button 
                     onClick={() => setCurrentStep(5)} 
-                    disabled={!termsAccepted}
+                    disabled={!termsAccepted || calculatingOrder || !orderCalculation || Boolean(quoteError)}
                     className="font-bold text-xs gap-1.5 h-10 px-6 shadow-sm"
                   >
                     <span>Proceed to Secure Payment</span>
@@ -1165,13 +1488,22 @@ function PurchaseContent() {
                   </div>
                 )}
 
+                {(!orderCalculation || quoteError) && (
+                  <div className="p-4 rounded-xl bg-rose-500/10 border border-rose-500/30 text-xs text-rose-700 dark:text-rose-300 flex items-center justify-between gap-3">
+                    <span>{quoteError || 'Invoice quote is unavailable. Please retry before authorizing payment.'}</span>
+                    <Button type="button" size="sm" variant="outline" onClick={fetchOrderQuote} className="gap-1.5 text-xs">
+                      <RefreshCw className="h-3.5 w-3.5" /> Retry
+                    </Button>
+                  </div>
+                )}
+
                 {/* Gateway Options */}
                 <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
                   {[
-                    { id: 'bkash', label: 'bKash', icon: Smartphone },
-                    { id: 'nagad', label: 'Nagad', icon: Smartphone },
-                    { id: 'sslcommerz', label: 'SSLCommerz', icon: CreditCard },
-                    { id: 'rocket', label: 'Rocket', icon: Globe2 },
+                    { id: 'bkash', label: 'bKash', sub: 'Tokenized API', icon: Smartphone },
+                    { id: 'nagad', label: 'Nagad', sub: 'Direct DFS', icon: Smartphone },
+                    { id: 'sslcommerz', label: 'SSLCommerz', sub: 'Cards & Banking', icon: CreditCard },
+                    { id: 'rocket', label: 'Rocket (DBBL)', sub: 'Aggregator Routed', icon: Globe2 },
                   ].map((gw) => {
                     const Icon = gw.icon
                     const isSelected = selectedGateway === gw.id
@@ -1180,20 +1512,26 @@ function PurchaseContent() {
                         key={gw.id}
                         type="button"
                         onClick={() => setSelectedGateway(gw.id as PaymentGateway)}
-                        className={`p-3 rounded-xl border-2 text-left transition-all flex flex-col justify-between gap-2 ${
+                        className={`p-3 rounded-xl border-2 text-left transition-all flex flex-col justify-between gap-1.5 ${
                           isSelected
                             ? 'border-primary bg-primary/10 text-primary font-bold shadow-sm'
                             : 'border-border hover:bg-muted/40 text-foreground'
                         }`}
+                        data-testid={`purchase-gateway-${gw.id}`}
                       >
-                        <Icon className="h-5 w-5" />
-                        <span className="text-xs">{gw.label}</span>
+                        <div className="flex items-center justify-between">
+                          <Icon className="h-5 w-5" />
+                          <span className="text-[9px] uppercase px-1 py-0.2 rounded bg-muted/70 text-muted-foreground font-mono">
+                            {gw.sub}
+                          </span>
+                        </div>
+                        <span className="text-xs font-bold">{gw.label}</span>
                       </button>
                     )
                   })}
                 </div>
 
-                {/* Payment details — the gateway collects the credentials itself */}
+                {/* Payment details & Verified Line Items Summary */}
                 <Card className="border shadow-sm">
                   <CardContent className="p-5 space-y-4">
                     <div className="space-y-3">
@@ -1213,22 +1551,37 @@ function PurchaseContent() {
                         />
                       </div>
                       <p className="text-[11px] text-muted-foreground">
-                        You will be redirected to the {selectedGateway === 'sslcommerz' ? 'SSLCommerz' : selectedGateway.toUpperCase()} checkout to authorise the payment. The plan is activated as soon as the gateway confirms it.
+                        {selectedGateway === 'rocket'
+                          ? 'You will be redirected to the Rocket checkout session routed via authorized aggregator channel (SSLCommerz / AamarPay). The plan is activated as soon as payment is verified.'
+                          : `You will be redirected to the ${selectedGateway === 'sslcommerz' ? 'SSLCommerz' : selectedGateway.toUpperCase()} checkout to authorise the payment. The plan is activated as soon as the gateway confirms it.`}
                       </p>
                     </div>
 
-                    {/* Payable summary line */}
-                    <div className="pt-3 border-t flex justify-between items-center text-xs">
-                      <span className="font-semibold text-muted-foreground">Final Charged Amount:</span>
-                      <span className="font-mono font-black text-lg text-primary">
-                        {orderCalculation
-                          ? Number(
-                              orderCalculation.calculation?.totalPayableToday ??
-                              orderCalculation.totalPayable,
-                            ).toFixed(2)
-                          : Number(selectedPackage?.price ?? 0).toFixed(2)}
-                      </span>
-                    </div>
+                    {/* Itemized breakdown on Step 5 matching Step 4 */}
+                    {orderCalculation && !quoteError && (
+                      <div className="pt-3 border-t space-y-2 text-xs">
+                        <div className="flex items-center justify-between pb-1">
+                          <span className="font-bold text-foreground">Subscriber Plan Invoice Preview</span>
+                          <Badge variant="outline" className="font-mono text-[10px]">
+                            {orderCalculation.badge}
+                          </Badge>
+                        </div>
+                        {(orderCalculation.lines || []).map((line, idx) => (
+                          <div key={`step5-${line.code}-${idx}`} className="flex justify-between items-center text-muted-foreground">
+                            <span>{line.label}</span>
+                            <span className="font-mono font-semibold text-foreground">
+                              {line.formattedAmount || `${line.prefix || '$'}${Number(line.amount || 0).toFixed(2)}`}
+                            </span>
+                          </div>
+                        ))}
+                        <div className="pt-2 border-t flex justify-between items-center">
+                          <span className="font-bold text-foreground">Total Payable Amount Now:</span>
+                          <span className="font-mono font-black text-lg text-primary">
+                            {orderCalculation.formattedTotalPayable || `$${Number(orderCalculation.totalPayable).toFixed(2)}`}
+                          </span>
+                        </div>
+                      </div>
+                    )}
                   </CardContent>
                 </Card>
 
@@ -1245,7 +1598,7 @@ function PurchaseContent() {
                   </Button>
                   <Button
                     onClick={handleExecutePayment}
-                    disabled={isSubmittingOrder}
+                    disabled={isSubmittingOrder || calculatingOrder || !orderCalculation || Boolean(quoteError)}
                     className="font-bold text-xs gap-2 h-11 px-8 shadow-md"
                   >
                     {isSubmittingOrder ? (
@@ -1259,11 +1612,9 @@ function PurchaseContent() {
                         <span>
                           Confirm &amp; Authorize{' '}
                           {orderCalculation
-                            ? Number(
-                                orderCalculation.calculation?.totalPayableToday ??
-                                orderCalculation.totalPayable,
-                              ).toFixed(2)
-                            : Number(selectedPackage?.price ?? 0).toFixed(2)}
+                            ? orderCalculation.formattedTotalPayable ||
+                              `$${Number(orderCalculation.totalPayable).toFixed(2)}`
+                            : ''}
                         </span>
                       </>
                     )}
@@ -1312,7 +1663,7 @@ function PurchaseContent() {
                       <div className="flex justify-between">
                         <span className="text-muted-foreground">Total Paid:</span>
                         <span className="font-black text-emerald-600 dark:text-emerald-400 text-sm">
-                          USD {confirmedOrder.totalPayable.toFixed(2)}
+                          ${confirmedOrder.totalPayable.toFixed(2)} USD
                         </span>
                       </div>
                       <div className="flex justify-between">
@@ -1407,7 +1758,7 @@ function PurchaseContent() {
               </div>
             </CardHeader>
 
-            <CardContent className="p-6 space-y-6 text-xs">
+            <CardContent className="p-6 space-y-5 text-xs">
               <div className="flex justify-between items-start">
                 <div>
                   <span className="text-[10px] uppercase font-bold text-muted-foreground">Billed To</span>
@@ -1418,9 +1769,57 @@ function PurchaseContent() {
                 <div className="text-right">
                   <span className="text-[10px] uppercase font-bold text-muted-foreground">Official Receipt</span>
                   <p className="font-mono font-bold text-sm text-primary mt-0.5">{confirmedOrder.orderId}</p>
-                  <p className="text-muted-foreground font-mono">Date: {currentTime.date || '09/11/2026'} ({currentTime.time || '12:00AM'})</p>
-                  <p className="text-[10px] text-muted-foreground font-mono">{purchaseLocation.city}, {purchaseLocation.postalCode}, {purchaseLocation.state}, {purchaseLocation.country}</p>
-                  <Badge className="bg-emerald-500 text-white text-[10px] mt-1">PAID IN FULL</Badge>
+                  <p className="text-muted-foreground font-mono">Date: {currentTime.date || '09/11/2026'} · {currentTime.time || '12:00AM'}</p>
+                  <Badge className="bg-emerald-500 text-white text-[10px] mt-1">PAYMENT VERIFIED</Badge>
+                </div>
+              </div>
+
+              {/* Order Authorization & Provisioning Summary (Matching Step 6 1:1) */}
+              <div className="rounded-xl border bg-muted/30 p-4 space-y-2 text-xs font-mono">
+                <p className="text-[10px] font-sans font-bold uppercase tracking-wider text-muted-foreground pb-1 border-b border-border/60">
+                  Order Authorization &amp; Provisioning Summary
+                </p>
+                <div className="flex justify-between">
+                  <span className="text-muted-foreground">Order Identifier:</span>
+                  <span className="font-bold text-foreground">{confirmedOrder.orderId}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-muted-foreground">Transaction Reference:</span>
+                  <span className="font-bold text-primary">{confirmedOrder.trxId}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-muted-foreground">Purchased Package:</span>
+                  <span className="font-bold text-foreground">{confirmedOrder.packageName}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-muted-foreground">Order Classification:</span>
+                  <span className="font-semibold text-foreground">
+                    {confirmedOrder.purchaseType?.toUpperCase() === 'UPGRADE' ? 'Package Plan Upgrade' : 'Additional Secondary Drop'}
+                  </span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-muted-foreground">Total Paid:</span>
+                  <span className="font-black text-emerald-600 dark:text-emerald-400">
+                    ${confirmedOrder.totalPayable.toFixed(2)} USD
+                  </span>
+                </div>
+                <div className="flex justify-between items-center">
+                  <span className="text-muted-foreground">Provisioning Status:</span>
+                  <Badge className="bg-emerald-500 text-white text-[10px]">
+                    {confirmedOrder.orderStatus}
+                  </Badge>
+                </div>
+                <div className="flex justify-between pt-1 border-t border-border/50">
+                  <span className="text-muted-foreground">Expected Activation:</span>
+                  <span className="font-semibold text-foreground">{confirmedOrder.expectedActivationTime}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-muted-foreground">Purchase Timestamp:</span>
+                  <span className="font-semibold text-foreground">{currentTime.date || '09/11/2026'} · {currentTime.time || '12:00AM'}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-muted-foreground">Session Geolocation:</span>
+                  <span className="font-semibold text-foreground text-right">{purchaseLocation.city}, {purchaseLocation.postalCode}, {purchaseLocation.state}, {purchaseLocation.country}</span>
                 </div>
               </div>
 
@@ -1430,22 +1829,36 @@ function PurchaseContent() {
                   <thead className="bg-muted/50 border-b text-[11px] font-semibold text-muted-foreground">
                     <tr>
                       <th className="p-3">Description</th>
-                      <th className="p-3">Type</th>
+                      <th className="p-3">Classification</th>
                       <th className="p-3 text-right">Amount</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y font-mono">
-                    <tr>
-                      <td className="p-3 font-semibold text-foreground">
-                        NextLink {confirmedOrder.packageName} Optical Subscription
-                      </td>
-                      <td className="p-3 text-muted-foreground">
-                        {confirmedOrder.purchaseType}
-                      </td>
-                      <td className="p-3 text-right font-bold text-foreground">
-                        USD {confirmedOrder.totalPayable.toFixed(2)}
-                      </td>
-                    </tr>
+                    {Array.isArray(confirmedOrder.lines) && confirmedOrder.lines.length > 0 ? (
+                      confirmedOrder.lines.map((line, idx) => (
+                        <tr key={`inv-line-${idx}`}>
+                          <td className="p-3 font-semibold text-foreground">{line.label}</td>
+                          <td className="p-3 text-muted-foreground">
+                            {confirmedOrder.badge || 'Subscription Charge'}
+                          </td>
+                          <td className="p-3 text-right font-bold text-foreground">
+                            {line.formattedAmount || `$${Number(line.amount || 0).toFixed(2)}`}
+                          </td>
+                        </tr>
+                      ))
+                    ) : (
+                      <tr>
+                        <td className="p-3 font-semibold text-foreground">
+                          NextLink {confirmedOrder.packageLabel || confirmedOrder.packageName} Optical Subscription
+                        </td>
+                        <td className="p-3 text-muted-foreground">
+                          {confirmedOrder.badge || 'New Subscription'}
+                        </td>
+                        <td className="p-3 text-right font-bold text-foreground">
+                          ${confirmedOrder.totalPayable.toFixed(2)}
+                        </td>
+                      </tr>
+                    )}
                   </tbody>
                 </table>
               </div>
@@ -1456,8 +1869,8 @@ function PurchaseContent() {
                   <p className="text-[11px] font-mono text-muted-foreground">Trx Ref: {confirmedOrder.trxId}</p>
                 </div>
                 <div className="text-right">
-                  <span className="text-[11px] text-muted-foreground">Grand Total:</span>
-                  <p className="text-xl font-black text-foreground font-mono">USD {confirmedOrder.totalPayable.toFixed(2)}</p>
+                  <span className="text-[11px] text-muted-foreground">Total Paid:</span>
+                  <p className="text-xl font-black text-emerald-600 dark:text-emerald-400 font-mono">${confirmedOrder.totalPayable.toFixed(2)} USD</p>
                 </div>
               </div>
 

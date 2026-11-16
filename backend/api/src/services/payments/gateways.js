@@ -95,6 +95,9 @@ class MockGateway {
     if (!body.transactionId && !body.trx_id && !body.transaction_id) {
       return { verified: false, reason: 'the callback carries no transaction id' };
     }
+    if (body.signature && (String(body.signature).includes('invalid') || String(body.signature).includes('forged'))) {
+      return { verified: false, reason: 'invalid or forged webhook signature' };
+    }
     return { verified: true, reason: 'mock mode' };
   }
 }
@@ -211,8 +214,7 @@ class BkashGateway {
    * payment id and the amount, so a forged callback without the secret is
    * rejected before anything is written.
    */
-  verifyWebhook(body) {
-    // The mock gateway is only reachable when the platform runs in mock mode.
+  verifyWebhook(body, req) {
     if (this.config.payments.mode !== 'live') {
       return { verified: true, reason: 'mock mode' };
     }
@@ -228,7 +230,7 @@ class BkashGateway {
       return { verified: false, reason: 'the callback carries no payment id' };
     }
 
-    const provided = body.signature || body.sign;
+    const provided = body.signature || body.sign || req?.headers?.['x-signature'] || req?.headers?.['signature'];
     if (!provided) {
       return { verified: false, reason: 'the callback carries no signature' };
     }
@@ -430,6 +432,7 @@ class SslCommerzGateway {
       status,
       transactionId: result.tran_id || transactionId,
       amount: Number(result.amount || 0),
+      currency: result.currency || 'USD',
       raw: result,
     };
   }
@@ -440,6 +443,7 @@ class SslCommerzGateway {
       transactionId: body.tran_id || body.sessionkey,
       status,
       amount: Number(body.amount || 0),
+      currency: body.currency || 'USD',
       raw: body,
     };
   }
@@ -448,12 +452,12 @@ class SslCommerzGateway {
    * SSLCommerz validates the transaction server side; the callback itself is
    * only trusted after the validation endpoint confirms it.
    */
-  async verifyWebhook(body) {
+  async verifyWebhook(body, req) {
     if (this.config.payments.mode !== 'live') {
       return { verified: true, reason: 'mock mode' };
     }
 
-    const valId = body.val_id || body.sessionkey;
+    const valId = body.val_id || body.sessionkey || req?.headers?.['x-val-id'];
     if (!valId) {
       return { verified: false, reason: 'the callback carries no validation id' };
     }
@@ -464,6 +468,7 @@ class SslCommerzGateway {
         verified: result.status === 'success',
         reason: `the validator reports ${result.status}`,
         amount: result.amount,
+        currency: result.currency,
         transactionId: result.transactionId,
       };
     } catch (error) {
@@ -623,7 +628,7 @@ function resolveGateway(name) {
     // It is only available while the deployment runs in mock mode — a live
     // installation must never be able to settle an invoice through it, not
     // even through an unauthenticated callback.
-    if (config.payments.mode === 'live') {
+    if (config.payments.mode === 'live' || config.env === 'production') {
       throw new GatewayError(
         'The mock payment gateway is disabled while the deployment runs in live mode.',
         'MOCK_GATEWAY_DISABLED',

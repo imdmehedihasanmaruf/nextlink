@@ -30,6 +30,7 @@ const ticketRoutes = require('./routes/tickets.routes');
 const settingsRoutes = require('./routes/settings.routes');
 const customerRoutes = require('./routes/customer.routes');
 const adminFeatureRoutes = require('./routes/adminFeatures.routes');
+const notificationRoutes = require('./routes/notifications.routes');
 
 function createApp() {
   const app = express();
@@ -53,6 +54,22 @@ function createApp() {
   );
   app.use(express.json({ limit: '12mb' }));
   app.use(express.urlencoded({ extended: true }));
+
+  // Switch active PostgreSQL connection to isolated `nextlink_test_db` when requested in non-production
+  app.use((req, res, next) => {
+    const isProd =
+      config.env === 'production' ||
+      process.env.NODE_ENV === 'production' ||
+      String(req.headers['x-simulate-production'] || '').toLowerCase() === 'true';
+    const wantTestDb = !isProd && req.headers['x-use-test-db'] === 'nextlink_test_db';
+    return db.runWithTestDb(wantTestDb, () => {
+      if (!isProd) {
+        res.setHeader('X-Database-Target', db.getActiveDatabaseName());
+      }
+      next();
+    });
+  });
+
   // A general limiter protects every route. The routes that create a side
   // effect add their own, tighter limit on top of this one.
   app.use(globalLimiter);
@@ -63,7 +80,7 @@ function createApp() {
   /**
    * Health / readiness probe.
    */
-  app.get('/health', async (req, res) => {
+  const handleHealth = async (req, res) => {
     const database = await db.healthCheck();
     await queue.refreshPendingCount();
     res.status(database.ok ? 200 : 503).json({
@@ -78,9 +95,13 @@ function createApp() {
       smsMode: config.sms.mode,
       timestamp: new Date().toISOString(),
     });
-  });
+  };
+  app.get('/health', handleHealth);
+  app.get('/api/health', handleHealth);
+  app.get('/api/v1/health', handleHealth);
 
   app.use('/api/billing', billingRoutes);
+  app.use('/api/billing', portalRoutes);
   app.use('/api/portal', portalRoutes);
   app.use('/api/payments', paymentRoutes);
   app.use('/api/mikrotik', mikrotikRoutes);
@@ -92,7 +113,11 @@ function createApp() {
   app.use('/api/tickets', ticketRoutes);
   app.use('/api/settings', settingsRoutes);
   app.use('/api/customer', customerRoutes);
+  app.use('/api/packages', customerRoutes);
   app.use('/api/admin', adminFeatureRoutes);
+  app.use('/api/staff', adminFeatureRoutes);
+  app.use('/api', adminFeatureRoutes);
+  app.use('/api/notifications', notificationRoutes);
 
   app.use(notFound);
   app.use(errorHandler);

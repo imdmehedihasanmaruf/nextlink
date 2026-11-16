@@ -1,8 +1,9 @@
 'use client';
 
 import { useState, useEffect } from 'react';
+import Link from 'next/link';
 import { ColumnDef } from '@tanstack/react-table';
-import { Receipt, CheckCircle, Send, Download, AlertCircle, DollarSign, Filter, XCircle, Save, Trash2 } from 'lucide-react';
+import { Receipt, CheckCircle, Send, Download, AlertCircle, DollarSign, Filter, XCircle, Save, Trash2, Sliders } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { DataTable } from '@/components/DataTable';
 import { Button } from '@/components/ui/button';
@@ -67,6 +68,14 @@ export default function BillingPage() {
   };
 
   const filtered = invoices.filter(inv => {
+    const isCancel =
+      inv.status === 'cancelled' ||
+      inv.raw_data?.invoiceType === 'cancel' ||
+      inv.raw_data?.type === 'cancellation' ||
+      String(inv.id).toUpperCase().includes('CANCEL');
+
+    if (statusFilter === 'all') return true;
+    if (statusFilter === 'cancelled') return isCancel;
     if (statusFilter !== 'all' && inv.status !== statusFilter) return false;
     return true;
   });
@@ -92,9 +101,58 @@ export default function BillingPage() {
       header: 'Package',
     },
     {
+      id: 'planPrice',
+      header: 'Plan Price',
+      cell: ({ row }) => {
+        const inv = row.original;
+        const install = Number(inv.installationFee ?? inv.raw_data?.installationFee ?? 0);
+        const tax = Number(inv.taxFee ?? inv.raw_data?.taxFee ?? 0);
+        const late = Number(inv.lateFee ?? inv.raw_data?.lateFee ?? 0);
+        const carry = Number(inv.carriedOverAmount ?? inv.raw_data?.carriedOverAmount ?? 0);
+        const base = Number(
+          inv.raw_data?.packagePrice ??
+            inv.raw_data?.subscriptionAmount ??
+            Math.max(0, Number(inv.amount || 0) - install - tax - late - carry),
+        );
+        return <span className="font-mono text-xs">${base.toFixed(2)}</span>;
+      },
+    },
+    {
+      id: 'installationFee',
+      header: 'Installation Fee',
+      cell: ({ row }) => {
+        const install = Number(row.original.installationFee ?? row.original.raw_data?.installationFee ?? 0);
+        return <span className="font-mono text-xs text-blue-600">${install.toFixed(2)}</span>;
+      },
+    },
+    {
+      id: 'taxFee',
+      header: 'Tax Fee',
+      cell: ({ row }) => {
+        const tax = Number(row.original.taxFee ?? row.original.raw_data?.taxFee ?? 0);
+        return <span className="font-mono text-xs text-indigo-600">${tax.toFixed(2)}</span>;
+      },
+    },
+    {
+      id: 'lateFee',
+      header: 'Late Fee',
+      cell: ({ row }) => {
+        const late = Number(row.original.lateFee ?? row.original.raw_data?.lateFee ?? 0);
+        return <span className="font-mono text-xs text-rose-600">${late.toFixed(2)}</span>;
+      },
+    },
+    {
+      id: 'carriedOver',
+      header: 'Carried Over',
+      cell: ({ row }) => {
+        const carry = Number(row.original.carriedOverAmount ?? row.original.raw_data?.carriedOverAmount ?? 0);
+        return <span className="font-mono text-xs text-amber-600">${carry.toFixed(2)}</span>;
+      },
+    },
+    {
       accessorKey: 'amount',
-      header: 'Amount',
-      cell: ({ row }) => <span className="font-bold">${row.original.amount.toLocaleString()}</span>,
+      header: 'Total Amount',
+      cell: ({ row }) => <span className="font-bold font-mono">${Number(row.original.amount || 0).toFixed(2)}</span>,
     },
     {
       accessorKey: 'month',
@@ -109,6 +167,14 @@ export default function BillingPage() {
       accessorKey: 'status',
       header: 'Status',
       cell: ({ row }) => {
+        const isCancel =
+          row.original.status === 'cancelled' ||
+          row.original.raw_data?.invoiceType === 'cancel' ||
+          row.original.raw_data?.type === 'cancellation' ||
+          String(row.original.id).toUpperCase().includes('CANCEL');
+        if (isCancel) {
+          return <Badge className="bg-rose-500/15 text-rose-700 dark:text-rose-400 border-rose-500/30">Cancel Invoice</Badge>;
+        }
         const s = row.original.status;
         if (s === 'paid') return <Badge className="bg-emerald-500/10 text-emerald-600 border-emerald-500/30">Paid</Badge>;
         if (s === 'unpaid') return <Badge className="bg-amber-500/10 text-amber-600 border-amber-500/30">Unpaid</Badge>;
@@ -120,6 +186,32 @@ export default function BillingPage() {
       header: 'Actions',
       cell: ({ row }) => {
         const inv = row.original;
+        const isCancel =
+          inv.status === 'cancelled' ||
+          inv.raw_data?.invoiceType === 'cancel' ||
+          inv.raw_data?.type === 'cancellation' ||
+          String(inv.id).toUpperCase().includes('CANCEL');
+
+        if (isCancel) {
+          return (
+            <div className="flex items-center gap-1.5">
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={async () => {
+                  const opened = await openPdf(`/api/billing/invoices/${inv.id}/pdf`);
+                  if (!opened) toast.error('The invoice PDF could not be opened');
+                }}
+                className="h-8 px-2.5 text-xs font-semibold gap-1"
+                title="View PDF"
+              >
+                <Download className="h-3.5 w-3.5 text-primary" />
+                PDF
+              </Button>
+            </div>
+          );
+        }
+
         return (
           <div className="flex items-center gap-1.5">
             {inv.status !== 'paid' ? (
@@ -188,6 +280,12 @@ export default function BillingPage() {
           </p>
         </div>
         <div className="flex items-center gap-2">
+          <Link href="/payment-operations">
+            <Button variant="outline" className="gap-2 shadow-xs border-primary/20 hover:bg-primary/5 text-primary">
+              <Sliders className="h-4 w-4 text-primary" />
+              Payment Operations
+            </Button>
+          </Link>
           {invoices.length > 0 && (
             <Button
               variant="outline"
@@ -255,6 +353,7 @@ export default function BillingPage() {
                   <SelectItem value="paid">Paid</SelectItem>
                   <SelectItem value="unpaid">Unpaid</SelectItem>
                   <SelectItem value="overdue">Overdue</SelectItem>
+                  <SelectItem value="cancelled">Cancelled Invoices</SelectItem>
                 </SelectContent>
               </Select>
             </div>

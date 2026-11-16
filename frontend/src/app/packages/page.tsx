@@ -27,7 +27,9 @@ import {
   ShieldAlert,
   Network,
   Radio,
-  Lock
+  Lock,
+  RefreshCw,
+  CreditCard
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
@@ -35,18 +37,132 @@ import { Badge } from '@/components/ui/badge'
 import { useTranslation } from '@/store/settingsStore'
 import { useContentStore, PackageItem, PackageCategory } from '@/store/contentStore'
 import { useAuthStore } from '@/store/authStore'
+import { fetchLiveTelemetry, fetchMySummary, PortalSummary } from '@/lib/portalApi'
 
 export default function PackagesPage() {
   const router = useRouter()
   const { t, language } = useTranslation()
-  const { isAuthenticated } = useAuthStore()
+  const { isAuthenticated, user, updateUser } = useAuthStore()
   const { packages, packagesSection, fetchContent } = useContentStore()
 
   const [activeCategory, setActiveCategory] = useState<'All' | PackageCategory>('All')
+  const [telemetrySubscriber, setTelemetrySubscriber] = useState<any>(null)
+  const [portalSummary, setPortalSummary] = useState<PortalSummary | null>(null)
+  const [loadingSubscription, setLoadingSubscription] = useState<boolean>(true)
+  const [selectedCardId, setSelectedCardId] = useState<string | null>(null)
+  const [userHasSelectedManually, setUserHasSelectedManually] = useState<boolean>(false)
 
   useEffect(() => {
     fetchContent()
   }, [fetchContent])
+
+  // Real-time synchronization of authoritative subscriber active package & cancellation status
+  useEffect(() => {
+    if (!isAuthenticated) {
+      setLoadingSubscription(false)
+      return
+    }
+
+    let isMounted = true
+
+    const syncTelemetry = async () => {
+      try {
+        const [res, summaryRes] = await Promise.all([
+          fetchLiveTelemetry(),
+          fetchMySummary(),
+        ])
+        if (!isMounted) return
+        if (summaryRes.success && summaryRes.summary) {
+          setPortalSummary(summaryRes.summary)
+        }
+        if (res.success && res.telemetry?.subscriber) {
+          const sub = res.telemetry.subscriber
+          setTelemetrySubscriber(sub)
+
+          // Sync into authStore if different so all navbar/profile displays stay fresh
+          const updates: Record<string, any> = {}
+          if (sub.packageId && sub.packageId !== user?.packageId) {
+            updates.packageId = sub.packageId
+            updates.packageName = sub.packageName
+            updates.package = sub.packageName
+          }
+          if (sub.status && sub.status !== user?.status) {
+            updates.status = sub.status
+          }
+          if (Object.keys(updates).length > 0) {
+            updateUser(updates)
+          }
+        }
+      } catch (err) {
+        console.warn('Real-time subscription sync error:', err)
+      } finally {
+        if (isMounted) {
+          setLoadingSubscription(false)
+        }
+      }
+    }
+
+    syncTelemetry()
+
+    // 3.5s real-time polling so admin upgrades or user cancellations reflect immediately without hard reload
+    const pollInterval = setInterval(syncTelemetry, 3500)
+
+    // Immediate sync when browser window/tab becomes active
+    const handleVisibility = () => {
+      if (document.visibilityState === 'visible') {
+        syncTelemetry()
+      }
+    }
+    window.addEventListener('focus', handleVisibility)
+    document.addEventListener('visibilitychange', handleVisibility)
+
+    return () => {
+      isMounted = false
+      clearInterval(pollInterval)
+      window.removeEventListener('focus', handleVisibility)
+      document.removeEventListener('visibilitychange', handleVisibility)
+    }
+  }, [isAuthenticated, user?.packageId, user?.status, updateUser])
+
+  // Determine authoritative active plan status
+  const isCancelled = Boolean(
+    telemetrySubscriber?.status === 'cancelled' ||
+    user?.status === 'cancelled' ||
+    user?.subscriptionCancelledAt
+  )
+
+  const isActiveSubscriber = Boolean(
+    isAuthenticated &&
+    !isCancelled &&
+    (
+      telemetrySubscriber?.status === 'active' ||
+      telemetrySubscriber?.status === 'suspended' ||
+      user?.status === 'active' ||
+      user?.status === 'suspended'
+    )
+  )
+
+  const activePackageId = isActiveSubscriber
+    ? (telemetrySubscriber?.packageId || user?.packageId || null)
+    : null
+
+  // Locate the subscriber's current package details by authoritative packageId (never by array index or name)
+  const currentPackage = useMemo(() => {
+    if (!activePackageId || !packages || packages.length === 0) return null
+    return packages.find(
+      (p) => (p.id || '').trim().toLowerCase() === activePackageId.trim().toLowerCase()
+    ) || null
+  }, [activePackageId, packages])
+
+  const currentSpeed = currentPackage ? currentPackage.speed : (telemetrySubscriber?.speedMbps || 0)
+  const currentPrice = currentPackage ? currentPackage.price : (telemetrySubscriber?.price || 0)
+
+  // Default selection to the active package once resolved, unless the visitor already clicked another card
+  useEffect(() => {
+    if (!userHasSelectedManually && activePackageId) {
+      setSelectedCardId(activePackageId)
+    }
+  }, [activePackageId, userHasSelectedManually])
 
   const handleSelectPackage = (pkg: PackageItem) => {
     if (!isAuthenticated) {
@@ -109,15 +225,17 @@ export default function PackagesPage() {
             className="px-4 py-1.5 text-xs font-semibold text-primary border-primary/30 bg-primary/5 rounded-full inline-flex items-center gap-1.5"
           >
             <Sparkles className="h-3.5 w-3.5" />
-            <span>NextLink – Global Internet Plans</span>
+            <span>{packagesSection?.badgeEn || 'NextLink – Global Internet Plans'}</span>
           </Badge>
 
           <h1 className="text-3xl sm:text-4xl md:text-5xl lg:text-6xl font-black tracking-tight text-foreground">
-            Ultra-Fast Symmetrical <span className="text-primary">Optical Fiber</span>
+            {packagesSection?.titleEn || (
+              <>Ultra-Fast Symmetrical <span className="text-primary">Optical Fiber</span></>
+            )}
           </h1>
 
           <p className="text-muted-foreground text-sm sm:text-base md:text-lg max-w-3xl mx-auto leading-relaxed">
-            International-standard high-speed plans featuring 100% symmetrical upload/download speeds, ultra-low ping for competitive esports, bufferless 4K/8K streaming, and business-grade reliability.
+            {packagesSection?.subtitleEn || 'International-standard high-speed plans featuring 100% symmetrical upload/download speeds, ultra-low ping for competitive esports, bufferless 4K/8K streaming, and business-grade reliability.'}
           </p>
 
           <div className="inline-block p-2 rounded-xl bg-muted/60 border border-border/80 text-xs text-muted-foreground max-w-2xl mx-auto">
@@ -263,37 +381,84 @@ export default function PackagesPage() {
             const isPopular = !!pkg.popular
             const category = getPackageCategory(pkg)
 
+            // Strict ID matching (never match by package name or array index)
+            const isCurrentPlan = Boolean(
+              activePackageId &&
+              (pkg.id || '').trim().toLowerCase() === activePackageId.trim().toLowerCase()
+            )
+
+            // Selection state: defaults to current plan on load, or the card user explicitly clicked
+            const isSelected = selectedCardId
+              ? (pkg.id || '').trim().toLowerCase() === selectedCardId.trim().toLowerCase()
+              : isCurrentPlan
+
+            // Tier comparison relative to subscriber's current plan
+            const isHigherTier = Boolean(
+              activePackageId &&
+              !isCurrentPlan &&
+              (pkg.speed > currentSpeed || (pkg.speed === currentSpeed && pkg.price > currentPrice))
+            )
+            const isLowerTier = Boolean(
+              activePackageId &&
+              !isCurrentPlan &&
+              (pkg.speed < currentSpeed || (pkg.speed === currentSpeed && pkg.price < currentPrice))
+            )
+
             return (
               <Card 
                 key={pkg.id} 
-                className={`relative flex flex-col justify-between border-2 transition-all duration-300 hover:shadow-xl hover:-translate-y-1.5 ${
-                  isPopular 
-                    ? 'border-primary ring-2 ring-primary/20 bg-primary/[0.02]' 
+                onClick={() => {
+                  setSelectedCardId(pkg.id)
+                  setUserHasSelectedManually(true)
+                }}
+                aria-current={isCurrentPlan ? 'true' : undefined}
+                className={`relative flex flex-col justify-between border-2 transition-all duration-300 hover:shadow-xl hover:-translate-y-1.5 cursor-pointer ${
+                  isCurrentPlan
+                    ? 'border-emerald-500 ring-2 ring-emerald-500/25 bg-emerald-500/[0.03] dark:bg-emerald-950/20 shadow-md'
+                    : isSelected
+                    ? 'border-primary ring-2 ring-primary/25 bg-primary/[0.02] shadow-md'
+                    : isPopular 
+                    ? 'border-primary ring-1 ring-primary/20 bg-primary/[0.01]' 
                     : isMultiGigOrBiz
                     ? 'border-purple-500/40 bg-purple-500/[0.01]'
                     : 'border-border hover:border-primary/50'
                 }`}
               >
-                {/* Popular / Feature Badge */}
-                {isPopular && (
+                {/* 1. "Your Current Plan" Badge or Popular / Feature Badge */}
+                {isCurrentPlan ? (
+                  <div className="absolute -top-3 left-1/2 -translate-x-1/2 z-20">
+                    <Badge 
+                      data-testid="current-plan-badge"
+                      className="bg-emerald-600 hover:bg-emerald-600 text-white dark:bg-emerald-500 font-bold px-3 py-1 text-xs shadow-md flex items-center gap-1.5 border border-emerald-400"
+                    >
+                      <CheckCircle2 className="h-3.5 w-3.5" />
+                      <span>Your Current Plan</span>
+                    </Badge>
+                  </div>
+                ) : isPopular ? (
                   <div className="absolute -top-3 left-1/2 -translate-x-1/2 z-10">
                     <Badge className="bg-primary text-primary-foreground font-bold px-3 py-0.5 text-[11px] shadow">
                       MOST POPULAR
                     </Badge>
                   </div>
-                )}
-
-                {pkg.badge && !isPopular && (
+                ) : pkg.badge ? (
                   <div className="absolute -top-3 left-1/2 -translate-x-1/2 z-10">
                     <Badge variant="secondary" className="font-bold px-2.5 py-0.5 text-[10px] border shadow-xs">
                       {pkg.badge}
                     </Badge>
                   </div>
-                )}
+                ) : null}
 
                 <CardHeader className="pt-6 pb-3">
                   <div className="flex items-center justify-between text-xs mb-1">
-                    <span className="font-mono font-semibold text-muted-foreground">{pkg.id}</span>
+                    <div className="flex items-center gap-1.5">
+                      <span className="font-mono font-semibold text-muted-foreground">{pkg.id}</span>
+                      {isSelected && !isCurrentPlan && (
+                        <Badge variant="outline" className="text-[9px] font-bold text-primary border-primary/40 px-1.5 py-0">
+                          Selected
+                        </Badge>
+                      )}
+                    </div>
                     <Badge variant="outline" className="text-[10px] font-medium border-border">
                       {category}
                     </Badge>
@@ -359,28 +524,91 @@ export default function PackagesPage() {
                     </ul>
                   </div>
 
-                  {/* Select Button */}
+                  {/* Select / Action Button */}
                   <div className="pt-3 border-t space-y-1.5">
-                    <Button 
-                      onClick={() => handleSelectPackage(pkg)}
-                      className="w-full font-bold shadow-sm h-10 text-xs gap-1.5" 
-                      variant={isPopular ? 'default' : 'outline'}
-                    >
-                      {isAuthenticated ? (
-                        <>
-                          <span>Choose {pkg.name}</span>
-                          <ArrowRight size={14} />
-                        </>
+                    {loadingSubscription ? (
+                      <Button disabled className="w-full h-10 text-xs font-semibold opacity-70">
+                        <RefreshCw className="h-3.5 w-3.5 mr-1.5 animate-spin" />
+                        <span>Verifying plan...</span>
+                      </Button>
+                    ) : isCurrentPlan ? (
+                      portalSummary?.isCurrentPeriodPaid ? (
+                        <Button 
+                          disabled
+                          aria-disabled="true"
+                          data-testid="current-plan-paid-btn"
+                          className="w-full font-bold shadow-sm h-10 text-xs gap-1.5 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300 border border-emerald-500/30 cursor-not-allowed hover:bg-emerald-500/10"
+                        >
+                          <CheckCircle2 className="h-4 w-4 text-emerald-500" />
+                          <span>Paid – Next due {portalSummary.nextDueDate || 'next cycle'}</span>
+                        </Button>
                       ) : (
-                        <>
+                        <Button 
+                          onClick={(e) => {
+                            e.stopPropagation()
+                            router.push(`/dashboard/purchase?package=${encodeURIComponent(pkg.id)}&type=RENEWAL`)
+                          }}
+                          data-testid="pay-monthly-bill-btn"
+                          className="w-full font-bold shadow-sm h-10 text-xs gap-1.5 bg-emerald-600 hover:bg-emerald-700 text-white cursor-pointer"
+                        >
+                          <CreditCard size={14} />
+                          <span>Pay Monthly Bill</span>
+                          <ArrowRight size={14} />
+                        </Button>
+                      )
+                    ) : isAuthenticated && activePackageId ? (
+                      <Button 
+                        onClick={(e) => {
+                          e.stopPropagation()
+                          handleSelectPackage(pkg)
+                        }}
+                        className="w-full font-bold shadow-sm h-10 text-xs gap-1.5" 
+                        variant={isHigherTier ? 'default' : 'outline'}
+                      >
+                        <span>
+                          {isHigherTier ? 'Upgrade' : isLowerTier ? 'Downgrade' : 'Switch Plan'}
+                        </span>
+                        <ArrowRight size={14} />
+                      </Button>
+                    ) : isAuthenticated ? (
+                      <Button 
+                        onClick={(e) => {
+                          e.stopPropagation()
+                          handleSelectPackage(pkg)
+                        }}
+                        className="w-full font-bold shadow-sm h-10 text-xs gap-1.5" 
+                        variant={isPopular ? 'default' : 'outline'}
+                      >
+                        <span>Choose {pkg.name}</span>
+                        <ArrowRight size={14} />
+                      </Button>
+                    ) : (
+                      <div className="space-y-1.5">
+                        <Button 
+                          onClick={(e) => {
+                            e.stopPropagation()
+                            handleSelectPackage(pkg)
+                          }}
+                          className="w-full font-bold shadow-sm h-10 text-xs gap-1.5" 
+                          variant={isPopular ? 'default' : 'outline'}
+                        >
                           <Lock className="h-3.5 w-3.5" />
                           <span>Sign In to Purchase</span>
-                        </>
-                      )}
-                    </Button>
-                    {!isAuthenticated && (
-                      <p className="text-[10px] text-center text-muted-foreground font-medium">
-                        Existing Subscribers Only
+                        </Button>
+                        <Link
+                          href={`/apply?package=${pkg.id}`}
+                          onClick={(e) => e.stopPropagation()}
+                          className="block text-center text-[11px] font-semibold text-primary hover:underline py-0.5"
+                        >
+                          New to NextLink? Apply with this plan →
+                        </Link>
+                      </div>
+                    )}
+                    {isCurrentPlan && (
+                      <p className={`text-[10px] text-center font-semibold ${portalSummary?.isCurrentPeriodPaid ? 'text-emerald-600 dark:text-emerald-400' : 'text-amber-600 dark:text-amber-400'}`}>
+                        {portalSummary?.isCurrentPeriodPaid
+                          ? `Active · Paid for ${portalSummary.paidMonthYear || 'current cycle'}`
+                          : 'Active · Monthly bill renewal due'}
                       </p>
                     )}
                   </div>

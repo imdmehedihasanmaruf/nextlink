@@ -2,6 +2,7 @@
 
 import React, { useState, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
+import Link from 'next/link'
 import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { z } from 'zod'
@@ -42,7 +43,7 @@ const ontOptions = [
 
 export default function ApplyPage() {
   const router = useRouter()
-  const { isAuthenticated } = useAuthStore()
+  const { user, isAuthenticated } = useAuthStore()
   const { t } = useTranslation()
   const { autoSave } = useSettingsStore()
   const { packages: livePackages, fetchContent } = useContentStore()
@@ -65,6 +66,16 @@ export default function ApplyPage() {
   } = useForm<FormData>({
     resolver: zodResolver(schema),
   })
+
+  // Pre-fill fields if user is already authenticated
+  useEffect(() => {
+    if (user) {
+      if (user.name) setValue('fullName', user.name)
+      if (user.phone) setValue('phone', user.phone)
+      if (user.email) setValue('email', user.email)
+      if (user.address) setValue('address', user.address)
+    }
+  }, [user, setValue])
 
   const watchedValues = watch()
   const watchedJson = JSON.stringify(watchedValues)
@@ -109,21 +120,10 @@ export default function ApplyPage() {
   }, [watchedJson, autoSave])
 
   const handleFormSubmit = (e: React.FormEvent) => {
-    // If user is not authenticated, redirect to login page before submitting order
-    if (!isAuthenticated) {
-      e.preventDefault()
-      router.push('/login?redirect=apply')
-      return
-    }
     handleSubmit(onSubmit)(e)
   }
 
   const onSubmit = async (data: FormData) => {
-    if (!isAuthenticated) {
-      router.push('/login?redirect=apply')
-      return
-    }
-
     setSubmitError(null)
 
     const selectedPackage = packageList.find((p) => p.value === data.package)
@@ -159,19 +159,18 @@ export default function ApplyPage() {
       return
     }
 
-    // Only PDF/JPEG/PNG, at most 5 MB — the data URL is sent to the server
-    // and stored on disk, so an unbounded file would exhaust memory and the
-    // payload limit.
-    const allowedTypes = ['application/pdf', 'image/jpeg', 'image/png']
-    const maxBytes = 5 * 1024 * 1024
+    // Only PDF/JPEG/PNG/WEBP, at most 10 MB — the data URL is sent to the server
+    // and stored on disk.
+    const allowedTypes = ['application/pdf', 'image/jpeg', 'image/png', 'image/webp']
+    const maxBytes = 10 * 1024 * 1024
 
     if (!allowedTypes.includes(file.type)) {
-      setSubmitError('The identity document must be a PDF, JPEG or PNG file.')
+      setSubmitError('The identity document must be a PDF, JPEG, PNG, or WEBP file.')
       e.target.value = ''
       return
     }
     if (file.size > maxBytes) {
-      setSubmitError('The identity document must be smaller than 5 MB.')
+      setSubmitError('The identity document must be smaller than 10 MB.')
       e.target.value = ''
       return
     }
@@ -228,6 +227,11 @@ export default function ApplyPage() {
           </div>
           <h1 className="text-3xl font-extrabold mb-2 tracking-tight">Order Global Optical Fiber</h1>
           <p className="text-muted-foreground">Direct Tier-1 symmetrical gigabit connectivity delivered to your premises.</p>
+          <div className="mt-2 flex items-center justify-center gap-3 text-xs text-muted-foreground">
+            <Link href="/login" className="hover:text-primary underline">Existing Subscriber? Sign In</Link>
+            <span>•</span>
+            <Link href="/register" className="hover:text-primary underline">Create Portal Account</Link>
+          </div>
           {autoSave && (
             <div className="mt-3 inline-flex items-center gap-1.5 text-xs text-emerald-600 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-900/20 rounded-full px-3 py-1 font-semibold">
               <div className="h-1.5 w-1.5 rounded-full bg-emerald-500 animate-pulse" />

@@ -10,13 +10,19 @@ import toast from 'react-hot-toast';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
-import { apiGet, apiPost, apiHealth, openPdf, getApiToken } from '@/lib/apiClient';
+import { apiGet, apiPost, apiPut, apiHealth, openPdf, getApiToken } from '@/lib/apiClient';
 import { formatDateTime } from '@/lib/utils';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
 
 interface Invoice {
   id: string;
   subscriber_id: string;
   amount: string | number;
+  installation_fee?: string | number;
+  tax_fee?: string | number;
+  late_fee?: string | number;
+  carried_over_amount?: string | number;
   status: string;
   due_date: string;
   raw_data: any;
@@ -94,6 +100,21 @@ export default function BillingEnginePage() {
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState<string | null>(null);
   const [hasToken, setHasToken] = useState(false);
+  const [feeConfig, setFeeConfig] = useState<{
+    installationFee: number;
+    taxFee: number;
+    late_fee_type: 'percent' | 'flat';
+    late_fee_value: number;
+    lateFeePercent: number;
+    dueDay: number;
+  }>({
+    installationFee: 8.99,
+    taxFee: 0.99,
+    late_fee_type: 'percent',
+    late_fee_value: 10,
+    lateFeePercent: 10,
+    dueDay: 10,
+  });
 
   const loadAll = useCallback(async () => {
     setLoading(true);
@@ -115,12 +136,13 @@ export default function BillingEnginePage() {
     }
     setHasToken(true);
 
-    const [ov, inv, txn, mik, sms] = await Promise.all([
+    const [ov, inv, txn, mik, sms, fees] = await Promise.all([
       apiGet<Overview>('/api/billing/overview'),
       apiGet<{ invoices: Invoice[] }>('/api/billing/invoices?limit=25'),
       apiGet<{ transactions: Transaction[] }>('/api/payments/transactions?limit=25'),
       apiGet<{ secrets: MikrotikSecret[]; sessions: MikrotikSession[] }>('/api/mikrotik/secrets'),
       apiGet<{ messages: SmsMessage[] }>('/api/sms/messages?limit=25'),
+      apiGet<any>('/api/billing/settings'),
     ]);
 
     if (ov.success) setOverview(ov as any);
@@ -131,12 +153,45 @@ export default function BillingEnginePage() {
       setSessions(mik.sessions || []);
     }
     if (sms.success) setSmsMessages(sms.messages || []);
+    if (fees.success && fees.settings) {
+      const lfVal = Number(
+        fees.settings.late_fee_value ??
+          fees.settings.lateFeeValue ??
+          fees.settings.lateFeePercent ??
+          10,
+      );
+      const lfType =
+        String(fees.settings.late_fee_type || fees.settings.lateFeeType || 'percent').toLowerCase() === 'flat'
+          ? 'flat'
+          : 'percent';
+      setFeeConfig({
+        installationFee: Number(fees.settings.installationFee ?? 8.99),
+        taxFee: Number(fees.settings.taxFee ?? 0.99),
+        late_fee_type: lfType,
+        late_fee_value: lfVal,
+        lateFeePercent: lfVal,
+        dueDay: Number(fees.settings.dueDay ?? 10),
+      });
+    }
 
     const status = await apiGet<any>('/api/mikrotik/status');
     if (status.success) setRouterInfo(status);
 
     setLoading(false);
   }, []);
+
+  const saveFeeConfig = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setBusy('fees');
+    const res = await apiPut('/api/billing/settings', feeConfig);
+    setBusy(null);
+    if (res.success) {
+      toast.success('Billing Engine fee rules saved to PostgreSQL');
+      loadAll();
+    } else {
+      toast.error(res.error || 'Could not save fee configuration');
+    }
+  };
 
   useEffect(() => {
     loadAll();
@@ -330,6 +385,82 @@ export default function BillingEnginePage() {
         </Card>
       </div>
 
+      {/* Configurable Fee Rules (Requirement 4e) */}
+      <Card>
+        <CardHeader className="pb-3">
+          <CardTitle>Configurable Billing Rules &amp; Fees</CardTitle>
+          <CardDescription>
+            First-month installation &amp; tax fees (no proration on any signup day 1st–31st) and configurable overdue late fee (percent or flat).
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <form onSubmit={saveFeeConfig} className="grid grid-cols-1 sm:grid-cols-6 gap-4 items-end">
+            <div className="space-y-1">
+              <Label className="text-xs">Installation Fee ($)</Label>
+              <Input
+                type="number"
+                step="0.01"
+                value={feeConfig.installationFee}
+                onChange={(e) => setFeeConfig({ ...feeConfig, installationFee: Number(e.target.value) })}
+              />
+            </div>
+            <div className="space-y-1">
+              <Label className="text-xs">Tax Fee ($)</Label>
+              <Input
+                type="number"
+                step="0.01"
+                value={feeConfig.taxFee}
+                onChange={(e) => setFeeConfig({ ...feeConfig, taxFee: Number(e.target.value) })}
+              />
+            </div>
+            <div className="space-y-1">
+              <Label className="text-xs">Late Fee Type</Label>
+              <select
+                value={feeConfig.late_fee_type}
+                onChange={(e) =>
+                  setFeeConfig({
+                    ...feeConfig,
+                    late_fee_type: e.target.value === 'flat' ? 'flat' : 'percent',
+                  })
+                }
+                className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm"
+              >
+                <option value="percent">Percent (%)</option>
+                <option value="flat">Flat ($)</option>
+              </select>
+            </div>
+            <div className="space-y-1">
+              <Label className="text-xs">
+                Late Fee Value ({feeConfig.late_fee_type === 'flat' ? '$' : '%'})
+              </Label>
+              <Input
+                type="number"
+                step="0.1"
+                value={feeConfig.late_fee_value}
+                onChange={(e) => {
+                  const v = Number(e.target.value);
+                  setFeeConfig({ ...feeConfig, late_fee_value: v, lateFeePercent: v });
+                }}
+              />
+            </div>
+            <div className="space-y-1">
+              <Label className="text-xs">Invoice Due Day (UTC)</Label>
+              <Input
+                type="number"
+                min={1}
+                max={28}
+                value={feeConfig.dueDay}
+                onChange={(e) => setFeeConfig({ ...feeConfig, dueDay: Number(e.target.value) })}
+              />
+            </div>
+            <Button type="submit" disabled={busy === 'fees'} className="gap-2">
+              {busy === 'fees' ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
+              Save Fee Rules
+            </Button>
+          </form>
+        </CardContent>
+      </Card>
+
       {/* Automation actions */}
       <Card>
         <CardHeader className="pb-3">
@@ -377,21 +508,41 @@ export default function BillingEnginePage() {
                   <tr className="border-b text-left text-xs uppercase text-muted-foreground">
                     <th className="p-2 font-medium">Invoice</th>
                     <th className="p-2 font-medium">Subscriber</th>
-                    <th className="p-2 font-medium">Amount</th>
+                    <th className="p-2 font-medium text-right">Plan Price</th>
+                    <th className="p-2 font-medium text-right">Installation Fee</th>
+                    <th className="p-2 font-medium text-right">Tax Fee</th>
+                    <th className="p-2 font-medium text-right">Late Fee</th>
+                    <th className="p-2 font-medium text-right">Carried Over</th>
+                    <th className="p-2 font-medium text-right">Total Amount</th>
                     <th className="p-2 font-medium">Due</th>
                     <th className="p-2 font-medium">Status</th>
                     <th className="p-2 font-medium text-right">PDF</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {invoices.map((invoice) => (
+                  {invoices.map((invoice) => {
+                    const install = Number(invoice.installation_fee ?? invoice.raw_data?.installationFee ?? 0);
+                    const tax = Number(invoice.tax_fee ?? invoice.raw_data?.taxFee ?? 0);
+                    const late = Number(invoice.late_fee ?? invoice.raw_data?.lateFee ?? 0);
+                    const carry = Number(invoice.carried_over_amount ?? invoice.raw_data?.carriedOverAmount ?? 0);
+                    const base = Number(
+                      invoice.raw_data?.packagePrice ??
+                        invoice.raw_data?.subscriptionAmount ??
+                        Math.max(0, Number(invoice.amount || 0) - install - tax - late - carry),
+                    );
+                    return (
                     <tr key={invoice.id} className="border-b last:border-0 hover:bg-muted/40">
                       <td className="p-2 font-mono text-xs">{invoice.id}</td>
                       <td className="p-2">
                         <p className="font-medium">{invoice.subscriber_name || invoice.raw_data?.subscriberName || invoice.subscriber_id}</p>
                         <p className="text-xs text-muted-foreground">{invoice.subscriber_phone || invoice.raw_data?.subscriberPhone || ''}</p>
                       </td>
-                      <td className="p-2 font-bold">{money(invoice.amount)}</td>
+                      <td className="p-2 text-right font-mono text-xs">${base.toFixed(2)}</td>
+                      <td className="p-2 text-right font-mono text-xs text-blue-600">${install.toFixed(2)}</td>
+                      <td className="p-2 text-right font-mono text-xs text-indigo-600">${tax.toFixed(2)}</td>
+                      <td className="p-2 text-right font-mono text-xs text-rose-600">${late.toFixed(2)}</td>
+                      <td className="p-2 text-right font-mono text-xs text-amber-600">${carry.toFixed(2)}</td>
+                      <td className="p-2 text-right font-mono font-bold">${money(invoice.amount)}</td>
                       <td className="p-2 text-xs">{invoice.due_date}</td>
                       <td className="p-2">
                         {invoice.status === 'paid' ? (
@@ -412,7 +563,8 @@ export default function BillingEnginePage() {
                         </Button>
                       </td>
                     </tr>
-                  ))}
+                  );
+                  })}
                 </tbody>
               </table>
             </div>

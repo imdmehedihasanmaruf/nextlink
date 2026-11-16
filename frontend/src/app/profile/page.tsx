@@ -34,6 +34,8 @@ export default function ProfilePage() {
   const { user, isAuthenticated, hasHydrated, updateUser, logout } = useAuthStore()
   const { t } = useTranslation()
 
+  const [firstName, setFirstName] = useState('')
+  const [lastName, setLastName] = useState('')
   const [name, setName] = useState('')
   const [email, setEmail] = useState('')
   const [phone, setPhone] = useState('')
@@ -73,6 +75,9 @@ export default function ProfilePage() {
 
   useEffect(() => {
     if (user) {
+      const parts = String(user.name || '').trim().split(/\s+/)
+      setFirstName(user.firstName || parts[0] || '')
+      setLastName(user.lastName || parts.slice(1).join(' ') || '')
       setName(user.name || '')
       setEmail(user.email || '')
       setPhone(user.phone || '')
@@ -110,6 +115,13 @@ export default function ProfilePage() {
   const handleSaveProfile = async (e: React.FormEvent) => {
     e.preventDefault()
     setSaveError(null)
+    const fName = firstName.trim()
+    const lName = lastName.trim()
+    if (!fName || !lName) {
+      setSaveError('First Name and Last Name are required.')
+      return
+    }
+    const fullName = `${fName} ${lName}`.trim()
     setSaving(true)
     try {
       // The server verifies the session and writes the account — one customer
@@ -117,7 +129,7 @@ export default function ProfilePage() {
       const response = await fetch('/api/customer/profile', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', ...subscriberAuthHeader() },
-        body: JSON.stringify({ name, email, phone, address }),
+        body: JSON.stringify({ firstName: fName, lastName: lName, name: fullName, email, phone, address }),
       })
       const payload = await response.json()
 
@@ -126,8 +138,9 @@ export default function ProfilePage() {
         return
       }
 
-      // The local session is updated to match what the server stored.
-      updateUser({ name, email, phone, address })
+      // Immediately update the local auth store so the header greeting ("Hi, <FirstName>") updates immediately!
+      setName(fullName)
+      updateUser({ firstName: fName, lastName: lName, name: fullName, email, phone, address })
       setSavedSuccess(true)
       setTimeout(() => setSavedSuccess(false), 3000)
     } catch {
@@ -297,13 +310,29 @@ export default function ProfilePage() {
             <CardDescription>Update your contact info and service records</CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
               <div className="space-y-1.5">
-                <Label htmlFor="name">{t('fullName')}</Label>
-                <Input 
-                  id="name" 
-                  value={name} 
-                  onChange={(e) => setName(e.target.value)} 
+                <Label htmlFor="firstName">First Name *</Label>
+                <Input
+                  id="firstName"
+                  value={firstName}
+                  onChange={(e) => {
+                    setFirstName(e.target.value)
+                    setName(`${e.target.value.trim()} ${lastName.trim()}`.trim())
+                  }}
+                  required
+                />
+              </div>
+
+              <div className="space-y-1.5">
+                <Label htmlFor="lastName">Last Name *</Label>
+                <Input
+                  id="lastName"
+                  value={lastName}
+                  onChange={(e) => {
+                    setLastName(e.target.value)
+                    setName(`${firstName.trim()} ${e.target.value.trim()}`.trim())
+                  }}
                   required
                 />
               </div>

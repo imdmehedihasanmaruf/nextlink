@@ -30,7 +30,7 @@ const SLA_HOURS = {
 /**
  * Create a ticket from the subscriber portal.
  */
-async function createTicket({ subscriberId, subscriberName, subscriberPhone, subscriberZone, subject, category, priority, description }) {
+async function createTicket({ subscriberId, subscriberName, subscriberPhone, subscriberZone, subject, category, priority, description, attachment = null }) {
   const id = `TICK-${utils.randomToken(5).toUpperCase()}`;
   const now = new Date();
   const slaHours = SLA_HOURS[priority] ?? SLA_HOURS.medium;
@@ -42,6 +42,7 @@ async function createTicket({ subscriberId, subscriberName, subscriberPhone, sub
     category,
     priority,
     description,
+    attachment,
     status: 'open',
     slaHours,
     createdAt: utils.nowIso(),
@@ -92,6 +93,29 @@ async function createTicket({ subscriberId, subscriberName, subscriberPhone, sub
   }
 
   // Notify the subscriber and the helpdesk.
+  try {
+    const notifications = require('../notifications');
+    await notifications.notifyAdmins({
+      type: 'new_ticket',
+      title: `New Support Ticket #${id}`,
+      message: `${subscriberName || subscriberId || 'Subscriber'} opened a ${priority} ticket: "${subject}"`,
+      link: '/tickets',
+      roleTarget: 'tickets',
+      meta: { ticketId: id, subscriberId, priority, category },
+    });
+    if (technician && subscriberId) {
+      await notifications.notifySubscriber(subscriberId, {
+        type: 'technician_assigned',
+        title: `Technician Assigned (#${id})`,
+        message: `Technician ${technician.name} has been assigned to your support ticket "${subject}".`,
+        link: '/dashboard/tickets',
+        meta: { ticketId: id, technicianId: technician.id, technicianName: technician.name },
+      });
+    }
+  } catch (notifErr) {
+    logger.warn('ticket creation notification failed', { error: notifErr.message });
+  }
+
   if (subscriberPhone) {
     await sms.sendTemplate(
       'ticket_update',
@@ -284,6 +308,21 @@ async function updateStatus(ticketId, status, actor = {}) {
     );
   }
 
+  try {
+    const notifications = require('../notifications');
+    if (subscriberId) {
+      await notifications.notifySubscriber(subscriberId, {
+        type: 'ticket_status_changed',
+        title: `Ticket #${ticketId} Status: ${normalized.toUpperCase()}`,
+        message: `Your support ticket "${ticket.title}" status changed to ${normalized}.`,
+        link: '/tickets',
+        meta: { ticketId, status: normalized },
+      });
+    }
+  } catch (notifErr) {
+    logger.warn('ticket status notification failed', { error: notifErr.message });
+  }
+
   return getTicket(ticketId);
 }
 
@@ -310,6 +349,23 @@ async function assignTicket(ticketId, technicianId) {
     );
   });
 
+  const details = await db.queryOne('SELECT subscriber_id FROM ticket_details WHERE ticket_id = $1', [ticketId]);
+  const subscriberId = details?.subscriber_id || raw.subscriberId || null;
+  if (subscriberId) {
+    try {
+      const notifications = require('../notifications');
+      await notifications.notifySubscriber(subscriberId, {
+        type: 'technician_assigned',
+        title: `Technician Assigned (#${ticketId})`,
+        message: `Technician ${technician.name} has been assigned to your ticket "${ticket.title}".`,
+        link: '/dashboard/tickets',
+        meta: { ticketId, technicianId: technician.id, technicianName: technician.name },
+      });
+    } catch (notifErr) {
+      logger.warn('ticket assignment notification failed', { error: notifErr.message });
+    }
+  }
+
   logger.info('ticket assigned', { ticketId, technicianId });
   return getTicket(ticketId);
 }
@@ -327,7 +383,7 @@ async function addMessage(ticketId, { body, authorType = 'subscriber', authorId 
 
   // Mirror the message into the legacy raw_data so the existing admin UI
   // (which reads raw_data.messages) keeps showing the conversation.
-  const ticket = await db.queryOne('SELECT raw_data FROM tickets WHERE id = $1', [ticketId]);
+  const ticket = await db.queryOne('SELECT title, raw_data FROM tickets WHERE id = $1', [ticketId]);
   if (ticket) {
     const raw = ticket.raw_data || {};
     const messages = Array.isArray(raw.messages) ? raw.messages : [];
@@ -342,6 +398,32 @@ async function addMessage(ticketId, { body, authorType = 'subscriber', authorId 
       ticketId,
       JSON.stringify({ ...raw, messages }),
     ]);
+
+    try {
+      const notifications = require('../notifications');
+      const details = await db.queryOne('SELECT subscriber_id FROM ticket_details WHERE ticket_id = $1', [ticketId]);
+      const subscriberId = details?.subscriber_id || raw.subscriberId || null;
+      if (authorType !== 'subscriber' && subscriberId) {
+        await notifications.notifySubscriber(subscriberId, {
+          type: 'ticket_reply',
+          title: `New Reply on Ticket #${ticketId}`,
+          message: `${authorName || 'NextLink Support'}: ${String(body || '').slice(0, 140)}`,
+          link: '/dashboard/tickets',
+          meta: { ticketId, messageId: result.id },
+        });
+      } else if (authorType === 'subscriber') {
+        await notifications.notifyAdmins({
+          type: 'new_ticket',
+          title: `Subscriber Reply on Ticket #${ticketId}`,
+          message: `${authorName || subscriberId || 'Subscriber'}: ${String(body || '').slice(0, 140)}`,
+          link: '/tickets',
+          roleTarget: 'tickets',
+          meta: { ticketId, messageId: result.id, subscriberId },
+        });
+      }
+    } catch (notifErr) {
+      logger.warn('ticket message notification failed', { error: notifErr.message });
+    }
   }
 
   return result;

@@ -33,6 +33,9 @@ export default function UserDetailsPage() {
   // Modals state
   const [selectedUser, setSelectedUser] = useState<Subscriber | null>(null);
   const [viewDetailsOpen, setViewDetailsOpen] = useState(false);
+  const [editFirstName, setEditFirstName] = useState('');
+  const [editLastName, setEditLastName] = useState('');
+  const [savingName, setSavingName] = useState(false);
   const [passwordModalOpen, setPasswordModalOpen] = useState(false);
   const [userForPasswordReset, setUserForPasswordReset] = useState<Subscriber | null>(null);
   const [newPassword, setNewPassword] = useState('');
@@ -42,6 +45,8 @@ export default function UserDetailsPage() {
   // New user form state. There is no password field — the API generates a
   // one-time temporary password for each account.
   const [newUserForm, setNewUserForm] = useState({
+    firstName: '',
+    lastName: '',
     name: '',
     username: '',
     phone: '',
@@ -53,6 +58,41 @@ export default function UserDetailsPage() {
     isScam: false,
     riskScore: 'low' as 'low' | 'medium' | 'high',
   });
+
+  useEffect(() => {
+    if (selectedUser) {
+      const parts = String(selectedUser.name || '').trim().split(/\s+/);
+      setEditFirstName(selectedUser.firstName || parts[0] || '');
+      setEditLastName(selectedUser.lastName || parts.slice(1).join(' ') || '');
+    }
+  }, [selectedUser]);
+
+  const handleSaveUserNames = async () => {
+    if (!selectedUser) return;
+    const fName = editFirstName.trim();
+    const lName = editLastName.trim();
+    if (!fName || !lName) {
+      toast.error('First Name and Last Name are required');
+      return;
+    }
+    setSavingName(true);
+    try {
+      const fullName = `${fName} ${lName}`.trim();
+      const updated: Subscriber = {
+        ...selectedUser,
+        firstName: fName,
+        lastName: lName,
+        name: fullName,
+      };
+      await updateSubscriber(updated);
+      setSelectedUser(updated);
+      toast.success(`Updated name to ${fullName}`);
+    } catch (err: any) {
+      toast.error(err?.message || 'Could not update name');
+    } finally {
+      setSavingName(false);
+    }
+  };
 
   useEffect(() => {
     fetchData();
@@ -236,8 +276,11 @@ export default function UserDetailsPage() {
   // temporary password to hand to the customer.
   const handleCreateUser = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!newUserForm.name || !newUserForm.phone || !newUserForm.email) {
-      toast.error('Name, Phone and Email are required');
+    const firstName = newUserForm.firstName.trim();
+    const lastName = newUserForm.lastName.trim();
+    const fullName = `${firstName} ${lastName}`.trim();
+    if (!firstName || !lastName || !newUserForm.phone || !newUserForm.email) {
+      toast.error('First Name, Last Name, Phone and Email are required');
       return;
     }
 
@@ -246,7 +289,9 @@ export default function UserDetailsPage() {
     // a plan is purchased.
     setBusyUser('creating');
     const result = await apiPost('/api/users', {
-      name: newUserForm.name,
+      firstName,
+      lastName,
+      name: fullName,
       username: newUserForm.username || newUserForm.email.split('@')[0],
       phone: newUserForm.phone,
       email: newUserForm.email,
@@ -268,12 +313,14 @@ export default function UserDetailsPage() {
     }
 
     toast.success(
-      `User ${newUserForm.name} created. Temporary password: ${result.temporaryPassword} — share it with the customer and ask them to change it on first sign-in.`,
+      `User ${fullName} created. Temporary password: ${result.temporaryPassword} — share it with the customer and ask them to change it on first sign-in.`,
       { duration: 30000 },
     );
 
     setAddUserOpen(false);
     setNewUserForm({
+      firstName: '',
+      lastName: '',
       name: '',
       username: '',
       phone: '',
@@ -603,11 +650,16 @@ export default function UserDetailsPage() {
                         </div>
                       </td>
 
-                      {/* User Info (Username + Full Name) */}
+                      {/* User Info (Username + First/Last Name) */}
                       <td className="py-3.5 px-4 whitespace-nowrap">
                         <div>
                           <p className="font-semibold text-foreground text-sm flex items-center gap-1.5">
                             {user.name}
+                          </p>
+                          <p className="text-[11px] text-muted-foreground">
+                            First: <span className="font-medium text-foreground">{user.firstName || user.name?.split(' ')[0] || '—'}</span>
+                            {' · '}
+                            Last: <span className="font-medium text-foreground">{user.lastName || user.name?.split(' ').slice(1).join(' ') || '—'}</span>
                           </p>
                           <p className="text-xs text-primary font-mono font-medium">
                             @{user.username || (user.email ? user.email.split('@')[0] : 'user')}
@@ -835,6 +887,44 @@ export default function UserDetailsPage() {
               </DialogHeader>
 
               <div className="space-y-5 my-4">
+                {/* Editable First Name & Last Name Section (Requirement 1) */}
+                <div className="p-4 rounded-xl border bg-card space-y-3">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                      Subscriber Identity (First Name & Last Name)
+                    </span>
+                    <Button
+                      size="sm"
+                      disabled={savingName}
+                      onClick={handleSaveUserNames}
+                      className="h-7 text-xs gap-1.5"
+                    >
+                      <Check className="h-3.5 w-3.5" />
+                      {savingName ? 'Saving…' : 'Save Name'}
+                    </Button>
+                  </div>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <div className="space-y-1">
+                      <Label htmlFor="edit-first-name" className="text-xs">First Name *</Label>
+                      <Input
+                        id="edit-first-name"
+                        value={editFirstName}
+                        onChange={(e) => setEditFirstName(e.target.value)}
+                        placeholder="First Name"
+                      />
+                    </div>
+                    <div className="space-y-1">
+                      <Label htmlFor="edit-last-name" className="text-xs">Last Name *</Label>
+                      <Input
+                        id="edit-last-name"
+                        value={editLastName}
+                        onChange={(e) => setEditLastName(e.target.value)}
+                        placeholder="Last Name"
+                      />
+                    </div>
+                  </div>
+                </div>
+
                 {/* Profile Grid */}
                 <div className="grid grid-cols-2 gap-4 p-4 rounded-xl bg-muted/40 border">
                   <div>
@@ -846,6 +936,14 @@ export default function UserDetailsPage() {
                   <div>
                     <span className="text-xs text-muted-foreground font-medium">Full Name</span>
                     <p className="text-sm font-semibold">{selectedUser.name}</p>
+                  </div>
+                  <div>
+                    <span className="text-xs text-muted-foreground font-medium">First Name</span>
+                    <p className="text-sm font-semibold">{selectedUser.firstName || editFirstName || '—'}</p>
+                  </div>
+                  <div>
+                    <span className="text-xs text-muted-foreground font-medium">Last Name</span>
+                    <p className="text-sm font-semibold">{selectedUser.lastName || editLastName || '—'}</p>
                   </div>
                   <div>
                     <span className="text-xs text-muted-foreground font-medium">Phone Number</span>
@@ -1227,14 +1325,24 @@ export default function UserDetailsPage() {
           </DialogHeader>
 
           <form onSubmit={handleCreateUser} className="space-y-4 py-2">
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
               <div className="space-y-1.5">
-                <Label>Full Name *</Label>
+                <Label>First Name *</Label>
                 <Input
                   required
-                  placeholder="e.g. Asif Mahmud"
-                  value={newUserForm.name}
-                  onChange={(e) => setNewUserForm({ ...newUserForm, name: e.target.value })}
+                  placeholder="e.g. Asif"
+                  value={newUserForm.firstName}
+                  onChange={(e) => setNewUserForm({ ...newUserForm, firstName: e.target.value })}
+                />
+              </div>
+
+              <div className="space-y-1.5">
+                <Label>Last Name *</Label>
+                <Input
+                  required
+                  placeholder="e.g. Mahmud"
+                  value={newUserForm.lastName}
+                  onChange={(e) => setNewUserForm({ ...newUserForm, lastName: e.target.value })}
                 />
               </div>
 

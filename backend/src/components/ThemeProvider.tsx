@@ -1,4 +1,5 @@
 'use client';
+
 import { useEffect } from 'react';
 import { ThemeProvider as NextThemesProvider } from 'next-themes';
 import { useSettingsStore } from '@/store/settingsStore';
@@ -19,13 +20,12 @@ function ThemeApplicator({ children }: { children: React.ReactNode }) {
 }
 
 export function ThemeProvider({ children }: { children: React.ReactNode }) {
-  const { theme } = useSettingsStore();
-
   return (
     <NextThemesProvider
       attribute="class"
-      defaultTheme={theme}
-      enableSystem
+      storageKey="nl_admin_theme"
+      defaultTheme="system"
+      enableSystem={true}
       disableTransitionOnChange
     >
       <ThemeApplicator>{children}</ThemeApplicator>

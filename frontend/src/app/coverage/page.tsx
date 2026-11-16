@@ -2,6 +2,7 @@
 
 import React, { useState, useEffect, useCallback } from 'react'
 import { useRouter } from 'next/navigation'
+import dynamic from 'next/dynamic'
 import { Search, MapPin, CheckCircle, XCircle, ArrowRight, Globe, Loader2, Map as MapIcon } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
@@ -18,6 +19,18 @@ import {
   type CoverageArea,
 } from '@/lib/portalApi'
 import Link from 'next/link'
+
+const NetworkCoverageMap = dynamic(() => import('@/components/NetworkCoverageMap'), {
+  ssr: false,
+  loading: () => (
+    <div className="w-full h-[550px] min-h-[500px] rounded-2xl border bg-muted/30 flex items-center justify-center">
+      <div className="flex items-center gap-2 text-xs text-muted-foreground font-semibold">
+        <Loader2 className="h-4 w-4 animate-spin text-primary" />
+        <span>Loading Interactive World Coverage Map...</span>
+      </div>
+    </div>
+  ),
+})
 
 /**
  * The coverage data itself now comes from the NextLink API
@@ -55,12 +68,16 @@ export default function CoveragePage() {
   const router = useRouter()
   const { t } = useTranslation()
   const { isAuthenticated } = useAuthStore()
-  const { coverageAreas } = useContentStore()
+  const { coverageAreas, coverageSection, fetchContent } = useContentStore()
   const [region, setRegion] = useState('')
   const [metro, setMetro] = useState('')
   const [area, setArea] = useState('')
   const [result, setResult] = useState<'available' | 'unavailable' | null>(null)
   const [loading, setLoading] = useState(false)
+
+  useEffect(() => {
+    fetchContent()
+  }, [fetchContent])
 
   // Live coverage data served by the NextLink API.
   const [zones, setZones] = useState<Array<{ zone: string; area_count: number; available_count: number }>>([])
@@ -84,6 +101,10 @@ export default function CoveragePage() {
 
   useEffect(() => {
     loadZones()
+    const timer = setInterval(() => {
+      loadZones()
+    }, 5000)
+    return () => clearInterval(timer)
   }, [loadZones])
 
   // Load the districts of the selected zone. A stale list from the previous
@@ -130,11 +151,6 @@ export default function CoveragePage() {
     : []
 
   const handleCheck = async () => {
-    // If user is not authenticated, redirect to login page before verifying
-    if (!isAuthenticated) {
-      router.push('/login?redirect=coverage')
-      return
-    }
     if (!area) return
 
     setLoading(true)
@@ -142,7 +158,10 @@ export default function CoveragePage() {
     setLoading(false)
 
     if (!check.success) {
-      setResult('unavailable')
+      const matchedFallback =
+        fallbackCoveredAreas.includes(area) ||
+        coverageAreas.some((ca) => (ca.areas || '').toLowerCase().includes(area.toLowerCase()))
+      setResult(matchedFallback ? 'available' : 'unavailable')
       return
     }
     setResult(check.covered ? 'available' : 'unavailable')
@@ -156,9 +175,11 @@ export default function CoveragePage() {
           <div className="inline-flex items-center justify-center h-16 w-16 rounded-full bg-primary/10 mb-4 shadow-sm">
             <Globe size={28} className="text-primary" />
           </div>
-          <h1 className="text-3xl font-extrabold mb-2 tracking-tight">Worldwide Optical Coverage & Availability</h1>
+          <h1 className="text-3xl font-extrabold mb-2 tracking-tight">
+            {coverageSection?.titleEn || 'Worldwide Optical Coverage & Availability'}
+          </h1>
           <p className="text-muted-foreground max-w-lg mx-auto">
-            Verify if your metropolitan business or residential district is connected to NextLink’s global Tier-1 fiber ring.
+            {coverageSection?.subtitleEn || 'Verify if your metropolitan business or residential district is connected to NextLink’s global Tier-1 fiber ring.'}
           </p>
         </div>
 
@@ -238,7 +259,7 @@ export default function CoveragePage() {
 
             <Button
               onClick={handleCheck}
-              disabled={isAuthenticated && (!area || loading)}
+              disabled={!area || loading}
               className="w-full font-bold shadow"
             >
               {loading ? (
@@ -290,62 +311,21 @@ export default function CoveragePage() {
           </CardContent>
         </Card>
 
-        {/* Coverage map */}
-        {mapAreas.length > 0 && (
-          <div className="space-y-4 mb-8">
-            <h2 className="text-xl font-bold flex items-center gap-2">
-              <MapIcon size={20} className="text-primary" /> Network Coverage Map
-            </h2>
-            <Card className="border shadow-sm overflow-hidden">
-              <CardContent className="p-0">
-                <div className="relative w-full aspect-[16/9] bg-muted/40">
-                  {/* Simple equirectangular projection of the coverage points */}
-                  <svg viewBox="0 0 360 180" className="w-full h-full" role="img" aria-label="Coverage map">
-                    <defs>
-                      <pattern id="grid" width="20" height="20" patternUnits="userSpaceOnUse">
-                        <path d="M 20 0 L 0 0 0 20" fill="none" stroke="currentColor" strokeWidth="0.3" className="text-muted-foreground/20" />
-                      </pattern>
-                    </defs>
-                    <rect width="360" height="180" fill="url(#grid)" />
-                    {mapAreas.map((entry) => {
-                      if (entry.lat === null || entry.lng === null) return null
-                      const lat = Number(entry.lat)
-                      const lng = Number(entry.lng)
-                      if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null
-                      const x = ((lng + 180) / 360) * 360
-                      const y = ((90 - lat) / 180) * 180
-                      const isAvailable = entry.status === 'available'
-                      return (
-                        <g key={entry.id}>
-                          <circle
-                            cx={x}
-                            cy={y}
-                            r={isAvailable ? 3 : 2}
-                            fill={isAvailable ? '#2563eb' : '#94a3b8'}
-                            opacity={isAvailable ? 0.9 : 0.6}
-                          />
-                          {isAvailable && (
-                            <circle cx={x} cy={y} r={6} fill="#2563eb" opacity={0.15} />
-                          )}
-                        </g>
-                      )
-                    })}
-                  </svg>
-                  <div className="absolute bottom-3 left-3 rounded-lg border bg-background/90 px-3 py-2 text-xs shadow-sm">
-                    <p className="font-semibold flex items-center gap-1.5">
-                      <span className="inline-block h-2 w-2 rounded-full bg-primary" />
-                      Active POP ({mapAreas.filter((a) => a.status === 'available').length})
-                    </p>
-                    <p className="font-semibold flex items-center gap-1.5 mt-0.5">
-                      <span className="inline-block h-2 w-2 rounded-full bg-slate-400" />
-                      Planned / Unavailable ({mapAreas.filter((a) => a.status !== 'available').length})
-                    </p>
-                  </div>
-                </div>
-              </CardContent>
-            </Card>
+        {/* Real Interactive Leaflet Network Coverage Map */}
+        <div className="space-y-4 mb-8">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+            <div>
+              <h2 className="text-xl font-bold flex items-center gap-2">
+                <MapIcon size={20} className="text-primary" /> Network Coverage Map
+              </h2>
+              <p className="text-xs text-muted-foreground mt-0.5">
+                Explore NextLink global points of presence (POPs), metro aggregation rings, and planned fiber expansions.
+              </p>
+            </div>
           </div>
-        )}
+
+          <NetworkCoverageMap areas={mapAreas} loading={mapAreas.length === 0} />
+        </div>
 
         {/* Global Hubs Grid */}
         {coverageAreas && coverageAreas.length > 0 && (

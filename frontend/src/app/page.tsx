@@ -44,6 +44,7 @@ export default function HomePage() {
   const {
     brand, 
     hero,
+    news,
     mediaHubs, 
     coverageSection,
     coverageAreas, 
@@ -99,19 +100,25 @@ export default function HomePage() {
 
               {/* Dynamic Headline */}
               <h1 className="text-3xl sm:text-4xl md:text-5xl font-black leading-tight mb-4 tracking-tight text-white drop-shadow-sm">
-                {t('heroTitle')}
+                {hero?.titleEn || t('heroTitle')}
               </h1>
 
               {/* Dynamic Subtitle */}
               <p className="text-base sm:text-lg text-white/90 mb-8 leading-relaxed font-normal max-w-xl">
-                {t('heroSubtitle')}
+                {hero?.subtitleEn || t('heroSubtitle')}
               </p>
 
-              {/* Action Button: Check Availability */}
+              {/* Action Buttons: Explore Plans & Check Availability */}
               <div className="flex flex-wrap gap-3.5">
-                <Link href="/coverage">
+                <Link href="/packages">
                   <Button size="lg" className="bg-white text-primary hover:bg-white/90 font-extrabold gap-2 shadow-xl hover:scale-105 transition-all h-11 px-7">
-                    <span>{t('checkCoverage')}</span>
+                    <span>{hero?.primaryBtnTextEn || 'Explore Plans'}</span>
+                    <ArrowRight size={18} />
+                  </Button>
+                </Link>
+                <Link href="/coverage">
+                  <Button size="lg" variant="outline" className="border-2 border-white bg-white/10 text-white hover:bg-white hover:text-primary font-extrabold gap-2 shadow-xl transition-all h-11 px-7">
+                    <span>{hero?.secondaryBtnTextEn || t('checkCoverage')}</span>
                     <MapPin size={18} />
                   </Button>
                 </Link>
@@ -458,7 +465,7 @@ export default function HomePage() {
               <div className="space-y-1">
                 <div className="flex items-center gap-2">
                   <Badge className="bg-emerald-600 text-white font-bold text-xs">
-                    Earn ${referralRewards?.bonusAmount || 25} Credit
+                    Earn ${referralRewards?.rewardAmount || referralRewards?.bonusAmount || 25} Credit
                   </Badge>
                 </div>
                 <h3 className="text-xl font-extrabold">{referralRewards?.title || 'Refer a friend'}</h3>
@@ -596,6 +603,63 @@ export default function HomePage() {
                 </div>
               ))}
             </div>
+          </div>
+        </section>
+      )}
+
+      {/* ===================== LATEST NEWS & ANNOUNCEMENTS ===================== */}
+      {news && news.filter(n => n.active !== false).length > 0 && (
+        <section className="container mx-auto px-4 max-w-6xl space-y-6">
+          <div className="flex flex-col sm:flex-row sm:items-end justify-between gap-3 border-b pb-4">
+            <div>
+              <Badge variant="outline" className="px-3.5 py-1 text-xs font-semibold text-primary border-primary/30">
+                Latest Network News & Announcements
+              </Badge>
+              <h2 className="text-2xl sm:text-3xl font-extrabold tracking-tight mt-1.5">
+                Service Updates & Highlights
+              </h2>
+            </div>
+            <p className="text-xs text-muted-foreground sm:text-right">
+              Live updates directly from NextLink Network Operations Center
+            </p>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+            {news.filter(n => n.active !== false).map((item) => (
+              <Card key={item.id} className="border-2 hover:border-primary/50 transition-all hover:shadow-lg flex flex-col justify-between">
+                <CardHeader className="pb-3">
+                  <div className="flex items-center justify-between gap-2">
+                    <Badge variant="secondary" className="text-[10px] font-bold">
+                      {item.category || 'Announcement'}
+                    </Badge>
+                    {item.publishDate && (
+                      <span className="text-[11px] font-mono text-muted-foreground">
+                        {item.publishDate}
+                      </span>
+                    )}
+                  </div>
+                  <CardTitle className="text-base font-bold mt-2 leading-snug">
+                    {item.title}
+                  </CardTitle>
+                </CardHeader>
+                <CardContent className="space-y-3 pt-0">
+                  {item.summary && (
+                    <p className="text-xs text-muted-foreground leading-relaxed">
+                      {item.summary}
+                    </p>
+                  )}
+                  {item.link && (
+                    <Link
+                      href={item.link}
+                      className="inline-flex items-center gap-1 text-xs font-bold text-primary hover:underline"
+                    >
+                      <span>Read More</span>
+                      <ArrowRight size={13} />
+                    </Link>
+                  )}
+                </CardContent>
+              </Card>
+            ))}
           </div>
         </section>
       )}

@@ -3,7 +3,6 @@
 import * as React from 'react'
 import { ThemeProvider as NextThemesProvider } from 'next-themes'
 import { useSettingsStore } from '@/store/settingsStore'
-import { useMounted } from '@/lib/useMounted'
 
 function ThemeColorApplier() {
   const { themeColor, fontSize } = useSettingsStore()
@@ -21,18 +20,13 @@ function ThemeColorApplier() {
 }
 
 export function ThemeProvider({ children }: { children: React.ReactNode }) {
-  const { theme } = useSettingsStore()
-  // The server render has no access to the persisted theme. Passing a
-  // non-system theme before mounting makes the server and the first client
-  // render disagree, so the gate is required.
-  const mounted = useMounted()
-
   return (
     <NextThemesProvider
       attribute="class"
+      storageKey="nl_theme"
       defaultTheme="system"
-      enableSystem
-      forcedTheme={mounted && theme !== 'system' ? theme : undefined}
+      enableSystem={true}
+      disableTransitionOnChange
     >
       <ThemeColorApplier />
       {children}

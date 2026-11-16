@@ -13,7 +13,7 @@ import { Label } from '@/components/ui/label'
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
 import { useTranslation } from '@/store/settingsStore'
 import { useAuthStore } from '@/store/authStore'
-import { subscriberLogin } from '@/lib/portalApi'
+import { subscriberLogin, setSubscriberToken } from '@/lib/portalApi'
 
 const schema = z.object({
   username: z.string().min(2, 'Username or Customer ID is required'),
@@ -72,17 +72,17 @@ function LoginForm() {
 
       // Successful login
       login(result.user)
-
-      // Await the billing-service token so the dashboard can call authenticated
-      // endpoints (referral, tier-1 billing, boost). Offline must not block portal
-      // sign-in — but wait up to a short time before giving up.
-      try {
-        await Promise.race([
-          subscriberLogin(data.username.trim(), data.password.trim()),
-          new Promise((resolve) => setTimeout(resolve, 5000)),
-        ]);
-      } catch {
-        // token may be absent — portal still works, billing routes will fail closed
+      if (result.token) {
+        setSubscriberToken(result.token)
+      } else {
+        try {
+          await Promise.race([
+            subscriberLogin(data.username.trim(), data.password.trim()),
+            new Promise((resolve) => setTimeout(resolve, 5000)),
+          ])
+        } catch {
+          // ignore
+        }
       }
 
       const target = redirectParam || '/dashboard'
@@ -208,15 +208,24 @@ function LoginForm() {
           </CardContent>
         </Card>
 
-        {/* Apply Prompt */}
-        <Card className="border shadow-md bg-card/60 backdrop-blur-sm text-center p-4">
-          <Link
-            href="/register"
-            className="text-primary font-bold hover:underline inline-flex items-center justify-center gap-1.5 text-sm"
-          >
-            <span>{language === 'bn' ? 'নতুন কানেকশনের জন্য আবেদন করুন' : 'Apply for a New Connection'}</span>
-            <UserPlus size={15} />
-          </Link>
+        {/* Apply / Register Prompt */}
+        <Card className="border shadow-md bg-card/60 backdrop-blur-sm text-center p-4 space-y-2">
+          <div className="flex items-center justify-center gap-4 text-sm font-semibold">
+            <Link
+              href="/apply"
+              className="text-primary hover:underline inline-flex items-center gap-1.5"
+            >
+              <span>{language === 'bn' ? 'নতুন কানেকশনের জন্য আবেদন করুন' : 'Apply for New Connection'}</span>
+              <UserPlus size={15} />
+            </Link>
+            <span className="text-muted-foreground">•</span>
+            <Link
+              href="/register"
+              className="text-muted-foreground hover:text-foreground hover:underline"
+            >
+              <span>{language === 'bn' ? 'অ্যাকাউন্ট খুলুন' : 'Create Account'}</span>
+            </Link>
+          </div>
         </Card>
       </div>
     </div>

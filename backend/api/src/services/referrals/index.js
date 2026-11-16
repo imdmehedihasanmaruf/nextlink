@@ -78,10 +78,16 @@ async function getSettings() {
 
 async function updateSettings(patch, actor) {
   const current = await getSettings();
+  const bonusVal =
+    patch.bonusAmount !== undefined
+      ? Number(patch.bonusAmount)
+      : patch.rewardAmount !== undefined
+      ? Number(patch.rewardAmount)
+      : current.bonusAmount;
   const merged = {
     enabled: patch.enabled === undefined ? current.enabled : Boolean(patch.enabled),
-    bonusAmount:
-      patch.bonusAmount === undefined ? current.bonusAmount : Number(patch.bonusAmount),
+    bonusAmount: bonusVal,
+    rewardAmount: bonusVal,
     title: typeof patch.title === 'string' && patch.title.trim() ? patch.title.trim() : current.title,
     description:
       typeof patch.description === 'string' && patch.description.trim()
@@ -94,6 +100,12 @@ async function updateSettings(patch, actor) {
   await db.query(
     `INSERT INTO system_settings (key, value, updated_at)
      VALUES ('referral', $1, NOW())
+     ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()`,
+    [JSON.stringify(merged)],
+  );
+  await db.query(
+    `INSERT INTO app_settings (key, value, updated_at)
+     VALUES ('referralRewards', $1, NOW())
      ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()`,
     [JSON.stringify(merged)],
   );
@@ -133,18 +145,30 @@ async function getInfo(subscriberId) {
      WHERE r.referrer_id = $1`,
     [subscriberId],
   );
+  const pendingCount = Number(totals?.pending_count || 0);
+  const qualifiedCount = Number(totals?.qualified_count || 0);
+  const creditedCount = Number(totals?.credited_count || 0);
+  const voidCount = Number(totals?.void_count || 0);
+  const totalCredited = Number(totals?.total_credited || 0);
+  const pendingAmount = Number(((pendingCount + qualifiedCount) * Number(settings.bonusAmount || 25)).toFixed(2));
+  const config = require('../../config');
+  const basePortalUrl = String(config.portalPublicUrl || 'http://localhost:3000').replace(/\/+$/, '');
+
   return {
     code: code.code,
+    link: `${basePortalUrl}/register?ref=${encodeURIComponent(code.code)}`,
     enabled: settings.enabled,
     title: settings.title,
     description: settings.description,
     bonusAmount: settings.bonusAmount,
     stats: {
-      pending: Number(totals?.pending_count || 0),
-      qualified: Number(totals?.qualified_count || 0),
-      credited: Number(totals?.credited_count || 0),
-      void: Number(totals?.void_count || 0),
-      totalCredited: Number(totals?.total_credited || 0),
+      totalReferrals: pendingCount + qualifiedCount + creditedCount,
+      pending: pendingCount,
+      qualified: qualifiedCount,
+      credited: creditedCount,
+      void: voidCount,
+      totalCredited,
+      pendingAmount,
     },
     referrals: rows.rows.map((r) => ({
       id: r.id,
@@ -301,6 +325,18 @@ async function _creditReward(referral, invoiceId) {
       [referral.referrer_id, invoiceId || null, referral.reward_amount, 'Referral reward credited to account balance'],
     );
     await client.query('COMMIT');
+    try {
+      const notifications = require('../notifications');
+      await notifications.notifySubscriber(referral.referrer_id, {
+        type: 'referral_credited',
+        title: 'Referral Reward Credited!',
+        message: `You earned $${utils.formatAmount(referral.reward_amount)} billing credit from referral code ${referral.code}.`,
+        link: '/dashboard',
+        meta: { rewardId, referralId: referral.id, amount: Number(referral.reward_amount) },
+      });
+    } catch (notifErr) {
+      logger.warn('referral notification failed', { error: notifErr.message });
+    }
     return { rewardId, amount: Number(referral.reward_amount) };
   } catch (error) {
     try {

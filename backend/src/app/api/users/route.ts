@@ -65,9 +65,21 @@ export async function POST(request: Request) {
     const wantsPlan = Boolean(body.packageId);
     const status = body.status || (wantsPlan ? 'active' : 'registered');
 
+    const cleanFirst = String(body.firstName || '').trim() || String(body.name || '').trim().split(/\s+/)[0] || '';
+    const cleanLast = String(body.lastName || '').trim() || String(body.name || '').trim().split(/\s+/).slice(1).join(' ') || '';
+    if (!cleanFirst || !cleanLast) {
+      return NextResponse.json(
+        { success: false, error: 'First Name and Last Name are required.' },
+        { status: 400, headers: corsHeaders },
+      );
+    }
+    const computedFullName = `${cleanFirst} ${cleanLast}`.trim();
+
     const newSub: Subscriber = {
       id: body.id || `NL-${new Date().getFullYear()}-${crypto.randomBytes(4).toString('hex').toUpperCase()}`,
-      name: body.name || 'Subscriber User',
+      name: computedFullName,
+      firstName: cleanFirst,
+      lastName: cleanLast,
       username: body.username || (body.email ? body.email.split('@')[0] : `user_${crypto.randomBytes(4).toString('hex')}`),
       phone: body.phone || '',
       email: body.email || '',
@@ -154,9 +166,26 @@ export async function PUT(request: Request) {
       return NextResponse.json({ success: false, error: 'User not found' }, { status: 404, headers: corsHeaders });
     }
 
+    const existingSub: any = subscribers[index];
+    const nextFirst =
+      updates.firstName !== undefined
+        ? String(updates.firstName).trim()
+        : existingSub.firstName || String(existingSub.name || '').trim().split(/\s+/)[0] || '';
+    const nextLast =
+      updates.lastName !== undefined
+        ? String(updates.lastName).trim()
+        : existingSub.lastName || String(existingSub.name || '').trim().split(/\s+/).slice(1).join(' ') || '';
+    const nextFullName =
+      updates.firstName !== undefined || updates.lastName !== undefined
+        ? `${nextFirst} ${nextLast}`.trim()
+        : updates.name || existingSub.name;
+
     subscribers[index] = {
-      ...subscribers[index],
+      ...existingSub,
       ...updates,
+      firstName: nextFirst,
+      lastName: nextLast,
+      name: nextFullName,
     };
 
     await saveAdminSection('subscribers', subscribers);

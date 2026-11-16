@@ -150,7 +150,16 @@ export default function DashboardPage() {
                   <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
                   <XAxis dataKey="month" tick={{ fontSize: 12 }} />
                   <YAxis tick={{ fontSize: 11 }} tickFormatter={(v) => `$${v}`} />
-                  <Tooltip formatter={(v: number) => [`$${v.toLocaleString()}`, '']} />
+                  <Tooltip
+                    formatter={(v: number) => [`$${v.toLocaleString()}`, '']}
+                    contentStyle={{
+                      backgroundColor: 'hsl(var(--card))',
+                      borderColor: 'hsl(var(--border))',
+                      color: 'hsl(var(--card-foreground))',
+                      borderRadius: '0.5rem',
+                      boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.3)',
+                    }}
+                  />
                   <Legend />
                   <Bar dataKey="revenue" name="Billed Revenue" fill="var(--primary)" radius={[4, 4, 0, 0]} />
                   <Bar dataKey="collection" name="Collected" fill="#22c55e" radius={[4, 4, 0, 0]} />
@@ -181,7 +190,15 @@ export default function DashboardPage() {
                   <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
                   <XAxis dataKey="month" tick={{ fontSize: 12 }} />
                   <YAxis tick={{ fontSize: 11 }} />
-                  <Tooltip />
+                  <Tooltip
+                    contentStyle={{
+                      backgroundColor: 'hsl(var(--card))',
+                      borderColor: 'hsl(var(--border))',
+                      color: 'hsl(var(--card-foreground))',
+                      borderRadius: '0.5rem',
+                      boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.3)',
+                    }}
+                  />
                   <Legend />
                   <Line type="monotone" dataKey="total" name="Total Lines" stroke="var(--primary)" strokeWidth={2} dot={false} />
                   <Line type="monotone" dataKey="new" name="New Subscriptions" stroke="#22c55e" strokeWidth={2} dot={false} />

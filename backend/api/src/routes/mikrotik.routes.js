@@ -338,6 +338,66 @@ router.post(
 );
 
 /**
+ * GET /api/mikrotik/queues
+ * List simple queues (bandwidth management for Static IP and turbo boost).
+ */
+router.get(
+  '/queues',
+  requireAuth,
+  requireRole(ROLES.SUPER_ADMIN, ROLES.BILLING, ROLES.SUPPORT, ROLES.TECHNICIAN),
+  asyncHandler(async (req, res) => {
+    const queues = await mikrotik.listQueues();
+    res.json({ success: true, queues });
+  }),
+);
+
+/**
+ * GET /api/mikrotik/address-list
+ * List firewall address lists (e.g. suspended_subscribers).
+ */
+router.get(
+  '/address-list',
+  requireAuth,
+  requireRole(ROLES.SUPER_ADMIN, ROLES.BILLING, ROLES.SUPPORT, ROLES.TECHNICIAN),
+  asyncHandler(async (req, res) => {
+    const listName = req.query.list ? String(req.query.list) : undefined;
+    const entries = await mikrotik.listAddressList(listName);
+    res.json({ success: true, entries });
+  }),
+);
+
+/**
+ * POST /api/mikrotik/sync
+ * Reconcile a subscriber's router state with their PostgreSQL database state.
+ */
+router.post(
+  '/sync',
+  requireAuth,
+  requireRole(ROLES.SUPER_ADMIN, ROLES.BILLING, ROLES.SUPPORT, ROLES.TECHNICIAN),
+  validate({
+    body: z.object({
+      subscriberId: z.string().min(1, 'subscriberId is required'),
+    }),
+  }),
+  asyncHandler(async (req, res) => {
+    const { subscriberId } = req.validatedBody;
+    const result = await mikrotik.syncSubscriber({ subscriberId });
+
+    await audit({
+      actorId: req.user.id,
+      actorRole: req.user.role,
+      action: 'mikrotik.sync',
+      entityType: 'subscriber',
+      entityId: subscriberId,
+      details: result,
+      ip: req.ip,
+    });
+
+    res.json({ success: true, ...result });
+  }),
+);
+
+/**
  * GET /api/mikrotik/log
  * Router operation log.
  */

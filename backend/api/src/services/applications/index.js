@@ -61,6 +61,44 @@ async function storeIdDocument(dataUrl, requestId) {
     throw Object.assign(new Error('The uploaded document exceeds the 10 MB limit'), { status: 400 });
   }
 
+  // Validate magic bytes to prevent MIME-type spoofing and malicious file uploads
+  const isValidHeader = (() => {
+    if (mimeType === 'image/jpeg') {
+      return buffer.length >= 3 && buffer[0] === 0xff && buffer[1] === 0xd8 && buffer[2] === 0xff;
+    }
+    if (mimeType === 'image/png') {
+      return (
+        buffer.length >= 8 &&
+        buffer[0] === 0x89 &&
+        buffer[1] === 0x50 &&
+        buffer[2] === 0x4e &&
+        buffer[3] === 0x47 &&
+        buffer[4] === 0x0d &&
+        buffer[5] === 0x0a &&
+        buffer[6] === 0x1a &&
+        buffer[7] === 0x0a
+      );
+    }
+    if (mimeType === 'application/pdf') {
+      return buffer.length >= 4 && buffer.slice(0, 4).toString('ascii') === '%PDF';
+    }
+    if (mimeType === 'image/webp') {
+      return (
+        buffer.length >= 12 &&
+        buffer.slice(0, 4).toString('ascii') === 'RIFF' &&
+        buffer.slice(8, 12).toString('ascii') === 'WEBP'
+      );
+    }
+    return false;
+  })();
+
+  if (!isValidHeader) {
+    throw Object.assign(
+      new Error('The uploaded document content does not match the declared MIME type signature'),
+      { status: 400 }
+    );
+  }
+
   const extension = mimeType === 'application/pdf' ? 'pdf' : mimeType.split('/')[1];
   const safeId = String(requestId).replace(/[^a-zA-Z0-9_-]/g, '_');
   const fileName = `${safeId}-id.${extension}`;
@@ -326,8 +364,9 @@ async function updateStatus(id, status, subscriberId = null) {
 function idDocumentAbsolutePath(relativePath) {
   if (!relativePath) return null;
   // Guard against path traversal — only files inside the upload directory.
+  const uploadRoot = path.resolve(UPLOAD_DIR);
   const resolved = path.resolve(config.rootDir, relativePath);
-  if (!resolved.startsWith(path.resolve(UPLOAD_DIR))) return null;
+  if (!resolved.startsWith(uploadRoot + path.sep) && resolved !== uploadRoot) return null;
   return resolved;
 }
 

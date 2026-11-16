@@ -41,61 +41,140 @@ function getDataDir(): string {
 export async function getSiteContent(): Promise<Record<string, any>> {
   try {
     const p = getDbPool();
-    const res = await p.query("SELECT value FROM app_settings WHERE key = 'siteData'");
-    if (res.rows.length > 0 && res.rows[0].value) {
-      const siteData = res.rows[0].value;
-      // Also ensure packages are synced if needed
-      const pkgRes = await p.query('SELECT raw_data FROM packages ORDER BY (raw_data->>\'downloadSpeed\')::numeric ASC');
-      if (pkgRes.rows.length > 0) {
-        siteData.packages = pkgRes.rows.map((r) => {
-          const p = r.raw_data;
-          // Determine category if not set
-          let category = p.category;
-          if (!category) {
-            if (p.name === 'Ultra' || p.name === 'Multi-Gig') category = 'Advanced Internet';
-            else if (p.name === 'Business Pro') category = 'Business Internet';
-            else category = 'Home Internet';
-          }
+    const [settingsRes, sysSettingsRes, pkgRes, covRes] = await Promise.all([
+      p.query('SELECT key, value FROM app_settings'),
+      p.query('SELECT key, value FROM system_settings').catch(() => ({ rows: [] as any[] })),
+      p.query('SELECT id, name, speed, upload_speed, price, bdix_speed, popular, description, raw_data FROM packages ORDER BY price ASC, speed ASC'),
+      p.query('SELECT id, zone, district, areas, status FROM coverage_areas ORDER BY zone ASC, district ASC').catch(() => ({ rows: [] as any[] })),
+    ]);
 
-          return {
-            id: p.id,
-            name: p.name,
-            speed: p.downloadSpeed || p.speed || 100,
-            uploadSpeed: p.uploadSpeed || p.downloadSpeed || p.speed || 100,
-            price: Number(p.price || 0),
-            bdixSpeed: (p.downloadSpeed || p.speed || 100) >= 1000 ? 5000 : 1000,
-            popular: !!p.popular,
-            badge: p.badge,
-            speedLabel: p.speedLabel,
-            category: category,
-            targetCustomer: p.targetCustomer || 'General Users',
-            description: p.description || '',
-            features: p.features || [
-              `${p.downloadSpeed || p.speed || 100} Mbps Symmetrical Fiber`,
-              `Unlimited Global Bandwidth`,
-              `24/7 Dedicated Support`,
-            ],
-            // 17 Global Package Features
-            unlimitedData: p.unlimitedData ?? true,
-            symmetricalSpeed: p.symmetricalSpeed ?? true,
-            fiberConnection: p.fiberConnection ?? true,
-            ipv6Support: p.ipv6Support ?? false,
-            gamingOptimized: p.gamingOptimized ?? false,
-            streaming4k8k: p.streaming4k8k ?? false,
-            staticIp: p.staticIp ?? 'Add-on',
-            prioritySupport: p.prioritySupport ?? false,
-            dedicatedBandwidth: p.dedicatedBandwidth ?? '—',
-            businessSla: p.businessSla ?? '—',
-            support24_7: p.support24_7 ?? false,
-            lowLatencyRouting: p.lowLatencyRouting ?? false,
-            directCloudPeering: p.directCloudPeering ?? false,
-            hardwareReady: p.hardwareReady ?? 'Gigabit ONU',
-            ddosProtection: p.ddosProtection ?? 'Basic',
-            bgpFailover: p.bgpFailover ?? '—',
-            cirGuarantee: p.cirGuarantee ?? '—',
-          };
-        });
+    const settingsMap: Record<string, any> = {};
+    for (const row of settingsRes.rows) {
+      settingsMap[row.key] = row.value;
+    }
+
+    const sysSettingsMap: Record<string, any> = {};
+    for (const row of sysSettingsRes.rows) {
+      sysSettingsMap[row.key] = row.value;
+    }
+
+    const siteData: Record<string, any> =
+      settingsMap.siteData && typeof settingsMap.siteData === 'object'
+        ? { ...settingsMap.siteData }
+        : {};
+
+    // Merge standalone admin sections from app_settings so Backend /boost, /latency, /traffic, /peering, /referrals always sync to Frontend
+    const standaloneKeys = [
+      'referralRewards',
+      'boostBandwidth',
+      'liveLatency',
+      'interfaceTraffic',
+      'peeringHubs',
+      'zones',
+    ];
+    for (const k of standaloneKeys) {
+      if (settingsMap[k] !== undefined && settingsMap[k] !== null) {
+        if (typeof settingsMap[k] === 'object' && !Array.isArray(settingsMap[k])) {
+          if (Object.keys(settingsMap[k]).length > 0) {
+            siteData[k] = { ...(siteData[k] || {}), ...settingsMap[k] };
+          }
+        } else if (Array.isArray(settingsMap[k])) {
+          if (settingsMap[k].length > 0) {
+            siteData[k] = settingsMap[k];
+          }
+        } else {
+          siteData[k] = settingsMap[k];
+        }
       }
+    }
+
+    // Merge system_settings.referral if updated via Backend /referrals API
+    if (sysSettingsMap.referral && typeof sysSettingsMap.referral === 'object') {
+      const refVal = sysSettingsMap.referral;
+      const amt = Number(refVal.rewardAmount ?? refVal.bonusAmount ?? siteData.referralRewards?.rewardAmount ?? 20);
+      siteData.referralRewards = {
+        ...(siteData.referralRewards || {}),
+        ...refVal,
+        rewardAmount: amt,
+        bonusAmount: amt,
+      };
+    }
+
+    if (sysSettingsMap.billing && typeof sysSettingsMap.billing === 'object') {
+      siteData.billingSettings = sysSettingsMap.billing;
+    }
+
+    // Sync coverageAreas from coverage_areas table when available
+    if (covRes.rows.length > 0) {
+      siteData.coverageAreas = covRes.rows.map((r: any) => ({
+        id: r.id,
+        zone: r.zone || 'Metro Core',
+        district: r.district || 'Central',
+        areas: Array.isArray(r.areas) ? r.areas.join(', ') : String(r.areas || ''),
+        status:
+          String(r.status || '').toLowerCase() === 'available' ||
+          String(r.status || '').toLowerCase() === 'active'
+            ? 'Active'
+            : r.status || 'Active',
+      }));
+    }
+
+    // Sync packages from packages table
+    if (pkgRes.rows.length > 0) {
+      siteData.packages = pkgRes.rows.map((r: any) => {
+        const p = r.raw_data || {};
+        const dlSpeed = Number(p.downloadSpeed || p.speed || r.speed || 100);
+        const ulSpeed = Number(p.uploadSpeed || p.downloadSpeed || p.speed || r.upload_speed || dlSpeed);
+        const pkgName = p.name || r.name || 'Plan';
+        let category = p.category;
+        if (!category) {
+          if (pkgName === 'Ultra' || pkgName === 'Multi-Gig') category = 'Advanced Internet';
+          else if (pkgName === 'Business Pro') category = 'Business Internet';
+          else category = 'Home Internet';
+        }
+
+        return {
+          id: r.id || p.id,
+          name: pkgName,
+          speed: dlSpeed,
+          downloadSpeed: dlSpeed,
+          uploadSpeed: ulSpeed,
+          price: Number(p.price ?? r.price ?? 0),
+          bdixSpeed: Number(p.bdixSpeed || r.bdix_speed || (dlSpeed >= 1000 ? 5000 : 1000)),
+          popular: Boolean(p.popular ?? r.popular),
+          badge: p.badge,
+          speedLabel: p.speedLabel,
+          category: category,
+          targetCustomer: p.targetCustomer || 'General Users',
+          description: p.description || r.description || '',
+          features: p.features || [
+            `${dlSpeed} Mbps Symmetrical Fiber`,
+            `Unlimited Global Bandwidth`,
+            `24/7 Dedicated Support`,
+          ],
+          // 17 Global Package Features
+          unlimitedData: p.unlimitedData ?? true,
+          symmetricalSpeed: p.symmetricalSpeed ?? true,
+          fiberConnection: p.fiberConnection ?? true,
+          ipv6Support: p.ipv6Support ?? false,
+          gamingOptimized: p.gamingOptimized ?? false,
+          streaming4k8k: p.streaming4k8k ?? false,
+          staticIp: p.staticIp ?? 'Add-on',
+          prioritySupport: p.prioritySupport ?? false,
+          dedicatedBandwidth: p.dedicatedBandwidth ?? '—',
+          businessSla: p.businessSla ?? '—',
+          support24_7: p.support24_7 ?? false,
+          lowLatencyRouting: p.lowLatencyRouting ?? false,
+          directCloudPeering: p.directCloudPeering ?? false,
+          hardwareReady: p.hardwareReady ?? 'Gigabit ONU',
+          ddosProtection: p.ddosProtection ?? 'Basic',
+          bgpFailover: p.bgpFailover ?? '—',
+          cirGuarantee: p.cirGuarantee ?? '—',
+        };
+      });
+    }
+
+    if (Object.keys(siteData).length > 0) {
       return siteData;
     }
   } catch (err) {
@@ -124,13 +203,15 @@ export async function findSubscriber(identifier: string): Promise<any | null> {
     const p = getDbPool();
     const clean = identifier.trim();
     const res = await p.query(
-      `SELECT * FROM subscribers 
-       WHERE id = $1 
-          OR LOWER(name) = LOWER($1) 
-          OR LOWER(email) = LOWER($1) 
-          OR phone = $1 
-          OR raw_data->>'username' = $1 
-          OR LOWER(raw_data->>'username') = LOWER($1)
+      `SELECT s.*, p.name AS joined_package_name
+       FROM subscribers s
+       LEFT JOIN packages p ON p.id = s.package_id
+       WHERE s.id = $1 
+          OR LOWER(s.name) = LOWER($1) 
+          OR LOWER(s.email) = LOWER($1) 
+          OR s.phone = $1 
+          OR s.raw_data->>'username' = $1 
+          OR LOWER(s.raw_data->>'username') = LOWER($1)
        LIMIT 1`,
       [clean]
     );
@@ -138,17 +219,23 @@ export async function findSubscriber(identifier: string): Promise<any | null> {
     if (res.rows.length > 0) {
       const row = res.rows[0];
       const raw = row.raw_data || {};
-      // Only the recorded values are returned. The previous version filled the
-      // gaps with a made-up plan, IP address, MAC, due date and installation
-      // address, so an account without a plan appeared to have one.
+      const fullName = String(row.name || raw.name || '').trim();
+      const nameParts = fullName ? fullName.split(/\s+/) : [];
+      const firstName = row.first_name || raw.firstName || nameParts[0] || '';
+      const lastName = row.last_name || raw.lastName || nameParts.slice(1).join(' ') || '';
+      const activePackageName = row.joined_package_name || raw.packageName || raw.package || '';
+
       return {
         id: row.id,
-        name: row.name,
+        firstName,
+        lastName,
+        name: fullName || `${firstName} ${lastName}`.trim(),
         email: row.email,
         phone: row.phone,
         status: row.status,
+        theme: row.theme || raw.theme || 'system',
         packageId: row.package_id || raw.packageId || raw.package_id || '',
-        packageName: raw.packageName || raw.package || '',
+        packageName: activePackageName,
         balance: Number(raw.balance || 0),
         dueDate: raw.dueDate || '',
         joinDate: raw.joinDate || raw.joinedAt || '',
@@ -168,6 +255,27 @@ export async function findSubscriber(identifier: string): Promise<any | null> {
     console.error('[PostgreSQL findSubscriber Error]', err);
   }
   return null;
+}
+
+export async function getBillingFeeConfig(): Promise<{
+  installationFee: number;
+  taxFee: number;
+  lateFeePercent: number;
+  dueDay: number;
+}> {
+  try {
+    const p = getDbPool();
+    const res = await p.query(`SELECT value FROM system_settings WHERE key = 'billing' LIMIT 1`);
+    const v = res.rows[0]?.value || {};
+    return {
+      installationFee: Number(v.installationFee ?? 8.99),
+      taxFee: Number(v.taxFee ?? 0.99),
+      lateFeePercent: Number(v.lateFeePercent ?? 2),
+      dueDay: Number(v.dueDay ?? 10),
+    };
+  } catch {
+    return { installationFee: 8.99, taxFee: 0.99, lateFeePercent: 2, dueDay: 10 };
+  }
 }
 
 /**
@@ -306,11 +414,95 @@ export async function createOrderRecord(order: any): Promise<any> {
     // invoice as 'paid' together with a locally invented transaction id, so
     // a purchase was "verified" without any gateway ever being contacted.
     const invoiceId = `INV-${crypto.randomUUID().slice(0, 12).toUpperCase()}`;
+    const installFee = Number(order.installationFee || 0);
+    const taxFee = Number(order.taxes || 0);
+    const lateFee = Number(order.lateFee || 0);
+    const carriedOver = Number(order.carriedOverAmount || 0);
+    const monthlyBase = Number(order.monthlyPrice || 0);
+    const speedMbps = Number(order.downloadSpeed || 0);
+    const pkgLabel =
+      order.packageLabel ||
+      (speedMbps > 0 ? `${order.packageName} (${speedMbps} Mbps)` : order.packageName);
+
+    const lines: Array<{ label: string; description?: string; amount: number; amountCents?: number; formattedAmount?: string; code: string; type?: string }> =
+      Array.isArray(order.lines) && order.lines.length > 0
+        ? order.lines
+        : [
+            {
+              label: `${pkgLabel} monthly fee`,
+              description: `${pkgLabel} monthly fee`,
+              amount: monthlyBase,
+              amountCents: Math.round(monthlyBase * 100),
+              formattedAmount: `$${monthlyBase.toFixed(2)}`,
+              code: 'monthly_fee',
+              type: 'subscription',
+            },
+            ...(installFee > 0
+              ? [
+                  {
+                    label: 'One-Time Installation Fee',
+                    description: 'One-Time Installation Fee',
+                    amount: installFee,
+                    amountCents: Math.round(installFee * 100),
+                    formattedAmount: `+$${installFee.toFixed(2)}`,
+                    code: 'installation_fee',
+                    type: 'installation_fee',
+                  },
+                ]
+              : []),
+            ...(taxFee > 0
+              ? [
+                  {
+                    label: 'Tax Fee',
+                    description: 'Tax Fee',
+                    amount: taxFee,
+                    amountCents: Math.round(taxFee * 100),
+                    formattedAmount: `+$${taxFee.toFixed(2)}`,
+                    code: 'tax_fee',
+                    type: 'tax_fee',
+                  },
+                ]
+              : []),
+            ...(carriedOver > 0
+              ? [
+                  {
+                    label: `${pkgLabel} previous month fee`,
+                    description: `${pkgLabel} previous month fee`,
+                    amount: carriedOver,
+                    amountCents: Math.round(carriedOver * 100),
+                    formattedAmount: `$${carriedOver.toFixed(2)}`,
+                    code: 'previous_month_fee',
+                    type: 'carried_over',
+                  },
+                ]
+              : []),
+            ...(lateFee > 0
+              ? [
+                  {
+                    label: 'Late Fee (10%)',
+                    description: 'Late Fee (10%)',
+                    amount: lateFee,
+                    amountCents: Math.round(lateFee * 100),
+                    formattedAmount: `+$${lateFee.toFixed(2)}`,
+                    code: 'late_fee',
+                    type: 'late_fee',
+                  },
+                ]
+              : []),
+          ];
+
     await client.query(
-      `INSERT INTO invoices (id, subscriber_id, amount, status, due_date, raw_data, created_at, updated_at)
-       VALUES ($1, $2, $3, $4, $5, $6, NOW(), NOW())
+      `INSERT INTO invoices (
+         id, subscriber_id, amount, installation_fee, tax_fee, late_fee, carried_over_amount,
+         status, due_date, raw_data, created_at, updated_at
+       )
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, NOW(), NOW())
        ON CONFLICT (id) DO UPDATE SET
          amount = EXCLUDED.amount,
+         installation_fee = EXCLUDED.installation_fee,
+         tax_fee = EXCLUDED.tax_fee,
+         late_fee = EXCLUDED.late_fee,
+         carried_over_amount = EXCLUDED.carried_over_amount,
          status = EXCLUDED.status,
          due_date = EXCLUDED.due_date,
          raw_data = EXCLUDED.raw_data,
@@ -319,6 +511,10 @@ export async function createOrderRecord(order: any): Promise<any> {
         invoiceId,
         order.customerId,
         Number(order.totalPayable || 0),
+        installFee,
+        taxFee,
+        lateFee,
+        carriedOver,
         'unpaid',
         order.nextBillingDate || new Date().toISOString().split('T')[0],
         JSON.stringify({
@@ -329,6 +525,17 @@ export async function createOrderRecord(order: any): Promise<any> {
           subscriberPhone: order.customerPhone,
           packageId: order.packageId,
           packageName: order.packageName,
+          packageLabel: pkgLabel,
+          packagePrice: monthlyBase,
+          subscriptionAmount: monthlyBase,
+          installationFee: installFee,
+          taxFee,
+          lateFee,
+          carriedOverAmount: carriedOver,
+          carriedFromInvoices: Array.isArray(order.unpaidInvoiceIds) ? order.unpaidInvoiceIds : [],
+          scenario: order.scenario || 'NEW_SUBSCRIBER',
+          badge: order.badge || 'New Subscription',
+          lines,
           amount: Number(order.totalPayable || 0),
           status: 'unpaid',
           currency: 'USD',
@@ -341,6 +548,26 @@ export async function createOrderRecord(order: any): Promise<any> {
         }),
       ]
     );
+
+    // If this order carries forward prior unpaid invoices (Scenario 3), mark them
+    // as carried_forward with late_fee_applied = TRUE so they are never double-counted
+    // or charged a late fee twice.
+    if (Array.isArray(order.unpaidInvoiceIds) && order.unpaidInvoiceIds.length > 0) {
+      await client.query(
+        `UPDATE invoices
+            SET status = 'carried_forward',
+                late_fee_applied = TRUE,
+                raw_data = COALESCE(raw_data, '{}'::jsonb) || jsonb_build_object(
+                  'status', 'carried_forward',
+                  'lateFeeApplied', true,
+                  'carriedIntoInvoiceId', $2::text,
+                  'carriedForwardAt', NOW()::text
+                ),
+                updated_at = NOW()
+          WHERE id = ANY($1::text[])`,
+        [order.unpaidInvoiceIds, invoiceId]
+      );
+    }
 
     await client.query('COMMIT');
     // The invoice id is returned so the caller can start the payment for it.

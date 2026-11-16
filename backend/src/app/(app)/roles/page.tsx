@@ -34,6 +34,8 @@ const AVAILABLE_PERMISSIONS = [
   { key: 'subscribers', label: 'Subscribers', desc: 'Manage customer accounts, optical terminals, and provisioning' },
   { key: 'packages', label: 'Packages', desc: 'Create and modify broadband speed tiers and tariffs' },
   { key: 'billing', label: 'Billing & Invoices', desc: 'Generate bills, process collections, and view ledger' },
+  { key: 'view_cancel_invoices', label: 'View Cancel Invoices', desc: 'Inspect unsubscription records and cancellation invoices' },
+  { key: 'export_cancel_invoices', label: 'Export Cancel Invoices', desc: 'Export cancelled order ledger and cancellation audit data to CSV/PDF' },
   { key: 'tickets', label: 'Support Tickets', desc: 'Triage customer inquiries, faults, and escalation tickets' },
   { key: 'technicians', label: 'Field Technicians', desc: 'Assign optical fiber drops and field maintenance tasks' },
   { key: 'referral_rewards', label: 'Referral Rewards', desc: 'Manage subscriber referral programs, bonuses, and reward ledgers' },
@@ -44,6 +46,7 @@ const AVAILABLE_PERMISSIONS = [
   { key: 'reports', label: 'Financial Reports', desc: 'Export monthly revenue, cohort analysis, and utilization' },
   { key: 'roles', label: 'Role Governance', desc: 'Manage administrative roles, permissions, and security staff' },
   { key: 'settings', label: 'System Settings', desc: 'Configure BGP routers, payment gateways, and system defaults' },
+  { key: 'notifications', label: 'Notifications', desc: 'View, mark read/unread, and manage operational notifications' },
   { key: 'profile', label: 'Admin Profile', desc: 'Update administrator account credentials, profile, and security' },
 ];
 

@@ -35,11 +35,13 @@ function readRow(row) {
     id: row.id,
     status: row.status,
     packageId: row.package_id || raw.packageId || '',
-    packageName: raw.packageName || raw.package || '',
+    packageName: row.joined_package_name || raw.packageName || raw.package || '',
     subscriptionStartedAt: raw.subscriptionStartedAt || null,
     subscriptionCancelledAt: raw.subscriptionCancelledAt || null,
     phone: row.phone || raw.phone || '',
     name: row.name || raw.name || '',
+    firstName: row.first_name || raw.firstName || '',
+    lastName: row.last_name || raw.lastName || '',
     username: raw.username || '',
     raw,
   };
@@ -47,7 +49,11 @@ function readRow(row) {
 
 async function loadSubscriber(subscriberId) {
   const row = await db.queryOne(
-    'SELECT id, name, email, phone, status, package_id, raw_data FROM subscribers WHERE id = $1',
+    `SELECT s.id, s.name, s.first_name, s.last_name, s.email, s.phone, s.status, s.package_id, s.raw_data,
+            p.name AS joined_package_name
+       FROM subscribers s
+       LEFT JOIN packages p ON p.id = s.package_id
+      WHERE s.id = $1`,
     [subscriberId],
   );
   return row ? readRow(row) : null;
@@ -138,6 +144,7 @@ async function activateAfterPurchase({ subscriberId, packageId, packageName, ord
     ? await db.queryOne('SELECT id, name, price FROM packages WHERE id = $1', [packageId])
     : null;
   const price = packageRow ? Number(packageRow.price || 0) : 0;
+  const resolvedPackageName = packageRow ? packageRow.name : (packageName || subscriber.packageName || '');
 
   const startedAt = utils.nowIso();
 
@@ -155,7 +162,7 @@ async function activateAfterPurchase({ subscriberId, packageId, packageName, ord
         JSON.stringify({
           status: 'active',
           packageId: packageId || subscriber.packageId || null,
-          packageName: packageName || subscriber.packageName || '',
+          packageName: resolvedPackageName,
           subscriptionStartedAt: startedAt,
           joinedAt: subscriber.raw.joinedAt || startedAt,
           activatedFromOrder: orderId || null,

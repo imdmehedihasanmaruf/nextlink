@@ -1,9 +1,10 @@
 'use client';
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import Link from 'next/link';
 import { 
   Sun, Moon, Monitor, Palette, Type, Languages, Save, Server, ShieldCheck, Shield, 
-  Users, Check, Smartphone, Key, Radio, Trash2, Loader2, RefreshCw, Wifi, CreditCard
+  Users, Check, Smartphone, Key, Radio, Trash2, Loader2, RefreshCw, Wifi, CreditCard,
+  Ban, RotateCcw
 } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
@@ -11,10 +12,12 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { Textarea } from '@/components/ui/textarea';
 import { Switch } from '@/components/ui/switch';
 import { Badge } from '@/components/ui/badge';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { useSettingsStore, SUPPORTED_LANGUAGES, ThemeColor, FontSize, ThemeMode, Language } from '@/store/settingsStore';
+import { useTheme } from 'next-themes';
 import { apiGet, apiFetch, apiPost, getApiToken } from '@/lib/apiClient';
 
 const colors: { name: ThemeColor; label: string; bg: string }[] = [
@@ -66,11 +69,41 @@ interface SystemSettings {
     lateGraceDays: number;
     suspendAfterDays: number;
     currency: string;
+    installationFee?: number;
+    taxFee?: number;
+    lateFeePercent?: number;
     lateFee?: number;
+    late_fee_value?: number;
+    lateFeeValue?: number;
+    late_fee_type?: string;
+    lateFeeType?: string;
+  };
+  footer?: {
+    version: string;
+  };
+  notifications?: {
+    invoiceGenerated: boolean;
+    paymentReceived: boolean;
+    paymentFailed: boolean;
+    lateFeeApplied: boolean;
+    ticketReply: boolean;
+    technicianAssigned: boolean;
+    boostActivated: boolean;
+    referralCredited: boolean;
+    adminNewTicket: boolean;
+    adminNewUser: boolean;
+    adminFailedPayment: boolean;
+  };
+  cancellation?: {
+    reasons: string[];
+    effectiveDateRule: string;
+    allowNotSureBuyAgain: boolean;
+    rechargeAfterCancelTreatAsNew?: boolean;
   };
 }
 
 export default function SettingsPage() {
+  const { setTheme: setNextTheme } = useTheme();
   const { 
     theme, 
     themeColor, 
@@ -86,6 +119,73 @@ export default function SettingsPage() {
 
   const t = (en: string, _bn?: string) => en;
 
+  // Authoritative saved theme: currently in localStorage / store
+  const [savedTheme, setSavedTheme] = useState<ThemeMode>(() => {
+    if (typeof window !== 'undefined') {
+      const stored = localStorage.getItem('nl_admin_user_theme') || localStorage.getItem('nl_admin_theme');
+      if (stored === 'light' || stored === 'dark' || stored === 'system') {
+        return stored as ThemeMode;
+      }
+    }
+    return (theme as ThemeMode) || 'system';
+  });
+
+  // Pending theme: in-memory preview only
+  const [pendingTheme, setPendingTheme] = useState<ThemeMode>(savedTheme);
+  const savedThemeRef = useRef<ThemeMode>(savedTheme);
+  savedThemeRef.current = savedTheme;
+
+  // Revert preview on unmount or navigation away
+  useEffect(() => {
+    return () => {
+      if (typeof document !== 'undefined') {
+        const themeMode = savedThemeRef.current;
+        let isDark = false;
+        if (themeMode === 'dark') isDark = true;
+        else if (themeMode === 'light') isDark = false;
+        else isDark = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
+        if (isDark) document.documentElement.classList.add('dark');
+        else document.documentElement.classList.remove('dark');
+      }
+    };
+  }, []);
+
+  const handleAdminThemePick = (chosen: ThemeMode) => {
+    setPendingTheme(chosen);
+    if (typeof document !== 'undefined') {
+      let isDark = false;
+      if (chosen === 'dark') isDark = true;
+      else if (chosen === 'light') isDark = false;
+      else isDark = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
+      if (isDark) document.documentElement.classList.add('dark');
+      else document.documentElement.classList.remove('dark');
+    }
+  };
+
+  const handleAdminThemeReset = () => {
+    setPendingTheme(savedTheme);
+    if (typeof document !== 'undefined') {
+      let isDark = false;
+      if (savedTheme === 'dark') isDark = true;
+      else if (savedTheme === 'light') isDark = false;
+      else isDark = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
+      if (isDark) document.documentElement.classList.add('dark');
+      else document.documentElement.classList.remove('dark');
+    }
+  };
+
+  const handleAdminThemeSave = () => {
+    try {
+      localStorage.setItem('nl_admin_theme', pendingTheme);
+      setTheme(pendingTheme);
+      setNextTheme(pendingTheme);
+      setSavedTheme(pendingTheme);
+      toast.success(t(`Theme '${pendingTheme}' saved successfully!`, `থিম '${pendingTheme}' সংরক্ষিত হয়েছে!`));
+    } catch (err: any) {
+      toast.error('Failed to save theme: ' + (err.message || 'Error'));
+    }
+  };
+
   // Core infrastructure configuration — persisted through the Express API.
   const [system, setSystem] = useState<SystemSettings | null>(null);
   const [loading, setLoading] = useState(true);
@@ -94,6 +194,14 @@ export default function SettingsPage() {
   const [hasToken, setHasToken] = useState(false);
   const [mikrotikPassword, setMikrotikPassword] = useState('');
   const [smsApiKey, setSmsApiKey] = useState('');
+
+  // Cancellation settings
+  const [cancelReasonsText, setCancelReasonsText] = useState('');
+  const [effectiveDateRule, setEffectiveDateRule] = useState('immediate');
+  const [allowNotSureBuyAgain, setAllowNotSureBuyAgain] = useState(true);
+  const [rechargeAfterCancelTreatAsNew, setRechargeAfterCancelTreatAsNew] = useState(true);
+  const [savingCancellation, setSavingCancellation] = useState(false);
+
   // The live staff accounts — the same table the login verifies against.
   const [staff, setStaff] = useState<StaffUser[]>([]);
   const [staffLoading, setStaffLoading] = useState(true);
@@ -108,6 +216,13 @@ export default function SettingsPage() {
       // Secret fields come back masked; keep the mask visible until edited.
       setMikrotikPassword(result.settings.mikrotik.password || '');
       setSmsApiKey(result.settings.sms.apiKey || '');
+
+      if (result.settings.cancellation) {
+        setCancelReasonsText((result.settings.cancellation.reasons || []).join('\n'));
+        setEffectiveDateRule(result.settings.cancellation.effectiveDateRule || 'immediate');
+        setAllowNotSureBuyAgain(result.settings.cancellation.allowNotSureBuyAgain ?? true);
+        setRechargeAfterCancelTreatAsNew(result.settings.cancellation.rechargeAfterCancelTreatAsNew ?? true);
+      }
     }
   }, []);
 
@@ -261,6 +376,38 @@ export default function SettingsPage() {
     loadSettings();
   };
 
+  const handleSaveCancellation = async () => {
+    setSavingCancellation(true);
+    const parsedReasons = cancelReasonsText
+      .split('\n')
+      .map((r) => r.trim())
+      .filter(Boolean);
+
+    const payload = {
+      reasons: parsedReasons.length > 0 ? parsedReasons : ['Too expensive', 'Slow speed', 'Other'],
+      effectiveDateRule,
+      allowNotSureBuyAgain,
+      rechargeAfterCancelTreatAsNew,
+    };
+
+    try {
+      const res = await apiFetch('/api/settings/system/cancellation', {
+        method: 'PUT',
+        body: JSON.stringify(payload),
+      });
+      if (res.success) {
+        toast.success('Cancellation settings saved successfully');
+        loadSettings();
+      } else {
+        toast.error(res.error || 'Failed to save cancellation settings');
+      }
+    } catch (err: any) {
+      toast.error(err?.message || 'Error saving cancellation settings');
+    } finally {
+      setSavingCancellation(false);
+    }
+  };
+
   return (
     <div className="space-y-6">
       <div>
@@ -268,15 +415,16 @@ export default function SettingsPage() {
           {t('System & Application Settings', 'সিস্টেম ও অ্যাপ্লিকেশন সেটিংস')}
         </h1>
         <p className="text-sm text-muted-foreground mt-1">
-          {t('Manage router connections, SMS gateways, theme modes, colors, and admin permissions.', 'রাউটার কানেকশন, এসএমএস গেটওয়ে, থিম মোড, কালার এবং অ্যাডমিন এক্সেস কনফিগার করুন।')}
+          {t('Manage router connections, SMS gateways, theme modes, colors, cancellations, and admin permissions.', 'রাউটার কানেকশন, এসএমএস গেটওয়ে, থিম মোড, কালার এবং অ্যাডমিন এক্সেস কনফিগার করুন।')}
         </p>
       </div>
 
       <Tabs defaultValue="display" className="space-y-6">
-        <TabsList className="grid w-full grid-cols-3 max-w-md">
+        <TabsList className="grid w-full grid-cols-4 max-w-xl">
           <TabsTrigger value="display">{t('Display & UI', 'ডিসপ্লে ও ইউআই')}</TabsTrigger>
           <TabsTrigger value="system">{t('MikroTik & Core', 'মাইক্রোটিক ও গেটওয়ে')}</TabsTrigger>
           <TabsTrigger value="users">{t('User Roles', 'ইউজার ও রোলস')}</TabsTrigger>
+          <TabsTrigger value="cancellation">{t('Cancellations', 'ক্যান্সেলেশন')}</TabsTrigger>
         </TabsList>
 
         {/* TAB 1: Display & Preferences (Dark/Light, Theme Color, Font Size, Language, Auto Save) */}
@@ -290,43 +438,84 @@ export default function SettingsPage() {
                     <Sun className="h-4 w-4 text-primary" />
                     {t('Theme Appearance (Dark / Light)', 'থিম মোড (ডার্ক / লাইট)')}
                   </CardTitle>
-                  <CardDescription>{t('Select light, dark, or system mode', 'পছন্দের থিম নির্বাচন করুন')}</CardDescription>
+                  <CardDescription>{t('Preview live; applies permanently only when saved', 'প্রিভিউ দেখুন; সেভ করলেই স্থায়ী হবে')}</CardDescription>
                 </div>
-                <Button size="sm" onClick={() => toast.success(t(`Theme '${theme}' saved successfully!`, `থিম '${theme}' সংরক্ষিত হয়েছে!`))} className="gap-1.5 h-8 text-xs">
-                  <Save className="h-3.5 w-3.5" /> Save Theme
-                </Button>
+                <div className="flex items-center gap-2">
+                  {pendingTheme !== savedTheme && (
+                    <Button 
+                      type="button" 
+                      variant="outline" 
+                      size="sm" 
+                      onClick={handleAdminThemeReset}
+                      className="gap-1 h-8 text-xs cursor-pointer"
+                    >
+                      <RotateCcw className="h-3.5 w-3.5" /> Cancel
+                    </Button>
+                  )}
+                  <Button 
+                    size="sm" 
+                    onClick={handleAdminThemeSave} 
+                    disabled={pendingTheme === savedTheme}
+                    className="gap-1.5 h-8 text-xs cursor-pointer"
+                  >
+                    <Save className="h-3.5 w-3.5" /> Save Theme
+                  </Button>
+                </div>
               </CardHeader>
               <CardContent>
-                <div className="grid grid-cols-3 gap-3">
+                {pendingTheme !== savedTheme && (
+                  <div
+                    aria-live="polite"
+                    className="mb-3 px-3 py-1.5 rounded-lg bg-amber-500/10 border border-amber-500/20 text-amber-600 dark:text-amber-400 text-xs font-semibold flex items-center justify-between"
+                  >
+                    <span>Unsaved theme changes (Live Preview active)</span>
+                  </div>
+                )}
+                <div className="grid grid-cols-3 gap-3" role="radiogroup" aria-label="Admin Theme Appearance">
                   <button
                     type="button"
-                    onClick={() => setTheme('light')}
-                    className={`flex flex-col items-center justify-center p-3 rounded-xl border-2 transition-all ${
-                      theme === 'light' ? 'border-primary bg-primary/10 text-primary font-bold' : 'border-border'
+                    role="radio"
+                    aria-checked={pendingTheme === 'light'}
+                    onClick={() => handleAdminThemePick('light')}
+                    className={`flex flex-col items-center justify-center p-3 rounded-xl border-2 transition-all cursor-pointer ${
+                      pendingTheme === 'light' ? 'border-primary bg-primary/10 text-primary font-bold shadow-xs' : 'border-border'
                     }`}
                   >
                     <Sun className="h-5 w-5 mb-1" />
                     <span className="text-xs">Light</span>
+                    {pendingTheme === 'light' && (
+                      <span className="text-[10px] text-primary">{pendingTheme === savedTheme ? 'Active' : 'Preview'}</span>
+                    )}
                   </button>
                   <button
                     type="button"
-                    onClick={() => setTheme('dark')}
-                    className={`flex flex-col items-center justify-center p-3 rounded-xl border-2 transition-all ${
-                      theme === 'dark' ? 'border-primary bg-primary/10 text-primary font-bold' : 'border-border'
+                    role="radio"
+                    aria-checked={pendingTheme === 'dark'}
+                    onClick={() => handleAdminThemePick('dark')}
+                    className={`flex flex-col items-center justify-center p-3 rounded-xl border-2 transition-all cursor-pointer ${
+                      pendingTheme === 'dark' ? 'border-primary bg-primary/10 text-primary font-bold shadow-xs' : 'border-border'
                     }`}
                   >
                     <Moon className="h-5 w-5 mb-1" />
                     <span className="text-xs">Dark</span>
+                    {pendingTheme === 'dark' && (
+                      <span className="text-[10px] text-primary">{pendingTheme === savedTheme ? 'Active' : 'Preview'}</span>
+                    )}
                   </button>
                   <button
                     type="button"
-                    onClick={() => setTheme('system')}
-                    className={`flex flex-col items-center justify-center p-3 rounded-xl border-2 transition-all ${
-                      theme === 'system' ? 'border-primary bg-primary/10 text-primary font-bold' : 'border-border'
+                    role="radio"
+                    aria-checked={pendingTheme === 'system'}
+                    onClick={() => handleAdminThemePick('system')}
+                    className={`flex flex-col items-center justify-center p-3 rounded-xl border-2 transition-all cursor-pointer ${
+                      pendingTheme === 'system' ? 'border-primary bg-primary/10 text-primary font-bold shadow-xs' : 'border-border'
                     }`}
                   >
                     <Monitor className="h-5 w-5 mb-1" />
                     <span className="text-xs">System</span>
+                    {pendingTheme === 'system' && (
+                      <span className="text-[10px] text-primary">{pendingTheme === savedTheme ? 'Active' : 'Preview'}</span>
+                    )}
                   </button>
                 </div>
               </CardContent>
@@ -707,42 +896,289 @@ export default function SettingsPage() {
                 <CardHeader>
                   <CardTitle className="text-base flex items-center gap-2">
                     <CreditCard className="h-5 w-5 text-primary" />
-                    Payment Gateway & Billing Engine
+                    Billing Engine Fees, Footer Version &amp; Notification Preferences
                   </CardTitle>
-                  <CardDescription>Read-only summary of the active gateway and billing configuration.</CardDescription>
+                  <CardDescription>
+                    Configure first-month installation fee ($8.99), tax fee ($0.99), unpaid late fee (2%), footer version string, and real-time notification triggers.
+                  </CardDescription>
                 </CardHeader>
-                <CardContent>
-                  <div className="grid grid-cols-2 md:grid-cols-6 gap-4">
-                    <div className="rounded-lg border p-3">
-                      <p className="text-xs text-muted-foreground">Payment Mode</p>
-                      <p className="text-lg font-bold mt-1 capitalize">
-                        {system.runtime?.paymentMode ?? system.payments.mode}
-                        {system.runtime?.locked && (
-                          <span className="block text-[10px] uppercase tracking-wider text-muted-foreground mt-1">
-                            Enforced by environment
-                          </span>
-                        )}
-                      </p>
+                <CardContent className="space-y-6">
+                  {/* Billing Fees Form */}
+                  <form
+                    onSubmit={async (e) => {
+                      e.preventDefault();
+                      setSaving(true);
+                      const lfVal = Number(
+                        system.billing.late_fee_value ??
+                          system.billing.lateFeeValue ??
+                          system.billing.lateFeePercent ??
+                          10,
+                      );
+                      const lfType =
+                        String(system.billing.late_fee_type || system.billing.lateFeeType || 'percent').toLowerCase() === 'flat'
+                          ? 'flat'
+                          : 'percent';
+                      const res = await apiFetch('/api/settings/system/billing', {
+                        method: 'PUT',
+                        body: JSON.stringify({
+                          currency: system.billing.currency || 'USD',
+                          dueDay: Number(system.billing.dueDay ?? 10),
+                          lateGraceDays: Number(system.billing.lateGraceDays ?? 5),
+                          suspendAfterDays: Number(system.billing.suspendAfterDays ?? 10),
+                          installationFee: Number(system.billing.installationFee ?? 8.99),
+                          taxFee: Number(system.billing.taxFee ?? 0.99),
+                          late_fee_type: lfType,
+                          late_fee_value: lfVal,
+                          lateFeeType: lfType,
+                          lateFeeValue: lfVal,
+                          lateFeePercent: lfVal,
+                          timezone: system.billing.timezone || 'UTC',
+                        }),
+                      });
+                      setSaving(false);
+                      if (res.success) {
+                        toast.success('Billing fee rules saved!');
+                        loadSettings();
+                      } else {
+                        toast.error(res.error || 'Could not save billing settings');
+                      }
+                    }}
+                    className="space-y-3 border-b pb-5"
+                  >
+                    <h4 className="text-xs font-bold uppercase tracking-wider text-muted-foreground">
+                      1. Billing Fee Values (Requirement 4e)
+                    </h4>
+                    <div className="grid grid-cols-2 md:grid-cols-7 gap-4">
+                      <div>
+                        <Label className="text-xs">Installation Fee ($)</Label>
+                        <Input
+                          type="number"
+                          step="0.01"
+                          value={system.billing.installationFee ?? 8.99}
+                          onChange={(e) =>
+                            updateSystem({
+                              billing: { ...system.billing, installationFee: Number(e.target.value) },
+                            })
+                          }
+                        />
+                      </div>
+                      <div>
+                        <Label className="text-xs">Tax Fee ($)</Label>
+                        <Input
+                          type="number"
+                          step="0.01"
+                          value={system.billing.taxFee ?? 0.99}
+                          onChange={(e) =>
+                            updateSystem({
+                              billing: { ...system.billing, taxFee: Number(e.target.value) },
+                            })
+                          }
+                        />
+                      </div>
+                      <div>
+                        <Label className="text-xs">Late Fee Type</Label>
+                        <select
+                          value={system.billing.late_fee_type || system.billing.lateFeeType || 'percent'}
+                          onChange={(e) =>
+                            updateSystem({
+                              billing: {
+                                ...system.billing,
+                                late_fee_type: e.target.value,
+                                lateFeeType: e.target.value,
+                              },
+                            })
+                          }
+                          className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm"
+                        >
+                          <option value="percent">Percent (%)</option>
+                          <option value="flat">Flat ($)</option>
+                        </select>
+                      </div>
+                      <div>
+                        <Label className="text-xs">
+                          Late Fee Value ({(system.billing.late_fee_type || system.billing.lateFeeType || 'percent') === 'flat' ? '$' : '%'})
+                        </Label>
+                        <Input
+                          type="number"
+                          step="0.1"
+                          value={
+                            system.billing.late_fee_value ??
+                            system.billing.lateFeeValue ??
+                            system.billing.lateFeePercent ??
+                            10
+                          }
+                          onChange={(e) => {
+                            const val = Number(e.target.value);
+                            updateSystem({
+                              billing: {
+                                ...system.billing,
+                                late_fee_value: val,
+                                lateFeeValue: val,
+                                lateFeePercent: val,
+                              },
+                            });
+                          }}
+                        />
+                      </div>
+                      <div>
+                        <Label className="text-xs">Due Day (UTC)</Label>
+                        <Input
+                          type="number"
+                          min={1}
+                          max={28}
+                          value={system.billing.dueDay ?? 10}
+                          onChange={(e) =>
+                            updateSystem({
+                              billing: { ...system.billing, dueDay: Number(e.target.value) },
+                            })
+                          }
+                        />
+                      </div>
+                      <div>
+                        <Label className="text-xs">Currency</Label>
+                        <Input
+                          value={system.billing.currency || 'USD'}
+                          onChange={(e) =>
+                            updateSystem({
+                              billing: { ...system.billing, currency: e.target.value },
+                            })
+                          }
+                        />
+                      </div>
+                      <div>
+                        <Label className="text-xs">Timezone</Label>
+                        <Input
+                          value={system.billing.timezone || 'UTC'}
+                          onChange={(e) =>
+                            updateSystem({
+                              billing: { ...system.billing, timezone: e.target.value },
+                            })
+                          }
+                        />
+                      </div>
                     </div>
-                    <div className="rounded-lg border p-3">
-                      <p className="text-xs text-muted-foreground">Currency</p>
-                      <p className="text-lg font-bold mt-1">{system.billing.currency}</p>
+                    <Button type="submit" size="sm" disabled={saving} className="gap-1.5">
+                      <Save className="h-3.5 w-3.5" /> Save Billing Fees
+                    </Button>
+                  </form>
+
+                  {/* Footer Version Form */}
+                  <form
+                    onSubmit={async (e) => {
+                      e.preventDefault();
+                      setSaving(true);
+                      const res = await apiFetch('/api/settings/system/footer', {
+                        method: 'PUT',
+                        body: JSON.stringify({
+                          version: system.footer?.version || 'To be implemented',
+                        }),
+                      });
+                      setSaving(false);
+                      if (res.success) {
+                        toast.success('Footer version saved!');
+                        loadSettings();
+                      } else {
+                        toast.error(res.error || 'Could not save footer settings');
+                      }
+                    }}
+                    className="space-y-3 border-b pb-5"
+                  >
+                    <h4 className="text-xs font-bold uppercase tracking-wider text-muted-foreground">
+                      2. Footer Configuration (Requirement 15)
+                    </h4>
+                    <div className="flex flex-col sm:flex-row items-stretch sm:items-end gap-3 max-w-lg">
+                      <div className="flex-1">
+                        <Label className="text-xs">Footer Version String</Label>
+                        <Input
+                          placeholder="To be implemented"
+                          value={system.footer?.version ?? 'To be implemented'}
+                          onChange={(e) =>
+                            updateSystem({
+                              footer: { version: e.target.value },
+                            })
+                          }
+                        />
+                      </div>
+                      <Button type="submit" size="sm" disabled={saving} className="gap-1.5">
+                        <Save className="h-3.5 w-3.5" /> Save Footer Version
+                      </Button>
                     </div>
-                    <div className="rounded-lg border p-3">
-                      <p className="text-xs text-muted-foreground">Due Day</p>
-                      <p className="text-lg font-bold mt-1">{system.billing.dueDay}</p>
+                  </form>
+
+                  {/* Notification Preferences Form */}
+                  <div className="space-y-3">
+                    <div className="flex items-center justify-between">
+                      <h4 className="text-xs font-bold uppercase tracking-wider text-muted-foreground">
+                        3. Real-Time Notification Triggers (Requirement 13)
+                      </h4>
+                      <Button
+                        size="sm"
+                        disabled={saving}
+                        onClick={async () => {
+                          setSaving(true);
+                          const res = await apiFetch('/api/settings/system/notifications', {
+                            method: 'PUT',
+                            body: JSON.stringify(system.notifications || {}),
+                          });
+                          setSaving(false);
+                          if (res.success) {
+                            toast.success('Notification preferences saved!');
+                            loadSettings();
+                          } else {
+                            toast.error(res.error || 'Could not save notification preferences');
+                          }
+                        }}
+                        className="gap-1.5"
+                      >
+                        <Save className="h-3.5 w-3.5" /> Save Notification Preferences
+                      </Button>
                     </div>
-                    <div className="rounded-lg border p-3">
-                      <p className="text-xs text-muted-foreground">Grace Days</p>
-                      <p className="text-lg font-bold mt-1">{system.billing.lateGraceDays}</p>
-                    </div>
-                    <div className="rounded-lg border p-3">
-                      <p className="text-xs text-muted-foreground">Late Fee</p>
-                      <p className="text-lg font-bold mt-1">${system.billing.lateFee ?? 5}</p>
-                    </div>
-                    <div className="rounded-lg border p-3">
-                      <p className="text-xs text-muted-foreground">Timezone</p>
-                      <p className="text-sm font-bold mt-2">{system.billing.timezone}</p>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3">
+                      {[
+                        { key: 'invoiceGenerated', label: 'Invoice Generated' },
+                        { key: 'paymentReceived', label: 'Payment Received' },
+                        { key: 'paymentFailed', label: 'Payment Failed' },
+                        { key: 'lateFeeApplied', label: '2% Late Fee Applied' },
+                        { key: 'ticketReply', label: 'Support Ticket Reply' },
+                        { key: 'technicianAssigned', label: 'Technician Assigned' },
+                        { key: 'boostActivated', label: 'Turbo Boost Activated' },
+                        { key: 'referralCredited', label: 'Referral Reward Credited' },
+                        { key: 'adminNewTicket', label: 'Admin: New Ticket Alert' },
+                        { key: 'adminNewUser', label: 'Admin: New User Signup' },
+                        { key: 'adminFailedPayment', label: 'Admin: Failed Payment Alert' },
+                      ].map((pref) => {
+                        const checked = (system.notifications as any)?.[pref.key] ?? true;
+                        return (
+                          <div
+                            key={pref.key}
+                            className="flex items-center justify-between rounded-lg border p-2.5 bg-muted/20"
+                          >
+                            <span className="text-xs font-medium">{pref.label}</span>
+                            <Switch
+                              checked={Boolean(checked)}
+                              onCheckedChange={(val) =>
+                                updateSystem({
+                                  notifications: {
+                                    invoiceGenerated: true,
+                                    paymentReceived: true,
+                                    paymentFailed: true,
+                                    lateFeeApplied: true,
+                                    ticketReply: true,
+                                    technicianAssigned: true,
+                                    boostActivated: true,
+                                    referralCredited: true,
+                                    adminNewTicket: true,
+                                    adminNewUser: true,
+                                    adminFailedPayment: true,
+                                    ...(system.notifications || {}),
+                                    [pref.key]: val,
+                                  },
+                                })
+                              }
+                            />
+                          </div>
+                        );
+                      })}
                     </div>
                   </div>
                 </CardContent>
@@ -816,6 +1252,107 @@ export default function SettingsPage() {
                   ))}
                 </div>
               )}
+            </CardContent>
+          </Card>
+        </TabsContent>
+
+        {/* TAB 4: Cancellation Policy & Re-subscription Settings */}
+        <TabsContent value="cancellation" className="space-y-6">
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-base flex items-center gap-2">
+                <Ban className="h-4 w-4 text-rose-600" />
+                Package Cancellation &amp; Termination Rules
+              </CardTitle>
+              <CardDescription>
+                Configure allowed reasons for cancellation, service termination effective date rule, and re-subscription policy.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-6">
+              {/* Editable Cancel Reasons */}
+              <div className="space-y-2">
+                <Label htmlFor="cancel-reasons" className="text-sm font-semibold">
+                  Allowed Cancellation Reasons (one per line)
+                </Label>
+                <Textarea
+                  id="cancel-reasons"
+                  rows={6}
+                  value={cancelReasonsText}
+                  onChange={(e) => setCancelReasonsText(e.target.value)}
+                  className="font-mono text-xs"
+                  placeholder="Too expensive&#10;Slow speed&#10;Frequent disconnections&#10;Moving to another location&#10;Switching provider&#10;Poor support&#10;Temporary pause&#10;Other"
+                />
+                <p className="text-xs text-muted-foreground">
+                  Subscribers pick from these reasons when submitting the cancellation form on /cancel.
+                </p>
+              </div>
+
+              {/* Effective Date Rule */}
+              <div className="space-y-2 max-w-sm">
+                <Label htmlFor="effective-date-rule" className="text-sm font-semibold">
+                  Cancellation Effective Date Rule
+                </Label>
+                <Select value={effectiveDateRule} onValueChange={setEffectiveDateRule}>
+                  <SelectTrigger id="effective-date-rule" className="text-xs">
+                    <SelectValue placeholder="Select rule" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="immediate">Immediate (Terminate today at midnight UTC)</SelectItem>
+                    <SelectItem value="end_of_month">End of Billing Month (Active until end of cycle)</SelectItem>
+                  </SelectContent>
+                </Select>
+                <p className="text-xs text-muted-foreground">
+                  Controls when subscriber internet service line is taken down and billed stops.
+                </p>
+              </div>
+
+              {/* Allow "Not sure yet" Toggle */}
+              <div className="flex items-center justify-between border-t pt-4">
+                <div className="space-y-0.5">
+                  <Label className="text-sm font-semibold">Allow &quot;Not sure yet&quot; for Buy-Again Date</Label>
+                  <p className="text-xs text-muted-foreground">
+                    Allows subscribers to skip specifying an exact date when they might re-subscribe.
+                  </p>
+                </div>
+                <Switch
+                  checked={allowNotSureBuyAgain}
+                  onCheckedChange={setAllowNotSureBuyAgain}
+                />
+              </div>
+
+              {/* Re-subscription Rule Toggle */}
+              <div className="flex items-center justify-between border-t pt-4">
+                <div className="space-y-0.5">
+                  <Label className="text-sm font-semibold">Treat Re-subscription as New Subscription</Label>
+                  <p className="text-xs text-muted-foreground">
+                    When enabled, buying a package again after a cancellation charges the one-time installation fee ($8.99) and tax fee ($0.99) again.
+                  </p>
+                </div>
+                <Switch
+                  checked={rechargeAfterCancelTreatAsNew}
+                  onCheckedChange={setRechargeAfterCancelTreatAsNew}
+                />
+              </div>
+
+              <div className="pt-4 border-t flex justify-end">
+                <Button
+                  onClick={handleSaveCancellation}
+                  disabled={savingCancellation}
+                  className="font-bold text-xs gap-1.5"
+                >
+                  {savingCancellation ? (
+                    <>
+                      <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                      Saving Settings…
+                    </>
+                  ) : (
+                    <>
+                      <Save className="h-3.5 w-3.5" />
+                      Save Cancellation Settings
+                    </>
+                  )}
+                </Button>
+              </div>
             </CardContent>
           </Card>
         </TabsContent>

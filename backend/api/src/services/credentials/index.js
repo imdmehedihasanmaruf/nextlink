@@ -143,7 +143,7 @@ async function stripLegacyPassword(subscriberId) {
  * @param {string} identifier  username, email, phone or subscriber id
  * @param {string} password
  */
-async function authenticate(identifier, password) {
+async function authenticate(identifier, password, clientIp = null) {
   const value = String(identifier || '').trim();
   if (!value || !password) {
     return { success: false, error: 'Invalid credentials' };
@@ -160,17 +160,30 @@ async function authenticate(identifier, password) {
       return { success: false, error: 'Invalid credentials' };
     }
 
-    await db.query('UPDATE subscriber_credentials SET last_login_at = NOW() WHERE subscriber_id = $1', [
-      hashed.subscriber_id,
-    ]);
+    const updatedCred = await db.queryOne(
+      `UPDATE subscriber_credentials
+          SET previous_login_at = COALESCE(last_login_at, NOW()),
+              last_login_at = NOW(),
+              last_login_ip = COALESCE($2, last_login_ip)
+        WHERE subscriber_id = $1
+        RETURNING previous_login_at, last_login_at`,
+      [hashed.subscriber_id, clientIp],
+    );
 
     const subscriber = await db.queryOne(
-      'SELECT id, name, email, phone, status, package_id, raw_data FROM subscribers WHERE id = $1',
+      `SELECT s.id, s.name, s.first_name, s.last_name, s.email, s.phone, s.status, s.package_id, s.raw_data, s.theme,
+              p.name AS joined_package_name
+         FROM subscribers s
+         LEFT JOIN packages p ON p.id = s.package_id
+        WHERE s.id = $1`,
       [hashed.subscriber_id],
     );
     if (!subscriber) {
       return { success: false, error: 'Account not found' };
     }
+
+    subscriber.previous_login_at = updatedCred?.previous_login_at || hashed.last_login_at || null;
+    subscriber.last_login_at = updatedCred?.last_login_at || new Date();
 
     return { success: true, subscriber, migrated: false };
   }
@@ -206,12 +219,24 @@ async function authenticate(identifier, password) {
     password,
     legacyPassword,
   });
+  await db.query(
+    `UPDATE subscriber_credentials
+        SET previous_login_at = COALESCE(previous_login_at, NOW()),
+            last_login_at = NOW(),
+            last_login_ip = COALESCE($2, last_login_ip)
+      WHERE subscriber_id = $1`,
+    [subscriber.id, clientIp],
+  );
   await stripLegacyPassword(subscriber.id);
 
   logger.info('subscriber credential migrated to bcrypt', { subscriberId: subscriber.id, username });
 
   const refreshed = await db.queryOne(
-    'SELECT id, name, email, phone, status, package_id, raw_data FROM subscribers WHERE id = $1',
+    `SELECT s.id, s.name, s.first_name, s.last_name, s.email, s.phone, s.status, s.package_id, s.raw_data, s.theme,
+            p.name AS joined_package_name
+       FROM subscribers s
+       LEFT JOIN packages p ON p.id = s.package_id
+      WHERE s.id = $1`,
     [subscriber.id],
   );
 

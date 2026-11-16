@@ -86,12 +86,12 @@ export default function BoostBandwidthPage() {
     }
   };
 
-  const handleBoostAction = async (id: string, action: 'approve' | 'reject' | 'complete') => {
+  const handleBoostAction = async (id: string, action: 'approve' | 'reject' | 'complete' | 'deactivate') => {
     const note = action === 'reject' ? (prompt('Optional rejection note:') ?? '') : undefined;
     try {
       const result = await apiPost(`/api/admin/turbo-boost/${encodeURIComponent(id)}/${action}`, note !== undefined ? { note } : {});
       if (result.success) {
-        toast.success(`Request ${result.request?.reference || id} ${action === 'approve' ? 'approved' : action === 'reject' ? 'rejected' : 'marked completed'}`);
+        toast.success(`Request ${result.request?.reference || id} updated (${action})`);
         await loadLiveRequests();
       } else {
         toast.error(result.error || 'The action failed');
@@ -99,6 +99,15 @@ export default function BoostBandwidthPage() {
     } catch (error: any) {
       toast.error(error?.message || 'The action failed');
     }
+  };
+
+  const formatRemaining = (seconds?: number) => {
+    const s = Math.max(0, Number(seconds || 0));
+    if (s <= 0) return 'Expired / 0m';
+    const hrs = Math.floor(s / 3600);
+    const mins = Math.floor((s % 3600) / 60);
+    const secs = s % 60;
+    return `${hrs}h ${mins}m ${secs}s`;
   };
 
   const handleResetDefaults = () => {
@@ -295,6 +304,7 @@ export default function BoostBandwidthPage() {
                     <th className="py-2.5 px-3">Subscriber</th>
                     <th className="py-2.5 px-3">Requested</th>
                     <th className="py-2.5 px-3">Duration</th>
+                    <th className="py-2.5 px-3">Remaining Time</th>
                     <th className="py-2.5 px-3">Ticket</th>
                     <th className="py-2.5 px-3">Status</th>
                     <th className="py-2.5 px-3 text-right">Actions</th>
@@ -307,21 +317,51 @@ export default function BoostBandwidthPage() {
                       <td className="py-2.5 px-3 font-medium text-foreground">{r.subscriber_id}</td>
                       <td className="py-2.5 px-3 font-bold text-amber-600">{r.requested_mbps} Mbps</td>
                       <td className="py-2.5 px-3 text-xs text-muted-foreground">{r.duration_hours} Hours</td>
+                      <td className="py-2.5 px-3 font-mono text-xs">
+                        {r.status === 'active' || r.status === 'in_progress'
+                          ? formatRemaining(r.remaining_seconds)
+                          : r.status === 'expired'
+                            ? 'Expired'
+                            : '—'}
+                      </td>
                       <td className="py-2.5 px-3 text-xs text-muted-foreground">{r.ticket_id || '—'}</td>
                       <td className="py-2.5 px-3">
-                        <Badge className={r.status === 'requested' ? 'bg-amber-500/10 text-amber-600 border-amber-500/30' : r.status === 'in_progress' ? 'bg-blue-500/10 text-blue-600 border-blue-500/30' : r.status === 'completed' ? 'bg-emerald-500/10 text-emerald-600 border-emerald-500/30' : 'bg-muted text-muted-foreground'}>
+                        <Badge
+                          className={
+                            r.status === 'active'
+                              ? 'bg-emerald-500/15 text-emerald-600 border-emerald-500/30'
+                              : r.status === 'requested'
+                                ? 'bg-amber-500/10 text-amber-600 border-amber-500/30'
+                                : r.status === 'in_progress'
+                                  ? 'bg-blue-500/10 text-blue-600 border-blue-500/30'
+                                  : r.status === 'expired'
+                                    ? 'bg-rose-500/10 text-rose-600 border-rose-500/30'
+                                    : 'bg-muted text-muted-foreground'
+                          }
+                        >
                           {r.status}
                         </Badge>
                       </td>
                       <td className="py-2.5 px-3 text-right">
                         <div className="flex items-center justify-end gap-1">
-                          {['requested', 'in_progress'].includes(r.status) && (
+                          {['requested', 'in_progress', 'active'].includes(r.status) && (
                             <>
                               {r.status === 'requested' && (
-                                <Button size="sm" variant="outline" className="h-7 text-xs" onClick={() => handleBoostAction(r.id, 'approve')}>Approve</Button>
+                                <Button size="sm" variant="outline" className="h-7 text-xs" onClick={() => handleBoostAction(r.id, 'approve')}>
+                                  Activate
+                                </Button>
                               )}
-                              <Button size="sm" variant="outline" className="h-7 text-xs text-emerald-600 border-emerald-200 hover:bg-emerald-50" onClick={() => handleBoostAction(r.id, 'complete')}>Complete</Button>
-                              <Button size="sm" variant="outline" className="h-7 text-xs text-rose-600 border-rose-200 hover:bg-rose-50" onClick={() => handleBoostAction(r.id, 'reject')}>Reject</Button>
+                              {['active', 'in_progress'].includes(r.status) && (
+                                <Button size="sm" variant="outline" className="h-7 text-xs text-amber-600 border-amber-200 hover:bg-amber-50" onClick={() => handleBoostAction(r.id, 'deactivate')}>
+                                  Deactivate
+                                </Button>
+                              )}
+                              <Button size="sm" variant="outline" className="h-7 text-xs text-emerald-600 border-emerald-200 hover:bg-emerald-50" onClick={() => handleBoostAction(r.id, 'complete')}>
+                                Complete
+                              </Button>
+                              <Button size="sm" variant="outline" className="h-7 text-xs text-rose-600 border-rose-200 hover:bg-rose-50" onClick={() => handleBoostAction(r.id, 'reject')}>
+                                Reject
+                              </Button>
                             </>
                           )}
                         </div>

@@ -449,7 +449,14 @@ export default function AdminOrdersPage() {
                 </div>
                 <div>
                   <span className="text-muted-foreground block text-[10px] uppercase">Current Provision Status</span>
-                  <Badge className="text-[10px] mt-0.5">{selectedOrder.order_status}</Badge>
+                  <div className="flex items-center gap-1.5 mt-0.5">
+                    <Badge className="text-[10px]">{selectedOrder.order_status}</Badge>
+                    {selectedOrder.subscriber_status === 'cancelled' && (
+                      <Badge className="text-[10px] bg-rose-500/15 text-rose-600 border-rose-300">
+                        Subscription Cancelled
+                      </Badge>
+                    )}
+                  </div>
                 </div>
               </div>
 

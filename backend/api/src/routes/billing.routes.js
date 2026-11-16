@@ -160,13 +160,14 @@ router.get(
 
     // The PDF is regenerated whenever the invoice changed. A cached copy would
     // keep saying "UNPAID" on an invoice that has already been paid.
-    const stamp = `${invoice.status}|${invoice.amount}|${invoice.due_date}|${raw.paidAt || ''}`;
+    const stamp = `${invoice.status}|${invoice.amount}|${invoice.due_date}|${raw.paidAt || ''}|${invoice.invoice_type || raw.invoiceType || ''}|${JSON.stringify(raw.purchaseSession || {})}|${JSON.stringify(raw.cancelSession || {})}|${JSON.stringify(raw.lines || [])}`;
     const markerPath = `${filePath}.stamp`;
     const currentStamp = fs.existsSync(markerPath) ? fs.readFileSync(markerPath, 'utf-8') : null;
 
     if (currentStamp !== stamp) {
       await pdf.generateInvoicePdf({
         id: invoice.id,
+        invoiceType: invoice.invoice_type || raw.invoiceType || (invoice.id.includes('CANCEL') ? 'cancel' : 'subscription'),
         subscriberId: invoice.subscriber_id,
         subscriberName: subscriber ? subscriber.name : raw.subscriberName,
         subscriberPhone: subscriber ? subscriber.phone : raw.subscriberPhone,
@@ -174,11 +175,21 @@ router.get(
         packageName: raw.packageName || '',
         period: raw.period || '',
         amount: invoice.amount,
+        baseAmount: raw.baseAmount || 0,
+        installationFee: Number(invoice.installation_fee ?? raw.installationFee ?? 0),
+        taxFee: Number(invoice.tax_fee ?? raw.taxFee ?? 0),
+        lateFee: Number(invoice.late_fee ?? raw.lateFee ?? 0),
+        carriedOverAmount: Number(invoice.carried_over_amount ?? raw.carriedOverAmount ?? 0),
+        lines: Array.isArray(raw.lines) ? raw.lines : null,
         dueDate: invoice.due_date,
         status: invoice.status,
         paidVia: raw.paidVia || '',
         transactionId: raw.transactionId || '',
         issuedAt: (invoice.created_at || new Date()).toISOString().slice(0, 10),
+        raw_data: raw,
+        purchaseSession: raw.purchaseSession || null,
+        cancelSession: raw.cancelSession || null,
+        cancellation: raw.cancellation || null,
       });
       fs.writeFileSync(markerPath, stamp, 'utf-8');
     }
@@ -205,9 +216,20 @@ router.delete(
   requireAuth,
   requireRole(ROLES.SUPER_ADMIN, ROLES.BILLING),
   asyncHandler(async (req, res) => {
-    const invoice = await db.queryOne('SELECT id, status FROM invoices WHERE id = $1', [req.params.id]);
+    const invoice = await db.queryOne('SELECT id, status, raw_data, invoice_type FROM invoices WHERE id = $1', [req.params.id]);
     if (!invoice) {
       return res.status(404).json({ success: false, error: 'Invoice not found' });
+    }
+
+    // Cancellation records and cancel invoices must NEVER be deleted (auditable record)
+    const isCancel =
+      String(invoice.invoice_type || invoice.raw_data?.invoiceType || '').toLowerCase() === 'cancel' ||
+      String(invoice.id).includes('CANCEL');
+    if (isCancel) {
+      return res.status(403).json({
+        success: false,
+        error: 'Cancelled invoices cannot be deleted. Cancellation and audit records are permanently retained.',
+      });
     }
 
     // A paid invoice is a revenue record — it is never deleted. The admin can
@@ -342,21 +364,200 @@ router.get(
 );
 
 /**
+ * GET /api/billing/cancellations
+ * List all package cancellation records (Admin view).
+ */
+router.get(
+  '/cancellations',
+  requireAuth,
+  requireRole(ROLES.SUPER_ADMIN, ROLES.BILLING, ROLES.SUPPORT),
+  asyncHandler(async (req, res) => {
+    const limit = Math.min(Number(req.query.limit) || 50, 200);
+    const offset = Math.max(Number(req.query.offset) || 0, 0);
+    const search = String(req.query.search || '').trim().toLowerCase();
+    const reason = String(req.query.reason || '').trim();
+
+    const conditions = [];
+    const params = [];
+
+    if (search) {
+      params.push(`%${search}%`);
+      conditions.push(
+        `(LOWER(c.id) LIKE $${params.length} OR LOWER(c.subscriber_id) LIKE $${params.length} OR LOWER(s.name) LIKE $${params.length} OR LOWER(c.package_name) LIKE $${params.length} OR LOWER(c.reason) LIKE $${params.length} OR LOWER(c.description) LIKE $${params.length})`,
+      );
+    }
+
+    if (reason && reason !== 'all') {
+      params.push(reason);
+      conditions.push(`c.reason = $${params.length}`);
+    }
+
+    const where = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
+    params.push(limit, offset);
+
+    const result = await db.query(
+      `SELECT c.*, s.name AS subscriber_name, s.email AS subscriber_email, s.phone AS subscriber_phone
+         FROM cancellations c
+         LEFT JOIN subscribers s ON s.id = c.subscriber_id
+        ${where}
+        ORDER BY c.created_at DESC
+        LIMIT $${params.length - 1} OFFSET $${params.length}`,
+      params,
+    );
+
+    const countResult = await db.query(
+      `SELECT COUNT(*)::int AS total
+         FROM cancellations c
+         LEFT JOIN subscribers s ON s.id = c.subscriber_id
+        ${where}`,
+      params.slice(0, params.length - 2),
+    );
+
+    res.json({
+      success: true,
+      cancellations: result.rows,
+      total: Number(countResult.rows[0]?.total || 0),
+      limit,
+      offset,
+    });
+  }),
+);
+
+/**
+ * POST /api/billing/quote
+ * GET  /api/billing/quote
+ * Single source of truth for Subscriber Plan Invoice Preview (Step 4, Step 5,
+ * final invoice, My Orders, and payment gateway request).
+ */
+async function handleQuoteRequest(req, res) {
+  const source = req.method === 'GET' ? req.query : req.body || {};
+  if (
+    source.simulateFailure === true ||
+    source.simulateFailure === 'true' ||
+    req.headers['x-simulate-quote-failure'] === '1'
+  ) {
+    return res.status(503).json({
+      success: false,
+      error: 'Billing engine quote service is temporarily unavailable. Please retry.',
+    });
+  }
+
+  let subscriberId = String(source.subscriberId || source.customerId || '').trim();
+  const packageId = String(source.packageId || '').trim();
+  const purchaseType = String(source.purchaseType || 'NEW').trim();
+
+  // If an Authorization token is present, validate it and enforce subscriber ownership
+  const authHeader = req.headers.authorization || '';
+  if (authHeader.startsWith('Bearer ')) {
+    const { verifyToken } = require('../middleware/auth');
+    const decoded = verifyToken(authHeader.slice(7).trim());
+    if (decoded) {
+      const tokenSubId = decoded.subscriberId || decoded.id;
+      if (decoded.type === 'subscriber' || decoded.role === ROLES.SUBSCRIBER) {
+        if (subscriberId && subscriberId !== tokenSubId) {
+          return res.status(403).json({
+            success: false,
+            error: 'You are not authorized to request a billing quote for another subscriber.',
+          });
+        }
+        subscriberId = tokenSubId;
+      }
+    }
+  }
+
+  if (!subscriberId) {
+    return res.status(400).json({
+      success: false,
+      error: 'subscriberId (or customerId) is required to calculate a billing quote.',
+    });
+  }
+
+  const quote = await billing.calculateQuote({
+    subscriberId,
+    packageId,
+    purchaseType,
+  });
+
+  return res.json({
+    success: true,
+    quote,
+    calculation: quote,
+  });
+}
+
+router.post('/quote', asyncHandler(handleQuoteRequest));
+router.get('/quote', asyncHandler(handleQuoteRequest));
+
+/**
  * GET /api/billing/settings
- * Effective billing configuration.
+ * Effective billing configuration (including configurable installation, tax, and late fees).
  */
 router.get(
   '/settings',
   requireAuth,
   requireRole(ROLES.SUPER_ADMIN, ROLES.BILLING),
   asyncHandler(async (req, res) => {
+    const feeConfig = await billing.getFeeConfig();
     res.json({
       success: true,
       settings: {
-        timezone: config.billing.timezone,
-        dueDay: config.billing.dueDay,
-        lateGraceDays: config.billing.lateGraceDays,
-        suspendAfterDays: config.billing.suspendAfterDays,
+        timezone: feeConfig.timezone || config.billing.timezone,
+        dueDay: feeConfig.dueDay,
+        lateGraceDays: feeConfig.lateGraceDays,
+        suspendAfterDays: feeConfig.suspendAfterDays,
+        installationFee: feeConfig.installationFee,
+        installation_fee: feeConfig.installationFee,
+        taxFee: feeConfig.taxFee,
+        tax_fee: feeConfig.taxFee,
+        late_fee_type: feeConfig.late_fee_type,
+        late_fee_value: feeConfig.late_fee_value,
+        lateFeeType: feeConfig.lateFeeType,
+        lateFeeValue: feeConfig.lateFeeValue,
+        lateFeePercent: feeConfig.lateFeePercent,
+        currency: config.billing.currency,
+        currencySymbol: config.billing.currencySymbol,
+        paymentMode: config.payments.mode,
+      },
+    });
+  }),
+);
+
+/**
+ * PUT /api/billing/settings
+ * Update configurable billing fee values ($8.99 installation, $0.99 tax, 10% late fee, etc.).
+ */
+router.put(
+  '/settings',
+  requireAuth,
+  requireRole(ROLES.SUPER_ADMIN, ROLES.BILLING),
+  validate({
+    body: z.object({
+      installationFee: z.number().min(0).max(10000).optional(),
+      installation_fee: z.number().min(0).max(10000).optional(),
+      taxFee: z.number().min(0).max(10000).optional(),
+      tax_fee: z.number().min(0).max(10000).optional(),
+      late_fee_type: z.enum(['percent', 'flat']).optional(),
+      lateFeeType: z.enum(['percent', 'flat']).optional(),
+      late_fee_value: z.number().min(0).max(10000).optional(),
+      lateFeeValue: z.number().min(0).max(10000).optional(),
+      lateFeePercent: z.number().min(0).max(100).optional(),
+      dueDay: z.number().int().min(1).max(31).optional(),
+      lateGraceDays: z.number().int().min(0).max(60).optional(),
+      suspendAfterDays: z.number().int().min(1).max(90).optional(),
+      timezone: z.string().min(1).max(60).optional(),
+    }),
+  }),
+  asyncHandler(async (req, res) => {
+    const settingsService = require('../services/settings');
+    const updated = await settingsService.setGroup('billing', req.validatedBody || {}, {
+      id: req.user.id,
+      role: req.user.role,
+      ip: req.ip,
+    });
+    res.json({
+      success: true,
+      settings: {
+        ...updated,
         currency: config.billing.currency,
         currencySymbol: config.billing.currencySymbol,
         paymentMode: config.payments.mode,

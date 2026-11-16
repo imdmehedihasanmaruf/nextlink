@@ -12,7 +12,7 @@
 
 // Server-to-server verification target — the internal Express service.
 const API_BASE =
-  process.env.INTERNAL_API_URL?.replace(/\/api$/, '') || 'http://localhost:3000';
+  process.env.INTERNAL_API_URL?.replace(/\/api$/, '') || 'http://localhost:3100';
 
 export interface AdminPrincipal {
   id: string;
@@ -32,12 +32,12 @@ const DEFAULT_PERMISSIONS: Record<string, string[]> = {
   super_admin: [
     'dashboard', 'subscribers', 'packages', 'billing', 'tickets', 'technicians',
     'referral_rewards', 'boost_bandwidth', 'live_latency', 'interface_traffic', 'peering_hubs',
-    'reports', 'cms', 'settings', 'roles',
+    'reports', 'cms', 'settings', 'roles', 'notifications',
   ],
-  billing: ['dashboard', 'subscribers', 'billing', 'referral_rewards', 'reports'],
-  support: ['dashboard', 'subscribers', 'tickets', 'technicians', 'boost_bandwidth', 'live_latency'],
-  technician: ['dashboard', 'tickets', 'technicians', 'live_latency', 'interface_traffic'],
-  noc_operator: ['dashboard', 'reports', 'tickets', 'live_latency', 'interface_traffic', 'peering_hubs'],
+  billing: ['dashboard', 'subscribers', 'billing', 'referral_rewards', 'reports', 'notifications'],
+  support: ['dashboard', 'subscribers', 'tickets', 'technicians', 'boost_bandwidth', 'live_latency', 'notifications'],
+  technician: ['dashboard', 'tickets', 'technicians', 'live_latency', 'interface_traffic', 'notifications'],
+  noc_operator: ['dashboard', 'reports', 'tickets', 'live_latency', 'interface_traffic', 'peering_hubs', 'notifications'],
 };
 
 async function loadPermissions(): Promise<Record<string, string[]>> {

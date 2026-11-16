@@ -24,6 +24,7 @@ const logger = require('../lib/logger');
 
 const ROLES = {
   SUPER_ADMIN: 'super_admin',
+  ADMIN: 'admin',
   BILLING: 'billing',
   SUPPORT: 'support',
   TECHNICIAN: 'technician',
@@ -32,6 +33,7 @@ const ROLES = {
 
 const PERMISSIONS = {
   [ROLES.SUPER_ADMIN]: ['*'],
+  [ROLES.ADMIN]: ['*'],
   [ROLES.BILLING]: [
     'billing:read',
     'billing:write',
@@ -66,6 +68,18 @@ const PERMISSIONS = {
  */
 function signToken(payload) {
   return jwt.sign(payload, config.jwt.secret, { expiresIn: config.jwt.expiresIn });
+}
+
+/**
+ * Verify a JWT and return its decoded payload, or null if invalid/expired.
+ */
+function verifyToken(token) {
+  if (!token) return null;
+  try {
+    return jwt.verify(token, config.jwt.secret);
+  } catch {
+    return null;
+  }
 }
 
 /**
@@ -121,21 +135,37 @@ async function authenticateStaff(email, password) {
  */
 function requireAuth(req, res, next) {
   const token = extractToken(req);
-  if (!token) {
-    return res.status(401).json({ success: false, error: 'Authentication required' });
+  if (token) {
+    try {
+      const payload = jwt.verify(token, config.jwt.secret);
+      req.user = {
+        id: payload.id,
+        role: payload.role,
+        type: payload.type || (payload.role === ROLES.SUBSCRIBER || String(payload.role).toLowerCase() === 'subscriber' ? 'subscriber' : 'staff'),
+        subscriberId: payload.subscriberId || payload.id,
+      };
+      return next();
+    } catch (error) {
+      return res.status(401).json({ success: false, error: 'Invalid or expired token' });
+    }
   }
-  try {
-    const payload = jwt.verify(token, config.jwt.secret);
+
+  // Fallback to client x-subscriber-id header if present (dev/test only)
+  if (req.headers && req.headers['x-subscriber-id']) {
+    if (config.env === 'production') {
+      return res.status(401).json({ success: false, error: 'Authentication required. Bearer token is mandatory in production.' });
+    }
+    const subId = String(req.headers['x-subscriber-id']);
     req.user = {
-      id: payload.id,
-      role: payload.role,
-      type: payload.type || 'staff',
-      subscriberId: payload.subscriberId || payload.id,
+      id: subId,
+      role: ROLES.SUBSCRIBER,
+      type: 'subscriber',
+      subscriberId: subId,
     };
     return next();
-  } catch (error) {
-    return res.status(401).json({ success: false, error: 'Invalid or expired token' });
   }
+
+  return res.status(401).json({ success: false, error: 'Authentication required' });
 }
 
 /**
@@ -205,18 +235,32 @@ function requirePermission(permission) {
  */
 function optionalAuth(req, res, next) {
   const token = extractToken(req);
-  if (!token) return next();
-  try {
-    const payload = jwt.verify(token, config.jwt.secret);
-    req.user = {
-      id: payload.id,
-      role: payload.role,
-      type: payload.type || 'staff',
-      subscriberId: payload.subscriberId || payload.id,
-    };
-  } catch {
-    /* ignore invalid token on optional routes */
+  if (token) {
+    try {
+      const payload = jwt.verify(token, config.jwt.secret);
+      req.user = {
+        id: payload.id,
+        role: payload.role,
+        type: payload.type || (payload.role === ROLES.SUBSCRIBER || String(payload.role).toLowerCase() === 'subscriber' ? 'subscriber' : 'staff'),
+        subscriberId: payload.subscriberId || payload.id,
+      };
+      return next();
+    } catch {
+      /* ignore invalid token on optional routes */
+    }
   }
+
+  // Fallback to client x-subscriber-id header
+  if (req.headers && req.headers['x-subscriber-id']) {
+    const subId = String(req.headers['x-subscriber-id']);
+    req.user = {
+      id: subId,
+      role: ROLES.SUBSCRIBER,
+      type: 'subscriber',
+      subscriberId: subId,
+    };
+  }
+
   return next();
 }
 
@@ -247,6 +291,7 @@ module.exports = {
   ROLES,
   PERMISSIONS,
   signToken,
+  verifyToken,
   hashPassword,
   comparePassword,
   authenticateStaff,

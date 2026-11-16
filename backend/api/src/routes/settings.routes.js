@@ -11,13 +11,74 @@ const settings = require('../services/settings');
 const router = express.Router();
 
 /**
+ * GET /api/settings
+ * Root settings route: returns masked system settings for authorized staff roles.
+ */
+router.get(
+  '/',
+  requireAuth,
+  requireRole(ROLES.SUPER_ADMIN, ROLES.BILLING, ROLES.SUPPORT, ROLES.TECHNICIAN),
+  asyncHandler(async (_req, res) => {
+    const all = await settings.getMasked();
+    res.json({ success: true, settings: all });
+  })
+);
+
+/**
+ * GET /api/settings/public
+ * Publicly readable non-secret configuration (billing fees & footer version).
+ */
+router.get(
+  '/public',
+  asyncHandler(async (_req, res) => {
+    const all = await settings.getAll();
+    const lateFeeType = String(all.billing?.late_fee_type || all.billing?.lateFeeType || 'percent').toLowerCase() === 'flat' ? 'flat' : 'percent';
+    const lateFeeValue = Number(all.billing?.late_fee_value ?? all.billing?.lateFeeValue ?? all.billing?.lateFeePercent ?? 10);
+    res.json({
+      success: true,
+      billing: {
+        currency: all.billing?.currency || 'USD',
+        dueDay: Number(all.billing?.dueDay ?? 10),
+        lateGraceDays: Number(all.billing?.lateGraceDays ?? 5),
+        suspendAfterDays: Number(all.billing?.suspendAfterDays ?? 10),
+        installationFee: Number(all.billing?.installationFee ?? 8.99),
+        taxFee: Number(all.billing?.taxFee ?? 0.99),
+        late_fee_type: lateFeeType,
+        late_fee_value: lateFeeValue,
+        lateFeeType,
+        lateFeeValue,
+        lateFeePercent: lateFeeValue,
+        timezone: all.billing?.timezone || 'UTC',
+      },
+      footer: {
+        version: all.footer?.version || 'To be implemented',
+      },
+      cancellation: {
+        reasons: all.cancellation?.reasons || [
+          'Too expensive',
+          'Slow speed',
+          'Frequent disconnections',
+          'Moving to another location',
+          'Switching provider',
+          'Poor support',
+          'Temporary pause',
+          'Other',
+        ],
+        effectiveDateRule: all.cancellation?.effectiveDateRule || 'immediate',
+        allowNotSureBuyAgain: all.cancellation?.allowNotSureBuyAgain ?? true,
+      },
+    });
+  }),
+);
+
+/**
  * GET /api/settings/system
  * All system settings with the secrets masked.
  */
 router.get(
   '/system',
   requireAuth,
-  requireRole(ROLES.SUPER_ADMIN),
+  requireRole(ROLES.SUPER_ADMIN, ROLES.BILLING),
   asyncHandler(async (req, res) => {
     const masked = await settings.getMasked();
     res.json({ success: true, settings: masked });
@@ -26,18 +87,18 @@ router.get(
 
 /**
  * PUT /api/settings/system/:group
- * Persist one settings group (MikroTik, SMS, payments, billing).
+ * Persist one settings group (MikroTik, SMS, payments, billing, footer, notifications).
  */
 router.put(
   '/system/:group',
   requireAuth,
-  requireRole(ROLES.SUPER_ADMIN),
+  requireRole(ROLES.SUPER_ADMIN, ROLES.BILLING),
   validate({
     body: z.record(z.any()),
   }),
   asyncHandler(async (req, res) => {
     const group = String(req.params.group);
-    if (!['mikrotik', 'sms', 'payments', 'billing'].includes(group)) {
+    if (!['mikrotik', 'sms', 'payments', 'billing', 'footer', 'notifications', 'cancellation'].includes(group)) {
       return res.status(400).json({ success: false, error: `Unknown settings group: ${group}` });
     }
 

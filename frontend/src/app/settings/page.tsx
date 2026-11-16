@@ -1,7 +1,8 @@
 'use client'
 
-import React, { useState, useEffect } from 'react'
+import React, { useState, useEffect, useRef } from 'react'
 import { useRouter } from 'next/navigation'
+import { useTheme } from 'next-themes'
 import { 
   Sun, 
   Moon, 
@@ -15,7 +16,9 @@ import {
   ShieldCheck,
   Bell,
   Globe,
-  RotateCcw
+  RotateCcw,
+  AlertCircle,
+  RefreshCw
 } from 'lucide-react'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Label } from '@/components/ui/label'
@@ -23,6 +26,7 @@ import { Button } from '@/components/ui/button'
 import { Switch } from '@/components/ui/switch'
 import { useSettingsStore, useTranslation, SUPPORTED_LANGUAGES, ThemeColor, FontSize, Language, ThemeMode } from '@/store/settingsStore'
 import { useAuthStore } from '@/store/authStore'
+import { saveUserPreferences } from '@/lib/portalApi'
 
 const colors: { name: ThemeColor; label: string; bg: string }[] = [
   { name: 'blue', label: 'Blue', bg: 'bg-blue-500' },
@@ -32,68 +36,174 @@ const colors: { name: ThemeColor; label: string; bg: string }[] = [
   { name: 'orange', label: 'Orange', bg: 'bg-amber-500' },
 ]
 
+/**
+ * Apply a live visual preview of a theme mode without writing to localStorage or the DB.
+ */
+function applyThemePreview(themeMode: ThemeMode) {
+  if (typeof document === 'undefined') return
+  let isDark = false
+  if (themeMode === 'dark') {
+    isDark = true
+  } else if (themeMode === 'light') {
+    isDark = false
+  } else {
+    isDark = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches
+  }
+  if (isDark) {
+    document.documentElement.classList.add('dark')
+  } else {
+    document.documentElement.classList.remove('dark')
+  }
+}
+
 export default function SettingsPage() {
   const router = useRouter()
-  const { isAuthenticated } = useAuthStore()
+  const { user, isAuthenticated, updateUser } = useAuthStore()
   const { t, language } = useTranslation()
+  const { theme: nextTheme, setTheme: setNextTheme } = useTheme()
   const { 
     theme, 
     themeColor, 
     fontSize, 
     autoSave,
-    setTheme, 
+    setTheme: setStoreTheme, 
     setThemeColor, 
     setFontSize, 
     setLanguage, 
     setAutoSave 
   } = useSettingsStore()
 
-  // Local draft state — settings DO NOT change globally unless "Save Changes" is clicked
-  const [draftTheme, setDraftTheme] = useState<ThemeMode>(theme)
+  // Authoritative saved theme: what is currently stored in localStorage / DB
+  const [savedTheme, setSavedTheme] = useState<ThemeMode>(() => {
+    if (typeof window !== 'undefined') {
+      const stored = localStorage.getItem('nl_user_theme') || localStorage.getItem('nl_theme')
+      if (stored === 'light' || stored === 'dark' || stored === 'system') {
+        return stored
+      }
+    }
+    return (theme as ThemeMode) || 'system'
+  })
+
+  // Pending theme: what the user has clicked in the Appearance form but NOT saved yet
+  const [pendingTheme, setPendingTheme] = useState<ThemeMode>(savedTheme)
+  const savedThemeRef = useRef<ThemeMode>(savedTheme)
+  savedThemeRef.current = savedTheme
+
+  // Local draft state for other deferred settings (Theme Color, Font Size, Language, AutoSave)
   const [draftThemeColor, setDraftThemeColor] = useState<ThemeColor>(themeColor)
   const [draftFontSize, setDraftFontSize] = useState<FontSize>(fontSize)
   const [draftLanguage, setDraftLanguage] = useState<Language>(language)
   const [draftAutoSave, setDraftAutoSave] = useState<boolean>(autoSave)
 
-  // Keep draft state in sync with saved settings on initial load or reset
-  useEffect(() => {
-    setDraftTheme(theme)
-    setDraftThemeColor(themeColor)
-    setDraftFontSize(fontSize)
-    setDraftLanguage(language)
-    setDraftAutoSave(autoSave)
-  }, [theme, themeColor, fontSize, language, autoSave])
-
+  const [saving, setSaving] = useState(false)
   const [savedAlert, setSavedAlert] = useState(false)
+  const [saveError, setSaveError] = useState<string | null>(null)
 
-  const handleManualSave = () => {
-    // If user is not authenticated, redirect to login page and DO NOT save settings
-    if (!isAuthenticated) {
-      router.push('/login?redirect=settings')
-      return
-    }
-
-    // Only commit settings to global store when Save Changes is clicked by an authenticated user
-    setTheme(draftTheme)
-    setThemeColor(draftThemeColor)
-    setFontSize(draftFontSize)
-    setLanguage(draftLanguage)
-    setAutoSave(draftAutoSave)
-
-    setSavedAlert(true)
-    setTimeout(() => setSavedAlert(false), 3000)
-  }
-
-  const handleResetToSaved = () => {
-    setDraftTheme(theme)
+  // Sync draft states when store loads
+  useEffect(() => {
     setDraftThemeColor(themeColor)
     setDraftFontSize(fontSize)
     setDraftLanguage(language)
     setDraftAutoSave(autoSave)
+  }, [themeColor, fontSize, language, autoSave])
+
+  // If store theme updates from outside, sync savedTheme if clean
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      const stored = (localStorage.getItem('nl_user_theme') || localStorage.getItem('nl_theme') || theme || 'system') as ThemeMode
+      setSavedTheme(stored)
+      setPendingTheme((prev) => (prev === savedThemeRef.current ? stored : prev))
+    }
+  }, [theme])
+
+  // REVERT UNCOMMITTED PREVIEW ON UNMOUNT OR NAVIGATION AWAY
+  useEffect(() => {
+    const handleBeforeUnload = () => {
+      applyThemePreview(savedThemeRef.current)
+    }
+    window.addEventListener('beforeunload', handleBeforeUnload)
+
+    return () => {
+      window.removeEventListener('beforeunload', handleBeforeUnload)
+      // Discard unsaved preview when navigating to another page
+      applyThemePreview(savedThemeRef.current)
+    }
+  }, [])
+
+  // User picks another option: live preview ONLY (temporary <html> class), NO write to storage/DB
+  const handleThemePick = (chosen: ThemeMode) => {
+    setPendingTheme(chosen)
+    setSaveError(null)
+    applyThemePreview(chosen)
   }
 
+  // Cancel / Reset: discard pendingTheme and revert UI to savedTheme immediately
+  const handleResetToSaved = () => {
+    setPendingTheme(savedTheme)
+    applyThemePreview(savedTheme)
+    setDraftThemeColor(themeColor)
+    setDraftFontSize(fontSize)
+    setDraftLanguage(language)
+    setDraftAutoSave(autoSave)
+    setSaveError(null)
+  }
+
+  // Save button: write to localStorage and DB (user preference via API)
+  const handleSave = async () => {
+    setSaving(true)
+    setSaveError(null)
+
+    try {
+      const themeToSave = pendingTheme
+
+      // 1. Permanently write to localStorage
+      try {
+        localStorage.setItem('nl_theme', themeToSave)
+      } catch (e) {}
+
+      // 2. Commit to next-themes and Zustand store
+      setNextTheme(themeToSave)
+      setStoreTheme(themeToSave)
+      setThemeColor(draftThemeColor)
+      setFontSize(draftFontSize)
+      setLanguage(draftLanguage)
+      setAutoSave(draftAutoSave)
+
+      // 3. If authenticated, persist to database via API
+      if (isAuthenticated && user?.id) {
+        try {
+          localStorage.setItem('nl_user_theme', themeToSave)
+        } catch (e) {}
+        updateUser({ theme: themeToSave })
+
+        const res = await saveUserPreferences({
+          theme: themeToSave,
+          themeColor: draftThemeColor,
+          fontSize: draftFontSize,
+          language: draftLanguage,
+          autoSave: draftAutoSave,
+        })
+
+        if (!res || res.success === false) {
+          throw new Error(res?.error || 'Failed to save preferences to server')
+        }
+      }
+
+      // Mark saved
+      setSavedTheme(themeToSave)
+      setSavedAlert(true)
+      setTimeout(() => setSavedAlert(false), 3000)
+    } catch (err: any) {
+      console.error('Failed to save settings:', err)
+      setSaveError(err.message || 'Failed to save changes. Please try again.')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  const hasThemeChanges = pendingTheme !== savedTheme
   const hasUnsavedChanges = 
-    draftTheme !== theme || 
+    hasThemeChanges || 
     draftThemeColor !== themeColor || 
     draftFontSize !== fontSize || 
     draftLanguage !== language || 
@@ -112,7 +222,10 @@ export default function SettingsPage() {
         </div>
 
         {hasUnsavedChanges && (
-          <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-amber-500/10 text-amber-600 dark:text-amber-400 text-xs font-semibold border border-amber-500/20">
+          <div
+            aria-live="polite"
+            className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-amber-500/10 text-amber-600 dark:text-amber-400 text-xs font-semibold border border-amber-500/20"
+          >
             <span>Unsaved Changes</span>
           </div>
         )}
@@ -121,60 +234,113 @@ export default function SettingsPage() {
       {savedAlert && (
         <div className="rounded-xl border border-emerald-500/50 bg-emerald-500/10 p-4 text-emerald-600 dark:text-emerald-400 flex items-center gap-2 animate-in fade-in">
           <Check className="h-5 w-5" />
-          <span>{t('savedSuccess')}</span>
+          <span>{t('savedSuccess')} (Theme saved)</span>
         </div>
       )}
 
-      {/* 1. Theme Mode (Dark/Light/System) */}
+      {saveError && (
+        <div className="rounded-xl border border-destructive/50 bg-destructive/10 p-4 text-destructive flex items-center justify-between gap-3 animate-in fade-in">
+          <div className="flex items-center gap-2">
+            <AlertCircle className="h-5 w-5 shrink-0" />
+            <span className="text-sm font-medium">{saveError}</span>
+          </div>
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            onClick={handleSave}
+            disabled={saving}
+            className="gap-1.5 text-xs font-semibold cursor-pointer shrink-0"
+          >
+            <RefreshCw className="h-3.5 w-3.5" />
+            <span>Retry</span>
+          </Button>
+        </div>
+      )}
+
+      {/* 1. Theme Mode (Dark/Light/System) - Live Preview until Save */}
       <Card className="border shadow-sm">
         <CardHeader>
-          <CardTitle className="flex items-center gap-2">
-            <Sun className="h-5 w-5 text-primary" />
-            {t('appearance')}
-          </CardTitle>
-          <CardDescription>
-            Choose how NextLink displays on your screen
-          </CardDescription>
+          <div className="flex items-center justify-between">
+            <div className="space-y-1">
+              <CardTitle className="flex items-center gap-2">
+                <Sun className="h-5 w-5 text-primary" />
+                {t('appearance')}
+              </CardTitle>
+              <CardDescription>
+                Choose how NextLink displays on your screen. Preview live; applies permanently only after clicking Save.
+              </CardDescription>
+            </div>
+            {hasThemeChanges && (
+              <span className="text-xs px-2.5 py-1 rounded-full bg-primary/10 text-primary font-semibold border border-primary/20">
+                Live Preview
+              </span>
+            )}
+          </div>
         </CardHeader>
         <CardContent>
-          <div className="grid grid-cols-3 gap-4">
+          <div className="grid grid-cols-3 gap-4" role="radiogroup" aria-label="Appearance Mode">
             <button
               type="button"
-              onClick={() => setDraftTheme('light')}
+              role="radio"
+              aria-checked={pendingTheme === 'light'}
+              onClick={() => handleThemePick('light')}
               className={`flex flex-col items-center justify-center p-4 rounded-xl border-2 transition-all cursor-pointer ${
-                draftTheme === 'light' 
-                  ? 'border-primary bg-primary/10 text-primary font-bold shadow-sm' 
+                pendingTheme === 'light' 
+                  ? 'border-primary bg-primary/10 text-primary font-bold shadow-sm ring-2 ring-primary/20' 
                   : 'border-border hover:border-primary/50 text-muted-foreground'
               }`}
+              data-testid="theme-option-light"
             >
               <Sun className="h-6 w-6 mb-2" />
               <span className="text-sm">{t('lightMode')}</span>
+              {pendingTheme === 'light' && (
+                <span className="mt-1 text-[11px] font-semibold text-primary">
+                  {pendingTheme === savedTheme ? 'Active' : 'Preview'}
+                </span>
+              )}
             </button>
 
             <button
               type="button"
-              onClick={() => setDraftTheme('dark')}
+              role="radio"
+              aria-checked={pendingTheme === 'dark'}
+              onClick={() => handleThemePick('dark')}
               className={`flex flex-col items-center justify-center p-4 rounded-xl border-2 transition-all cursor-pointer ${
-                draftTheme === 'dark' 
-                  ? 'border-primary bg-primary/10 text-primary font-bold shadow-sm' 
+                pendingTheme === 'dark' 
+                  ? 'border-primary bg-primary/10 text-primary font-bold shadow-sm ring-2 ring-primary/20' 
                   : 'border-border hover:border-primary/50 text-muted-foreground'
               }`}
+              data-testid="theme-option-dark"
             >
               <Moon className="h-6 w-6 mb-2" />
               <span className="text-sm">{t('darkMode')}</span>
+              {pendingTheme === 'dark' && (
+                <span className="mt-1 text-[11px] font-semibold text-primary">
+                  {pendingTheme === savedTheme ? 'Active' : 'Preview'}
+                </span>
+              )}
             </button>
 
             <button
               type="button"
-              onClick={() => setDraftTheme('system')}
+              role="radio"
+              aria-checked={pendingTheme === 'system'}
+              onClick={() => handleThemePick('system')}
               className={`flex flex-col items-center justify-center p-4 rounded-xl border-2 transition-all cursor-pointer ${
-                draftTheme === 'system' 
-                  ? 'border-primary bg-primary/10 text-primary font-bold shadow-sm' 
+                pendingTheme === 'system' 
+                  ? 'border-primary bg-primary/10 text-primary font-bold shadow-sm ring-2 ring-primary/20' 
                   : 'border-border hover:border-primary/50 text-muted-foreground'
               }`}
+              data-testid="theme-option-system"
             >
               <Monitor className="h-6 w-6 mb-2" />
               <span className="text-sm">{t('systemMode')}</span>
+              {pendingTheme === 'system' && (
+                <span className="mt-1 text-[11px] font-semibold text-primary">
+                  {pendingTheme === savedTheme ? 'Active' : 'Preview'}
+                </span>
+              )}
             </button>
           </div>
         </CardContent>
@@ -305,22 +471,28 @@ export default function SettingsPage() {
         </CardContent>
       </Card>
 
-      {/* Manual Save Confirmation Action */}
+      {/* Actions: Cancel & Save */}
       <div className="flex justify-end items-center gap-3 pt-4">
         {hasUnsavedChanges && (
           <Button 
             type="button" 
             variant="outline" 
             onClick={handleResetToSaved}
-            className="gap-2 font-medium"
+            className="gap-2 font-medium cursor-pointer"
           >
             <RotateCcw className="h-4 w-4" />
-            <span>Reset to Saved</span>
+            <span>Cancel</span>
           </Button>
         )}
-        <Button onClick={handleManualSave} size="lg" className="gap-2 font-bold shadow-lg">
+        <Button 
+          onClick={handleSave} 
+          size="lg" 
+          disabled={!hasUnsavedChanges || saving}
+          className="gap-2 font-bold shadow-lg cursor-pointer"
+          data-testid="settings-save-button"
+        >
           <Save className="h-5 w-5" />
-          <span>{t('saveChanges')}</span>
+          <span>{saving ? 'Saving...' : t('saveChanges')}</span>
         </Button>
       </div>
     </div>

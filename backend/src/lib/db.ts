@@ -67,11 +67,15 @@ export async function getAdminStore(): Promise<Record<string, any>> {
            FROM packages ORDER BY created_at ASC`,
       ),
       p.query(
-        `SELECT id, name, email, phone, package_id, status, created_at, raw_data
-           FROM subscribers ORDER BY created_at ASC`,
+        `SELECT s.id, s.name, s.first_name, s.last_name, s.email, s.phone, s.package_id, s.status, s.created_at, s.raw_data,
+                p.name AS joined_package_name
+           FROM subscribers s
+           LEFT JOIN packages p ON p.id = s.package_id
+          ORDER BY s.created_at ASC`,
       ),
       p.query(
-        `SELECT id, subscriber_id, amount, status, due_date, created_at, raw_data
+        `SELECT id, subscriber_id, amount, installation_fee, tax_fee, late_fee, carried_over_amount, late_fee_applied,
+                status, due_date, created_at, raw_data
            FROM invoices ORDER BY created_at ASC`,
       ),
       p.query(
@@ -113,14 +117,30 @@ export async function getAdminStore(): Promise<Record<string, any>> {
       }),
       subscribers: subscribersRes.rows.map((r) => {
         const raw = r.raw_data || {};
+        const fullName = r.name || raw.name || '';
+        const firstName = r.first_name || raw.firstName || String(fullName).trim().split(/\s+/)[0] || '';
+        const lastName =
+          r.last_name ||
+          raw.lastName ||
+          String(fullName)
+            .trim()
+            .split(/\s+/)
+            .slice(1)
+            .join(' ') ||
+          '';
+        const resolvedPkgId = r.package_id || raw.packageId || raw.package_id || '';
+        const resolvedPkgName = r.joined_package_name || raw.packageName || raw.package || '';
         return {
           ...raw,
           id: r.id,
-          name: raw.name || r.name || '',
-          email: raw.email || r.email || '',
-          phone: raw.phone || r.phone || '',
+          name: fullName || `${firstName} ${lastName}`.trim(),
+          firstName,
+          lastName,
+          email: r.email || raw.email || '',
+          phone: r.phone || raw.phone || '',
           username: raw.username || '',
-          packageId: raw.packageId || raw.package_id || r.package_id || '',
+          packageId: resolvedPkgId,
+          packageName: resolvedPkgName,
           status: r.status || raw.status || 'active',
           joinDate: raw.joinDate || raw.joinedAt || r.created_at || '',
         };
@@ -131,10 +151,16 @@ export async function getAdminStore(): Promise<Record<string, any>> {
           ...raw,
           id: r.id,
           invoiceNumber: raw.invoiceNumber || r.id,
-          subscriberId: raw.subscriberId || raw.subscriber_id || r.subscriber_id || '',
-          amount: Number(raw.amount ?? r.amount ?? 0),
+          subscriberId: r.subscriber_id || raw.subscriberId || raw.subscriber_id || '',
+          amount: Number(r.amount ?? raw.amount ?? 0),
+          installationFee: Number(r.installation_fee ?? raw.installationFee ?? 0),
+          taxFee: Number(r.tax_fee ?? raw.taxFee ?? 0),
+          lateFee: Number(r.late_fee ?? raw.lateFee ?? 0),
+          carriedOverAmount: Number(r.carried_over_amount ?? raw.carriedOverAmount ?? 0),
+          lateFeeApplied: Boolean(r.late_fee_applied ?? raw.lateFeeApplied ?? false),
+          lines: Array.isArray(raw.lines) ? raw.lines : [],
           status: r.status || raw.status || 'unpaid',
-          dueDate: raw.dueDate || r.due_date || '',
+          dueDate: r.due_date || raw.dueDate || '',
           issueDate: raw.issueDate || r.created_at || '',
         };
       }),
@@ -251,12 +277,10 @@ export async function saveAdminSection(type: string, data: any): Promise<void> {
     const p = getDbPool();
 
     if (type === 'packages' && Array.isArray(data)) {
-      // Packages are an upsert instead of delete-and-reinsert. A table rewrite
-      // between the DELETE and the INSERT left the catalogue empty for a
-      // moment, and it silently dropped the RouterOS profile columns
-      // (routeros_profile, max_limit), which are not part of the admin
-      // payload — so every gigabit customer was shaped back to 10 Mbps.
       for (const item of data) {
+        const pkgId = String(item.id);
+        const pkgName = item.name || 'Unnamed';
+        const pkgPrice = Number(item.price || 0);
         await p.query(
           `INSERT INTO packages (id, name, speed, upload_speed, price, duration, description, subscriber_count, raw_data, updated_at)
            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NOW())
@@ -271,30 +295,71 @@ export async function saveAdminSection(type: string, data: any): Promise<void> {
              raw_data = EXCLUDED.raw_data,
              updated_at = NOW()`,
           [
-            String(item.id),
-            item.name || 'Unnamed',
+            pkgId,
+            pkgName,
             Number(item.downloadSpeed || item.speed || 50),
             Number(item.uploadSpeed || item.speed || 50),
-            Number(item.price || 0),
+            pkgPrice,
             Number(item.duration || 30),
             item.description || '',
             Number(item.subscriberCount || 0),
             JSON.stringify(item),
           ]
         );
+        // Cross-check sync: keep subscribers.raw_data.packageName and subscriber_billing.amount aligned
+        await p.query(
+          `UPDATE subscribers
+              SET raw_data = jsonb_set(COALESCE(raw_data, '{}'::jsonb), '{packageName}', to_jsonb($2::text), true),
+                  updated_at = NOW()
+            WHERE package_id = $1`,
+          [pkgId, pkgName],
+        );
+        await p.query(
+          `UPDATE subscriber_billing
+              SET amount = $2, updated_at = NOW()
+            WHERE package_id = $1`,
+          [pkgId, pkgPrice],
+        );
       }
     } else if (type === 'subscribers' && Array.isArray(data)) {
-      // The billing engine also writes to the subscribers table (it
-      // suspends and restores accounts), so this is an upsert instead of a
-      // delete-and-reinsert. A full rewrite would resurrect the suspended
-      // accounts and reset the creation date of every subscriber.
-      const subscriberIds = data.map((item: any) => String(item.id));
+      const pkgRows = await p.query('SELECT id, name, price FROM packages');
+      const pkgMap = new Map<string, { name: string; price: number }>();
+      for (const pr of pkgRows.rows) {
+        pkgMap.set(String(pr.id), { name: String(pr.name || ''), price: Number(pr.price || 0) });
+      }
+
       for (const item of data) {
+        const subId = String(item.id || '').trim();
+        if (!subId || subId === 'undefined') continue;
+
+        const rawFirst = String(item.firstName || item.first_name || '').trim();
+        const rawLast = String(item.lastName || item.last_name || '').trim();
+        const rawFull = String(item.name || '').trim();
+        const firstName = rawFirst || rawFull.split(/\s+/)[0] || '';
+        const lastName = rawLast || rawFull.split(/\s+/).slice(1).join(' ') || '';
+        const fullName = rawFirst || rawLast ? `${firstName} ${lastName}`.trim() : rawFull;
+
+        const pkgId = String(item.packageId || item.package_id || '').trim();
+        const pkgInfo = pkgId ? pkgMap.get(pkgId) : undefined;
+        const authoritativePkgName = pkgInfo ? pkgInfo.name : (item.packageName || item.package || '');
+
+        const mergedRaw = {
+          ...item,
+          id: subId,
+          name: fullName,
+          firstName,
+          lastName,
+          packageId: pkgId,
+          packageName: authoritativePkgName,
+        };
+
         await p.query(
-          `INSERT INTO subscribers (id, name, email, phone, package_id, status, raw_data, created_at, updated_at)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, COALESCE((SELECT created_at FROM subscribers WHERE id = $1::varchar), NOW()), NOW())
+          `INSERT INTO subscribers (id, name, first_name, last_name, email, phone, package_id, status, raw_data, created_at, updated_at)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, COALESCE((SELECT created_at FROM subscribers WHERE id = $1::varchar), NOW()), NOW())
            ON CONFLICT (id) DO UPDATE SET
              name = EXCLUDED.name,
+             first_name = EXCLUDED.first_name,
+             last_name = EXCLUDED.last_name,
              email = EXCLUDED.email,
              phone = EXCLUDED.phone,
              package_id = EXCLUDED.package_id,
@@ -302,45 +367,51 @@ export async function saveAdminSection(type: string, data: any): Promise<void> {
              raw_data = EXCLUDED.raw_data,
              updated_at = NOW()`,
           [
-            String(item.id),
-            item.name || '',
+            subId,
+            fullName,
+            firstName,
+            lastName,
             item.email || '',
             item.phone || '',
-            item.packageId || item.package_id || '',
+            pkgId,
             item.status || 'active',
-            JSON.stringify(item),
+            JSON.stringify(mergedRaw),
           ]
         );
+
+        if (pkgId && pkgInfo) {
+          await p.query(
+            `UPDATE subscriber_billing
+                SET package_id = $2, amount = $3, updated_at = NOW()
+              WHERE subscriber_id = $1`,
+            [subId, pkgId, pkgInfo.price],
+          );
+        }
       }
-      // The subscribers are not deleted here either — the billing engine
-      // suspends and restores accounts, and the admin panel may hold a
-      // partial list.
     } else if (type === 'invoices' && Array.isArray(data)) {
-      // The invoices table is also written by the billing engine, so this is
-      // an upsert instead of a delete-and-reinsert. A full rewrite would
-      // reset every paid invoice to "unpaid" and reset the creation date.
-      //
-      // The subscriber id may be missing from the admin payload — the billing
-      // engine writes it but the legacy admin store does not round-trip it.
-      // An empty value must never overwrite the real one, otherwise a payment
-      // can no longer find its account and no overdue account is ever cut.
-      // A paid invoice is also never flipped back to unpaid.
       for (const item of data) {
-        // The store holds the invoice either as the legacy shape (id) or as
-        // the billing engine's raw_data (invoiceNumber, never an id). Without
-        // this, String(item.id) produced the literal string "undefined" and
-        // every engine invoice collapsed onto one corrupted row.
         const resolvedId = String(item.id || item.invoiceNumber || item.invoice_number || '');
         if (!resolvedId || resolvedId === 'undefined') {
           console.warn('[PostgreSQL] skipping an invoice without an id in the save payload');
           continue;
         }
         await p.query(
-          `INSERT INTO invoices (id, subscriber_id, amount, status, due_date, raw_data, created_at, updated_at)
-           VALUES ($1, $2, $3, $4, $5, $6, COALESCE((SELECT created_at FROM invoices WHERE id = $1::varchar), NOW()), NOW())
+          `INSERT INTO invoices (
+             id, subscriber_id, amount, installation_fee, tax_fee, late_fee,
+             carried_over_amount, late_fee_applied, status, due_date, raw_data, created_at, updated_at
+           )
+           VALUES (
+             $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11,
+             COALESCE((SELECT created_at FROM invoices WHERE id = $1::varchar), NOW()), NOW()
+           )
            ON CONFLICT (id) DO UPDATE SET
              subscriber_id = COALESCE(NULLIF(EXCLUDED.subscriber_id, ''), invoices.subscriber_id),
              amount = CASE WHEN invoices.status = 'paid' THEN invoices.amount ELSE EXCLUDED.amount END,
+             installation_fee = COALESCE(EXCLUDED.installation_fee, invoices.installation_fee),
+             tax_fee = COALESCE(EXCLUDED.tax_fee, invoices.tax_fee),
+             late_fee = COALESCE(EXCLUDED.late_fee, invoices.late_fee),
+             carried_over_amount = COALESCE(EXCLUDED.carried_over_amount, invoices.carried_over_amount),
+             late_fee_applied = COALESCE(EXCLUDED.late_fee_applied, invoices.late_fee_applied),
              status = CASE WHEN invoices.status = 'paid' THEN invoices.status ELSE EXCLUDED.status END,
              due_date = CASE WHEN invoices.status = 'paid' THEN invoices.due_date ELSE EXCLUDED.due_date END,
              raw_data = EXCLUDED.raw_data,
@@ -349,19 +420,29 @@ export async function saveAdminSection(type: string, data: any): Promise<void> {
             resolvedId,
             item.subscriberId || item.subscriber_id || '',
             Number(item.amount || 0),
+            Number(item.installationFee ?? item.installation_fee ?? 0),
+            Number(item.taxFee ?? item.tax_fee ?? 0),
+            Number(item.lateFee ?? item.late_fee ?? 0),
+            Number(item.carriedOverAmount ?? item.carried_over_amount ?? 0),
+            Boolean(item.lateFeeApplied ?? item.late_fee_applied ?? false),
             item.status || 'unpaid',
             item.dueDate || item.due_date || '',
             JSON.stringify(item.id ? item : { ...item, id: resolvedId }),
           ]
         );
       }
-      // Nothing is deleted here. The billing engine owns the invoices and may
-      // hold rows the admin panel has not loaded yet, so removing the rows
-      // that are missing from the payload would drop real billing records.
-      // A deletion goes through the billing API instead.
     } else if (type === 'tickets' && Array.isArray(data)) {
-      const ticketIds = data.map((item: any) => String(item.id));
+      const existingTicketsRes = await p.query('SELECT id, raw_data FROM tickets');
+      const existingMap = new Map<string, any>();
+      for (const r of existingTicketsRes.rows) {
+        existingMap.set(String(r.id), r.raw_data || {});
+      }
+
       for (const item of data) {
+        const ticketId = String(item.id);
+        const prevRaw = existingMap.get(ticketId) || {};
+        const subId = item.subscriberId || prevRaw.subscriberId || null;
+
         await p.query(
           `INSERT INTO tickets (id, title, status, priority, raw_data, created_at, updated_at)
            VALUES ($1, $2, $3, $4, $5, COALESCE((SELECT created_at FROM tickets WHERE id = $1::varchar), NOW()), NOW())
@@ -372,16 +453,54 @@ export async function saveAdminSection(type: string, data: any): Promise<void> {
              raw_data = EXCLUDED.raw_data,
              updated_at = NOW()`,
           [
-            String(item.id),
+            ticketId,
             item.title || item.subject || '',
             item.status || 'open',
             item.priority || 'medium',
             JSON.stringify(item),
           ]
         );
+
+        // Trigger notifications on technician assignment or admin reply
+        if (subId) {
+          const prevAssigned = prevRaw.assignedTo || prevRaw.technicianId || '';
+          const nextAssigned = item.assignedTo || item.technicianId || '';
+          const techName = item.assignedToName || item.technicianName || nextAssigned;
+          if (nextAssigned && nextAssigned !== prevAssigned) {
+            await p.query(
+              `INSERT INTO notifications (id, user_id, recipient_type, type, title, message, link, is_read, raw_data, created_at)
+               VALUES ($1, $2, 'subscriber', 'technician_assigned', $3, $4, '/dashboard/tickets', FALSE, $5, NOW())`,
+              [
+                `NTF-${crypto.randomUUID().slice(0, 12).toUpperCase()}`,
+                String(subId),
+                `Technician Assigned (#${ticketId})`,
+                `Technician ${techName} has been assigned to your support ticket "${item.title || item.subject || ticketId}".`,
+                JSON.stringify({ ticketId, technician: techName }),
+              ]
+            ).catch(() => {});
+          }
+
+          const prevMsgs = Array.isArray(prevRaw.messages) ? prevRaw.messages : [];
+          const nextMsgs = Array.isArray(item.messages) ? item.messages : [];
+          if (nextMsgs.length > prevMsgs.length) {
+            const latestMsg = nextMsgs[nextMsgs.length - 1];
+            const sender = String(latestMsg?.sender || latestMsg?.author || '').toLowerCase();
+            if (sender !== 'subscriber' && sender !== 'customer' && sender !== 'user') {
+              await p.query(
+                `INSERT INTO notifications (id, user_id, recipient_type, type, title, message, link, is_read, raw_data, created_at)
+                 VALUES ($1, $2, 'subscriber', 'ticket_reply', $3, $4, '/dashboard/tickets', FALSE, $5, NOW())`,
+                [
+                  `NTF-${crypto.randomUUID().slice(0, 12).toUpperCase()}`,
+                  String(subId),
+                  `Support Reply on Ticket #${ticketId}`,
+                  `${latestMsg?.senderName || latestMsg?.authorName || 'Support'}: ${String(latestMsg?.text || latestMsg?.body || '').slice(0, 140)}`,
+                  JSON.stringify({ ticketId }),
+                ]
+              ).catch(() => {});
+            }
+          }
+        }
       }
-      // A ticket that the admin panel removed is deleted through the CRM API,
-      // so the ticket details and the message thread stay consistent.
     } else if (type === 'technicians' && Array.isArray(data)) {
       // The delete and the re-insert are one transaction — a failure halfway
       // used to leave the technicians table empty, and the CRM
@@ -484,6 +603,51 @@ export async function saveAdminSection(type: string, data: any): Promise<void> {
            updated_at = NOW()`,
         [type, JSON.stringify(data)]
       );
+
+      // Keep siteData in app_settings and siteData.json synced when standalone CMS/Telemetry sections are saved
+      const mirroredKeys = [
+        'referralRewards',
+        'boostBandwidth',
+        'liveLatency',
+        'interfaceTraffic',
+        'peeringHubs',
+        'zones',
+      ];
+      if (mirroredKeys.includes(type)) {
+        try {
+          const sdRes = await p.query("SELECT value FROM app_settings WHERE key = 'siteData'");
+          if (sdRes.rows.length > 0 && sdRes.rows[0].value) {
+            const updatedSiteData = { ...sdRes.rows[0].value, [type]: data };
+            await p.query(
+              `INSERT INTO app_settings (key, value, updated_at)
+               VALUES ('siteData', $1, NOW())
+               ON CONFLICT (key) DO UPDATE SET
+                 value = EXCLUDED.value,
+                 updated_at = NOW()`,
+              [JSON.stringify(updatedSiteData)]
+            );
+            const siteDataPath = path.join(dataDir, 'siteData.json');
+            fs.writeFileSync(siteDataPath, JSON.stringify(updatedSiteData, null, 2), 'utf-8');
+          }
+        } catch (syncErr) {
+          console.warn('[PostgreSQL] Mirror to siteData warning:', syncErr);
+        }
+      }
+
+      if (type === 'referralRewards' && data && typeof data === 'object') {
+        try {
+          await p.query(
+            `INSERT INTO system_settings (key, value, updated_at)
+             VALUES ('referral', $1, NOW())
+             ON CONFLICT (key) DO UPDATE SET
+               value = EXCLUDED.value,
+               updated_at = NOW()`,
+            [JSON.stringify(data)]
+          );
+        } catch (refSyncErr) {
+          console.warn('[PostgreSQL] Mirror to system_settings.referral warning:', refSyncErr);
+        }
+      }
     }
   } catch (error) {
     // The error is re-thrown so the caller can report the failure. Swallowing
@@ -500,52 +664,123 @@ export async function saveAdminSection(type: string, data: any): Promise<void> {
 export async function getSiteContent(): Promise<Record<string, any>> {
   try {
     const p = getDbPool();
-    const res = await p.query("SELECT value FROM app_settings WHERE key = 'siteData'");
-    if (res.rows.length > 0 && res.rows[0].value) {
-      const siteData = res.rows[0].value;
-      // Also ensure packages are synced if needed
-      const pkgRes = await p.query('SELECT raw_data FROM packages ORDER BY (raw_data->>\'price\')::numeric ASC');
-      if (pkgRes.rows.length > 0) {
-        siteData.packages = pkgRes.rows.map((r) => {
-          const p = r.raw_data;
-          return {
-            id: p.id,
-            name: p.name,
-            speed: p.downloadSpeed || p.speed || 100,
-            uploadSpeed: p.uploadSpeed || p.downloadSpeed || p.speed || 100,
-            price: Number(p.price || 0),
-            bdixSpeed: (p.downloadSpeed || p.speed || 100) >= 1000 ? 5000 : 1000,
-            popular: !!p.popular,
-            badge: p.badge,
-            speedLabel: p.speedLabel,
-            category: p.category || 'Home Internet',
-            targetCustomer: p.targetCustomer || 'Regular Users',
-            description: p.description || '',
-            features: p.features || [
-              `${p.downloadSpeed || p.speed || 100} Mbps Symmetrical Fiber`,
-              `Unlimited Global Bandwidth`,
-              `24/7 Dedicated Support`,
-            ],
-            unlimitedData: p.unlimitedData ?? true,
-            symmetricalSpeed: p.symmetricalSpeed ?? true,
-            fiberConnection: p.fiberConnection ?? true,
-            ipv6Support: p.ipv6Support ?? false,
-            gamingOptimized: p.gamingOptimized ?? false,
-            streaming4k8k: p.streaming4k8k ?? false,
-            staticIp: p.staticIp ?? 'Add-on',
-            prioritySupport: p.prioritySupport ?? false,
-            dedicatedBandwidth: p.dedicatedBandwidth ?? '—',
-            businessSla: p.businessSla ?? '—',
-            support24_7: p.support24_7 ?? false,
-            lowLatencyRouting: p.lowLatencyRouting ?? false,
-            directCloudPeering: p.directCloudPeering ?? false,
-            hardwareReady: p.hardwareReady ?? 'Gigabit ONU',
-            ddosProtection: p.ddosProtection ?? 'Basic',
-            bgpFailover: p.bgpFailover ?? '—',
-            cirGuarantee: p.cirGuarantee ?? '—',
-          };
-        });
+    const [settingsRes, sysSettingsRes, pkgRes, covRes] = await Promise.all([
+      p.query('SELECT key, value FROM app_settings'),
+      p.query('SELECT key, value FROM system_settings').catch(() => ({ rows: [] as any[] })),
+      p.query('SELECT id, name, speed, upload_speed, price, bdix_speed, popular, description, raw_data FROM packages ORDER BY price ASC, speed ASC'),
+      p.query('SELECT id, zone, district, areas, status FROM coverage_areas ORDER BY zone ASC, district ASC').catch(() => ({ rows: [] as any[] })),
+    ]);
+
+    const settingsMap: Record<string, any> = {};
+    for (const row of settingsRes.rows) {
+      settingsMap[row.key] = row.value;
+    }
+
+    const sysSettingsMap: Record<string, any> = {};
+    for (const row of sysSettingsRes.rows) {
+      sysSettingsMap[row.key] = row.value;
+    }
+
+    const siteData: Record<string, any> =
+      settingsMap.siteData && typeof settingsMap.siteData === 'object'
+        ? { ...settingsMap.siteData }
+        : {};
+
+    const standaloneKeys = [
+      'referralRewards',
+      'boostBandwidth',
+      'liveLatency',
+      'interfaceTraffic',
+      'peeringHubs',
+      'zones',
+    ];
+    for (const k of standaloneKeys) {
+      if (settingsMap[k] !== undefined && settingsMap[k] !== null) {
+        if (typeof settingsMap[k] === 'object' && !Array.isArray(settingsMap[k])) {
+          if (Object.keys(settingsMap[k]).length > 0) {
+            siteData[k] = { ...(siteData[k] || {}), ...settingsMap[k] };
+          }
+        } else if (Array.isArray(settingsMap[k])) {
+          if (settingsMap[k].length > 0) {
+            siteData[k] = settingsMap[k];
+          }
+        } else {
+          siteData[k] = settingsMap[k];
+        }
       }
+    }
+
+    if (sysSettingsMap.referral && typeof sysSettingsMap.referral === 'object') {
+      const refVal = sysSettingsMap.referral;
+      const amt = Number(refVal.rewardAmount ?? refVal.bonusAmount ?? siteData.referralRewards?.rewardAmount ?? 20);
+      siteData.referralRewards = {
+        ...(siteData.referralRewards || {}),
+        ...refVal,
+        rewardAmount: amt,
+        bonusAmount: amt,
+      };
+    }
+
+    if (covRes.rows.length > 0) {
+      siteData.coverageAreas = covRes.rows.map((r: any) => ({
+        id: r.id,
+        zone: r.zone || 'Metro Core',
+        district: r.district || 'Central',
+        areas: Array.isArray(r.areas) ? r.areas.join(', ') : String(r.areas || ''),
+        status:
+          String(r.status || '').toLowerCase() === 'available' ||
+          String(r.status || '').toLowerCase() === 'active'
+            ? 'Active'
+            : r.status || 'Active',
+      }));
+    }
+
+    if (pkgRes.rows.length > 0) {
+      siteData.packages = pkgRes.rows.map((r: any) => {
+        const p = r.raw_data || {};
+        const dlSpeed = Number(p.downloadSpeed || p.speed || r.speed || 100);
+        const ulSpeed = Number(p.uploadSpeed || p.downloadSpeed || p.speed || r.upload_speed || dlSpeed);
+        return {
+          id: r.id || p.id,
+          name: p.name || r.name,
+          speed: dlSpeed,
+          downloadSpeed: dlSpeed,
+          uploadSpeed: ulSpeed,
+          price: Number(p.price ?? r.price ?? 0),
+          bdixSpeed: Number(p.bdixSpeed || r.bdix_speed || (dlSpeed >= 1000 ? 5000 : 1000)),
+          popular: Boolean(p.popular ?? r.popular),
+          badge: p.badge,
+          speedLabel: p.speedLabel,
+          category: p.category || 'Home Internet',
+          targetCustomer: p.targetCustomer || 'Regular Users',
+          description: p.description || r.description || '',
+          features: p.features || [
+            `${dlSpeed} Mbps Symmetrical Fiber`,
+            `Unlimited Global Bandwidth`,
+            `24/7 Dedicated Support`,
+          ],
+          unlimitedData: p.unlimitedData ?? true,
+          symmetricalSpeed: p.symmetricalSpeed ?? true,
+          fiberConnection: p.fiberConnection ?? true,
+          ipv6Support: p.ipv6Support ?? false,
+          gamingOptimized: p.gamingOptimized ?? false,
+          streaming4k8k: p.streaming4k8k ?? false,
+          staticIp: p.staticIp ?? 'Add-on',
+          prioritySupport: p.prioritySupport ?? false,
+          dedicatedBandwidth: p.dedicatedBandwidth ?? '—',
+          businessSla: p.businessSla ?? '—',
+          support24_7: p.support24_7 ?? false,
+          lowLatencyRouting: p.lowLatencyRouting ?? false,
+          directCloudPeering: p.directCloudPeering ?? false,
+          hardwareReady: p.hardwareReady ?? 'Gigabit ONU',
+          ddosProtection: p.ddosProtection ?? 'Basic',
+          bgpFailover: p.bgpFailover ?? '—',
+          cirGuarantee: p.cirGuarantee ?? '—',
+        };
+      });
+    }
+
+    if (Object.keys(siteData).length > 0) {
       return siteData;
     }
   } catch (err) {
@@ -584,6 +819,28 @@ export async function saveSiteContent(data: Record<string, any>): Promise<void> 
          updated_at = NOW()`,
       [JSON.stringify(data)]
     );
+
+    // Also mirror nested standalone keys into app_settings so Backend /boost, /latency, /traffic, /peering stay synced
+    const standaloneKeys = [
+      'referralRewards',
+      'boostBandwidth',
+      'liveLatency',
+      'interfaceTraffic',
+      'peeringHubs',
+      'zones',
+    ];
+    for (const k of standaloneKeys) {
+      if (data[k] !== undefined) {
+        await p.query(
+          `INSERT INTO app_settings (key, value, updated_at)
+           VALUES ($1, $2, NOW())
+           ON CONFLICT (key) DO UPDATE SET
+             value = EXCLUDED.value,
+             updated_at = NOW()`,
+          [k, JSON.stringify(data[k])]
+        );
+      }
+    }
   } catch (err) {
     console.error('[PostgreSQL] Error writing siteData to DB:', err);
   }
@@ -617,37 +874,46 @@ export async function findSubscriber(identifier: string): Promise<any | null> {
     const p = getDbPool();
     const clean = identifier.trim();
     const res = await p.query(
-      `SELECT * FROM subscribers 
-       WHERE id = $1 
-          OR LOWER(name) = LOWER($1) 
-          OR LOWER(email) = LOWER($1) 
-          OR phone = $1 
-          OR raw_data->>'username' = $1 
-          OR LOWER(raw_data->>'username') = LOWER($1)
-       LIMIT 1`,
+      `SELECT s.*, p.name AS joined_package_name
+         FROM subscribers s
+         LEFT JOIN packages p ON p.id = s.package_id
+        WHERE s.id = $1 
+           OR LOWER(s.name) = LOWER($1) 
+           OR LOWER(s.email) = LOWER($1) 
+           OR s.phone = $1 
+           OR s.raw_data->>'username' = $1 
+           OR LOWER(s.raw_data->>'username') = LOWER($1)
+        LIMIT 1`,
       [clean]
     );
 
     if (res.rows.length > 0) {
       const row = res.rows[0];
       const raw = row.raw_data || {};
-      // Only the recorded values are returned. The previous version filled the
-      // gaps with a made-up plan, IP address, MAC, due date and installation
-      // address, so an account without a plan appeared to have one.
+      const fullName = row.name || raw.name || '';
+      const firstName = row.first_name || raw.firstName || String(fullName).trim().split(/\s+/)[0] || '';
+      const lastName =
+        row.last_name ||
+        raw.lastName ||
+        String(fullName)
+          .trim()
+          .split(/\s+/)
+          .slice(1)
+          .join(' ') ||
+        '';
       return {
         id: row.id,
-        name: row.name,
+        name: fullName || `${firstName} ${lastName}`.trim(),
+        firstName,
+        lastName,
         email: row.email,
         phone: row.phone,
         status: row.status,
         packageId: row.package_id || raw.packageId || raw.package_id || '',
-        packageName: raw.packageName || raw.package || '',
+        packageName: row.joined_package_name || raw.packageName || raw.package || '',
         balance: Number(raw.balance || 0),
         dueDate: raw.dueDate || '',
         joinDate: raw.joinDate || raw.joinedAt || '',
-        // Subscription lifecycle dates — written by the billing engine when a
-        // plan is purchased and when the subscription is cancelled. They stay
-        // on the account after a cancellation.
         subscriptionStartedAt: raw.subscriptionStartedAt || null,
         subscriptionCancelledAt: raw.subscriptionCancelledAt || null,
         connectionType: raw.connectionType || '',

@@ -1,22 +1,18 @@
 'use client'
 
-import React, { useState, useEffect } from 'react'
-import { createPortal } from 'react-dom'
+import React, { useState, useEffect, useCallback, useMemo, Suspense } from 'react'
 import Link from 'next/link'
-import { useRouter } from 'next/navigation'
-import { 
-  Wifi, 
-  CreditCard, 
-  AlertCircle, 
-  Calendar, 
-  DollarSign, 
-  Activity, 
-  HelpCircle, 
-  Download, 
+import { useRouter, useSearchParams } from 'next/navigation'
+import {
+  Wifi,
+  CreditCard,
+  AlertCircle,
+  Calendar,
+  DollarSign,
+  Activity,
+  Download,
   Upload,
-  ArrowUpRight, 
-  LogOut, 
-  User, 
+  ArrowUpRight,
   RefreshCw,
   Gift,
   Zap,
@@ -24,474 +20,419 @@ import {
   Copy,
   Check,
   CheckCircle2,
-  Lock,
-  Printer,
-  X,
+  Cpu,
+  Network,
+  Server,
+  Clock,
   ShieldCheck,
-  Globe,
-  FileText,
-  Smartphone,
-  Globe2,
-  Mail,
-  Clock
+  Power,
+  PowerOff,
+  Ban,
 } from 'lucide-react'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { Progress } from '@/components/ui/progress'
-import { Input } from '@/components/ui/input'
-import { Label } from '@/components/ui/label'
 import { useAuthStore } from '@/store/authStore'
 import { useTranslation } from '@/store/settingsStore'
 import { useContentStore } from '@/store/contentStore'
-import { fetchMyInvoices, fetchMySummary, fetchMyReferral, fetchMyTurboBoost, payInvoice, requestTurboBoost, type PortalInvoice, type PortalSummary } from '@/lib/portalApi'
-import { useModalA11y } from '@/lib/useModalA11y'
+import {
+  fetchMySummary,
+  fetchLiveTelemetry,
+  requestTurboBoost,
+  deactivateTurboBoost,
+  downloadInvoicePdf,
+  type PortalSummary,
+} from '@/lib/portalApi'
 
-interface PaymentRecord {
-  id: string;
-  month: string;
-  date: string;
-  amount: string;
-  method: string;
-  trxId: string;
-  status: string;
+function formatRemainingDuration(totalSeconds: number): string {
+  const sec = Math.max(0, Math.floor(totalSeconds))
+  const hours = Math.floor(sec / 3600)
+  const mins = Math.floor((sec % 3600) / 60)
+  const secs = sec % 60
+  return `${hours}h ${String(mins).padStart(2, '0')}m ${String(secs).padStart(2, '0')}s`
 }
 
-export default function DashboardPage() {
+function CardSkeleton({ rows = 3 }: { rows?: number }) {
+  return (
+    <div className="space-y-3 animate-pulse py-2" data-testid="card-skeleton">
+      <div className="h-5 w-1/2 rounded bg-muted" />
+      {Array.from({ length: rows }).map((_, idx) => (
+        <div key={idx} className="h-10 w-full rounded-lg bg-muted/70" />
+      ))}
+    </div>
+  )
+}
+
+function DashboardContent() {
   const router = useRouter()
-  const { user, isAuthenticated, hasHydrated } = useAuthStore()
+  const { user, isAuthenticated, hasHydrated, updateUser } = useAuthStore()
   const { t } = useTranslation()
-  const { 
-    packages,
-    mediaHubs, 
-    referralRewards, 
-    boostBandwidth, 
-    liveLatency, 
-    interfaceTraffic, 
-    peeringHubs, 
-    fetchContent 
-  } = useContentStore()
+  const { brand, packages, fetchContent } = useContentStore()
+
+  const [liveSummary, setLiveSummary] = useState<PortalSummary | null>(null)
+  const [telemetry, setTelemetry] = useState<any | null>(null)
+  const [telemetryLoading, setTelemetryLoading] = useState(true)
+  const [telemetryOnline, setTelemetryOnline] = useState<boolean | null>(null)
+  const [lastUpdated, setLastUpdated] = useState<string>('')
+
+  // Ping history samples for live chart in Card 9
+  const [pingSamples, setPingSamples] = useState<Array<{ time: string; ping: number; jitter: number }>>([])
+
+  // Local 1-second countdown for active Turbo Boost
+  const [boostRemainingSec, setBoostRemainingSec] = useState<number>(0)
+  const [boostActionLoading, setBoostActionLoading] = useState(false)
+  const [boostError, setBoostError] = useState<string | null>(null)
+  const [copiedReferral, setCopiedReferral] = useState(false)
+
+  // Paid query param handler for gateway redirects (?paid=INV-...)
+  const searchParams = useSearchParams()
+  const paidInvoiceParam = searchParams?.get('paid')
+  const [paidBannerVisible, setPaidBannerVisible] = useState(false)
+  const [paidInvoiceId, setPaidInvoiceId] = useState<string | null>(null)
+  const [downloadingPdf, setDownloadingPdf] = useState(false)
 
   useEffect(() => {
     fetchContent()
   }, [fetchContent])
 
-  // Redirect unauthenticated visitors to login — never render the portal
-  // empty/hydrated-less on a public URL. Use `hasHydrated` so the server
-  // render matches the first client render.
   useEffect(() => {
     if (hasHydrated && !isAuthenticated) {
       router.push('/login')
     }
   }, [hasHydrated, isAuthenticated, router])
 
-  // Mounted state for SSR Portal safety
-  const [mounted, setMounted] = useState(false)
-  useEffect(() => {
-    setMounted(true)
-  }, [])
+  const loadDashboardLive = useCallback(async (isInitial = false) => {
+    if (isInitial) setTelemetryLoading(true)
+    try {
+      const [summaryRes, telemetryRes] = await Promise.all([
+        fetchMySummary(),
+        fetchLiveTelemetry(),
+      ])
 
-  // Month names lookup
-  const MONTH_NAMES = [
-    'January', 'February', 'March', 'April', 'May', 'June',
-    'July', 'August', 'September', 'October', 'November', 'December'
-  ]
-
-  const today = new Date()
-  const actualDay = today.getDate()
-  const currentDay = actualDay
-  const isPaymentWindowOpen = currentDay >= 5 && currentDay <= 10
-
-  // Warning state if user attempts to pay outside 5-10
-  const [windowWarning, setWindowWarning] = useState<string | null>(null)
-
-  // Retention States
-  const [boostRequested, setBoostRequested] = useState(false)
-  const [boostSending, setBoostSending] = useState(false)
-  const [boostError, setBoostError] = useState<string | null>(null)
-  const [copiedReferral, setCopiedReferral] = useState(false)
-
-  // Real, database-backed values for the referral and turbo boost cards.
-  // The CMS only supplies display copy; the numbers and the actions are real.
-  const [myReferral, setMyReferral] = useState<{ code: string; title: string; description: string; bonusAmount: number; referrals: Array<{ status: string }> } | null>(null)
-  const [myBoost, setMyBoost] = useState<{ activeRequest: boolean; requests: Array<{ reference: string; status: string; adminNote: string | null }> } | null>(null)
-
-  // Payable balance state
-  const [balance, setBalance] = useState(0.00)
-
-  // Payment Modal & Gateway States (Step 5 Style)
-  const [payModalOpen, setPayModalOpen] = useState(false)
-  const [mobileWalletNumber, setMobileWalletNumber] = useState('')
-  const [isProcessingPay, setIsProcessingPay] = useState(false)
-  const [receiptModalOpen, setReceiptModalOpen] = useState(false)
-
-  // Escape closes both overlays and the page does not scroll behind them.
-  useModalA11y(payModalOpen, () => setPayModalOpen(false))
-  useModalA11y(receiptModalOpen, () => setReceiptModalOpen(false))
-  const [latestReceipt, setLatestReceipt] = useState<{
-    receiptNo: string;
-    trxId: string;
-    date: string;
-    amount: string;
-    method: string;
-    month?: string;
-  } | null>(null)
-
-  // Payment History State — derived from the billing service, never a local
-  // ledger, so the portal can never claim a payment the server did not make.
-  const [paymentHistory, setPaymentHistory] = useState<PaymentRecord[]>([])
-
-  // Live billing data from the NextLink billing service (Express API)
-  const [liveInvoices, setLiveInvoices] = useState<PortalInvoice[]>([])
-  const [liveSummary, setLiveSummary] = useState<PortalSummary | null>(null)
-  const [billingOnline, setBillingOnline] = useState<boolean | null>(null)
-  const [payingInvoiceId, setPayingInvoiceId] = useState<string | null>(null)
-  const [gatewayChoice, setGatewayChoice] = useState<'bkash' | 'nagad' | 'sslcommerz' | 'rocket'>('bkash')
-  const [billingError, setBillingError] = useState<string | null>(null)
-
-  /**
-   * The account state the panel renders.
-   *
-   * The billing service is the authority: the sign-in payload is a snapshot
-   * from the moment the customer signed in, so after a purchase at the
-   * gateway it still said "registered". The live status and plan come from
-   * the billing summary.
-   */
-  const accountStatus = String(liveSummary?.subscriber?.status || user?.status || '').toLowerCase()
-  const accountPackageName =
-    liveSummary?.subscriber?.packageName || user?.packageName || user?.package || ''
-
-  /**
-   * The bill outstanding with this account — derived from the billing
-   * service, never from a hard-coded month. The due month is the period of
-   * the first unpaid invoice.
-   */
-  const unpaidInvoice = liveInvoices.find((invoice) => invoice.status !== 'paid')
-  const periodStr = (unpaidInvoice?.raw_data?.period as string | undefined) || ''
-  const [periodYear, periodMonth] = periodStr.split('-').map(Number)
-  const dueMonthNum = Number.isFinite(periodMonth) && periodMonth >= 1 && periodMonth <= 12
-    ? periodMonth - 1
-    : new Date().getMonth()
-  const dueYearNum = Number.isFinite(periodYear) && periodYear > 2000 ? periodYear : new Date().getFullYear()
-  const dueMonthName = MONTH_NAMES[dueMonthNum]
-  const dueMonthNumStr = String(dueMonthNum + 1).padStart(2, '0')
-  const dueYearStr = String(dueYearNum)
-  const nextDueDateRangeFormatted = `05/${dueMonthNumStr}/${dueYearStr} - 10/${dueMonthNumStr}/${dueYearStr} of Every Month`
-  const currencyOf = (invoice?: PortalInvoice | null) =>
-    String(invoice?.raw_data?.currency || 'USD').toUpperCase()
-  const unpaidAmount = unpaidInvoice ? Number(unpaidInvoice.amount || 0) : 0
-  const invoiceCurrency = currencyOf(unpaidInvoice)
-
-  const loadLiveBilling = React.useCallback(async () => {
-    const summaryResult = await fetchMySummary()
-    if (!summaryResult.success) {
-      setBillingOnline(false)
-      return
-    }
-    setBillingOnline(true)
-    setLiveSummary(summaryResult.summary || null)
-
-    const invoicesResult = await fetchMyInvoices()
-    if (invoicesResult.success) {
-      const invoices = invoicesResult.invoices || []
-      setLiveInvoices(invoices)
-
-      const paidParam = typeof window !== 'undefined'
-        ? new URLSearchParams(window.location.search).get('paid')
-        : null
-      if (paidParam) {
-        // The customer has just come back from the gateway — show the receipt
-        // for that settled invoice, then drop the query parameter from the URL.
-        showReceiptForInvoice(paidParam, invoices)
-        if (typeof window !== 'undefined') {
-          const url = new URL(window.location.href)
-          url.searchParams.delete('paid')
-          window.history.replaceState({}, '', url.toString())
-        }
+      if (summaryRes.success && summaryRes.summary) {
+        setLiveSummary(summaryRes.summary)
       }
 
-      // The billing history table is built from the server invoices, so it
-      // always matches what the billing service actually recorded.
-      const history: PaymentRecord[] = invoices.map((invoice: PortalInvoice) => ({
-        id: invoice.id,
-        month: invoice.raw_data?.period || '',
-        date: new Date(invoice.created_at).toLocaleDateString('en-US', {
-          day: '2-digit',
-          month: 'short',
-          year: 'numeric',
-        }),
-        amount: Number(invoice.amount || 0).toFixed(2),
-        method: invoice.raw_data?.paidVia
-          ? String(invoice.raw_data.paidVia).toUpperCase()
-          : '—',
-        trxId: invoice.raw_data?.transactionId || '',
-        status: invoice.status === 'paid' ? 'Paid' : 'Unpaid',
-      }))
-      setPaymentHistory(history)
-    }
-  }, [])
+      if (telemetryRes.success && telemetryRes.telemetry) {
+        const tData = telemetryRes.telemetry
+        setTelemetry(tData)
+        setTelemetryOnline(true)
+        setLastUpdated(new Date(tData.timestamp || Date.now()).toLocaleTimeString())
+        setBoostRemainingSec(Number(tData.turboBoost?.remainingSeconds || 0))
 
-  // Real referral code + stats and turbo boost requests from the server.
-  const loadReferralAndBoost = React.useCallback(async () => {
-    const ref = await fetchMyReferral()
-    if (ref.success && ref.code) {
-      setMyReferral({
-        code: ref.code,
-        title: ref.title || 'Refer a friend',
-        description: ref.description || 'Share your invite link — the reward is applied when your friend activates and pays.',
-        bonusAmount: Number(ref.bonusAmount || 0),
-        referrals: Array.isArray(ref.referrals) ? ref.referrals : [],
-      })
-    }
-    const boost = await fetchMyTurboBoost()
-    if (boost.success) {
-      setMyBoost({
-        activeRequest: !!boost.activeRequest,
-        requests: Array.isArray(boost.requests) ? boost.requests : [],
-      })
-    }
-  }, [])
+        // Append live ping sample to chart history (keep last 16 samples)
+        const avgPing = Number(tData.liveLatency?.avgPingMs || 0)
+        const avgJitter = Number(tData.liveLatency?.jitterMs || 0)
+        if (avgPing > 0) {
+          const label = new Date().toLocaleTimeString([], { hour12: false, minute: '2-digit', second: '2-digit' })
+          setPingSamples((prev) => [...prev.slice(-15), { time: label, ping: avgPing, jitter: avgJitter }])
+        }
 
+        // Sync authoritative subscriber package & name into authStore so header and cards stay fresh
+        const sub = tData.subscriber
+        if (sub) {
+          const updates: Record<string, any> = {}
+          if (sub.packageName && sub.packageName !== user?.packageName) {
+            updates.packageName = sub.packageName
+            updates.package = sub.packageName
+          }
+          if (sub.packageId && sub.packageId !== user?.packageId) {
+            updates.packageId = sub.packageId
+          }
+          if (sub.firstName && sub.firstName !== user?.firstName) {
+            updates.firstName = sub.firstName
+          }
+          if (sub.lastName && sub.lastName !== user?.lastName) {
+            updates.lastName = sub.lastName
+          }
+          if (sub.name && sub.name !== user?.name) {
+            updates.name = sub.name
+          }
+          if (Object.keys(updates).length > 0) {
+            updateUser(updates)
+          }
+        }
+      } else {
+        setTelemetryOnline(false)
+      }
+    } catch {
+      setTelemetryOnline(false)
+    } finally {
+      if (isInitial) setTelemetryLoading(false)
+    }
+  }, [updateUser, user?.firstName, user?.lastName, user?.name, user?.packageId, user?.packageName])
+
+  // Initial load + 4-second real-time polling
   useEffect(() => {
-    if (isAuthenticated) {
-      loadLiveBilling()
-      loadReferralAndBoost()
+    if (!isAuthenticated) return
+    loadDashboardLive(true)
+    const interval = setInterval(() => {
+      loadDashboardLive(false)
+    }, 4000)
+    return () => clearInterval(interval)
+  }, [isAuthenticated, loadDashboardLive])
+
+  // Refresh invoice & balance immediately when redirected with ?paid=INV-...
+  useEffect(() => {
+    if (paidInvoiceParam) {
+      setPaidInvoiceId(paidInvoiceParam)
+      setPaidBannerVisible(true)
+      loadDashboardLive(true)
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isAuthenticated, loadLiveBilling, loadReferralAndBoost])
+  }, [paidInvoiceParam, loadDashboardLive])
 
-  // Pay a real invoice through the selected local gateway
-  const handlePayLiveInvoice = async (invoice: PortalInvoice) => {
-    setPayingInvoiceId(invoice.id)
-    setBillingError(null)
-    const result = await payInvoice(invoice.id, gatewayChoice)
-    setPayingInvoiceId(null)
+  // 1-second local countdown for active Turbo Boost
+  useEffect(() => {
+    if (!telemetry?.turboBoost?.active || boostRemainingSec <= 0) return
+    const timer = setInterval(() => {
+      setBoostRemainingSec((prev) => {
+        if (prev <= 1) {
+          loadDashboardLive(false)
+          return 0
+        }
+        return prev - 1
+      })
+    }, 1000)
+    return () => clearInterval(timer)
+  }, [telemetry?.turboBoost?.active, boostRemainingSec, loadDashboardLive])
 
-    if (!result.success || !result.redirectUrl) {
-      setBillingError(result.error || 'Could not start the payment. Please try again.')
-      return
-    }
+  // Requirement 3: Authoritative Current Package Name (never fallback to 'Essential' or packages[0])
+  const accountStatus = String(
+    telemetry?.subscriber?.status || liveSummary?.subscriber?.status || user?.status || ''
+  ).toLowerCase()
 
-    // Redirect to the gateway checkout page (mock checkout in mock mode).
-    window.location.href = result.redirectUrl
-  }
+  const accountPackageId = String(
+    telemetry?.subscriber?.packageId || liveSummary?.subscriber?.packageId || user?.packageId || ''
+  ).trim()
 
-  // Card form state — the gateway collects the card details itself, so the
-  // portal never handles a card number.
-  const [cardHolder, setCardHolder] = useState('')
-
-  // Resolve current active package and monthly subscription price
-  const activePackage = React.useMemo(() => {
+  const matchedCatalogPackage = useMemo(() => {
     if (!packages || packages.length === 0) return null
-    const userPkgName = (accountPackageName || '').toLowerCase().trim()
-    const userPkgId = (liveSummary?.subscriber?.packageId || user?.packageId || '').toLowerCase().trim()
+    if (accountPackageId) {
+      const byId = packages.find((p) => p.id?.toLowerCase() === accountPackageId.toLowerCase())
+      if (byId) return byId
+    }
+    const rawName = String(
+      telemetry?.subscriber?.packageName || liveSummary?.subscriber?.packageName || user?.packageName || user?.package || ''
+    ).trim()
+    if (rawName) {
+      return packages.find((p) => p.name?.toLowerCase() === rawName.toLowerCase()) || null
+    }
+    return null
+  }, [packages, accountPackageId, telemetry?.subscriber?.packageName, liveSummary?.subscriber?.packageName, user?.packageName, user?.package])
+
+  const accountPackageName = useMemo(() => {
+    if (accountStatus === 'registered') return 'No active plan'
     return (
-      packages.find(p => p.id?.toLowerCase() === userPkgId) ||
-      packages.find(p => p.name?.toLowerCase() === userPkgName) ||
-      packages.find(p => userPkgName && p.name?.toLowerCase().includes(userPkgName)) ||
-      packages.find(p => userPkgName && userPkgName.includes(p.name?.toLowerCase())) ||
-      packages[0]
+      telemetry?.subscriber?.packageName ||
+      liveSummary?.subscriber?.packageName ||
+      matchedCatalogPackage?.name ||
+      user?.packageName ||
+      user?.package ||
+      'No active plan'
     )
-  }, [packages, user, accountPackageName, liveSummary?.subscriber?.packageId])
+  }, [accountStatus, telemetry?.subscriber?.packageName, liveSummary?.subscriber?.packageName, matchedCatalogPackage?.name, user?.packageName, user?.package])
 
-  useEffect(() => {
-    if (hasHydrated && !isAuthenticated) {
-      router.push('/login')
+  const monthlyBillAmount = useMemo(() => {
+    if (telemetry?.subscriber?.price !== undefined && Number(telemetry.subscriber.price) > 0) {
+      return Number(telemetry.subscriber.price)
     }
-  }, [hasHydrated, isAuthenticated, router])
-
-  const handleOpenPayModal = () => {
-    if (user?.name) {
-      setCardHolder(user.name)
+    if (matchedCatalogPackage && matchedCatalogPackage.price !== undefined) {
+      return Number(matchedCatalogPackage.price)
     }
-    if (!isPaymentWindowOpen) {
-      setWindowWarning(
-        `Warning: Monthly bill payment is only accepted between the 5th and 10th of each month. Today is day ${currentDay} of the month (1st–4th & 11th–31st are restricted). Payments cannot be authorized today.`
-      )
-    } else {
-      setWindowWarning(null)
+    return 0
+  }, [telemetry?.subscriber?.price, matchedCatalogPackage])
+
+  const allocatedSpeedMbps = useMemo(() => {
+    if (telemetry?.subscriber?.speedMbps && Number(telemetry.subscriber.speedMbps) > 0) {
+      return Number(telemetry.subscriber.speedMbps)
     }
-    setPayModalOpen(true)
-  }
-
-  /**
-   * Pay the selected invoice through a real gateway.
-   *
-   * The invoice is settled by the billing service — the portal never marks
-   * an invoice as paid on its own, and a receipt is only shown once the
-   * gateway has confirmed the transaction.
-   */
-  const handleProcessPayment = async () => {
-    // Requirement 2: Strict restriction check
-    if (!isPaymentWindowOpen) {
-      setWindowWarning(
-        `Payment Warning: Monthly bill payment can only be cleared between the 5th and 10th of each month. Today is day ${currentDay}. Payments outside 5th–10th cannot be processed.`
-      )
-      return
+    if (matchedCatalogPackage?.speed) {
+      return Number(matchedCatalogPackage.speed)
     }
+    return 0
+  }, [telemetry?.subscriber?.speedMbps, matchedCatalogPackage?.speed])
 
-    // Pay the oldest unpaid invoice. The gateway decides the amount.
-    const targetInvoice = liveInvoices.find((invoice) => invoice.status !== 'paid')
-    if (!targetInvoice) {
-      setWindowWarning('You have no unpaid bill at the moment.')
-      return
-    }
-
-    setIsProcessingPay(true)
-    setBillingError(null)
-
-    const result = await payInvoice(targetInvoice.id, gatewayChoice)
-    setIsProcessingPay(false)
-
-    if (!result.success || !result.redirectUrl) {
-      setBillingError(result.error || 'The payment could not be started. Please try again.')
-      setPayModalOpen(false)
-      return
-    }
-
-    // The gateway confirms the payment; the receipt is read back from the
-    // billing service afterwards.
-    window.location.href = result.redirectUrl
-  }
-
-  /**
-   * Show the receipt for the settled invoice that the `?paid=<invoiceId>`
-   * query parameter names. The receipt is built from the invoice the billing
-   * service returned after verification — never from local state or from the
-   * package price the customer saw on the purchase page.
-   */
-  const showReceiptForInvoice = (paidInvoiceId: string, invoices: PortalInvoice[]) => {
-    const paid = invoices.find((invoice) => invoice.id === paidInvoiceId)
-    if (!paid) {
-      setBillingError(
-        `The payment for invoice ${paidInvoiceId} could not be verified yet. Please refresh the page or contact support.`,
-      )
-      return false
-    }
-    if (paid.status !== 'paid') {
-      // Not settled yet — show a "pending" notice instead of a receipt.
-      setBillingError(`Your payment for invoice ${paid.id} is being verified. It will appear here shortly.`)
-      return false
-    }
-
-    const paidAt = paid.raw_data?.paidAt
-      ? new Date(paid.raw_data.paidAt)
-      : new Date(paid.created_at)
-    const currency = String(paid.raw_data?.currency || 'USD').toUpperCase()
-    setLatestReceipt({
-      receiptNo: paid.raw_data?.invoiceNumber || paid.id,
-      trxId: String(paid.raw_data?.transactionId || paid.id),
-      date: paidAt.toLocaleString(),
-      amount: `${currency} ${Number(paid.amount).toFixed(2)}`,
-      method: String(paid.raw_data?.paidVia || gatewayChoice).toUpperCase(),
-      month: paid.raw_data?.period || `${dueMonthName} ${dueYearStr}`,
-    })
-    setReceiptModalOpen(true)
-    return true
-  }
-
-  const handleTurboBoost = async () => {
+  const handleActivateBoost = async () => {
     setBoostError(null)
-    setBoostSending(true)
-    const hours = Number(boostBandwidth?.durationHours || 6)
-    const speed = Number(boostBandwidth?.boostSpeed || 1000)
-    const result = await requestTurboBoost({ durationHours: hours, requestedMbps: speed })
-    setBoostSending(false)
+    setBoostActionLoading(true)
+    const hours = Number(telemetry?.turboBoost?.durationHours || 6)
+    const speed = Number(telemetry?.turboBoost?.boostSpeedMbps || 1000)
+    const result = await requestTurboBoost({
+      durationHours: hours,
+      requestedMbps: speed,
+      action: 'activate',
+    })
+    setBoostActionLoading(false)
     if (result.success) {
-      setBoostRequested(true)
-      // Refresh from the server so the card reflects the new request's
-      // reference and pending state.
-      await loadReferralAndBoost()
+      await loadDashboardLive(false)
     } else {
-      setBoostError(result.error || 'The boost request could not be sent. Please try again.')
+      setBoostError(result.error || 'Could not activate Turbo Boost. Please try again.')
+    }
+  }
+
+  const handleDeactivateBoost = async () => {
+    setBoostError(null)
+    setBoostActionLoading(true)
+    const activeId = telemetry?.turboBoost?.activeBoost?.id
+    const result = await deactivateTurboBoost(activeId)
+    setBoostActionLoading(false)
+    if (result.success) {
+      await loadDashboardLive(false)
+    } else {
+      setBoostError(result.error || 'Could not deactivate Turbo Boost. Please try again.')
     }
   }
 
   const handleCopyReferral = async () => {
-    const code = myReferral?.code || referralRewards?.defaultCode || ''
-    if (!code) return
+    const link =
+      telemetry?.referral?.referralLink ||
+      (telemetry?.referral?.code && typeof window !== 'undefined'
+        ? `${window.location.origin}/apply?ref=${telemetry.referral.code}`
+        : '')
+    if (!link) return
     try {
-      await navigator.clipboard.writeText(`${typeof window !== 'undefined' ? window.location.origin : ''}/apply?ref=${code}`)
+      await navigator.clipboard.writeText(link)
       setCopiedReferral(true)
       setTimeout(() => setCopiedReferral(false), 3000)
     } catch {
-      // The browser can refuse the clipboard — that must not look like success.
-      alert('Your browser blocked the clipboard. Please copy the link manually from the address bar.')
+      alert('Your browser blocked clipboard access. Please copy the referral code manually.')
     }
   }
-
-  // Latency values from the CMS peering configuration — shown as reference
-  // figures, not as measurements from the customer's device.
-  const latencyTargets = (Array.isArray(liveLatency?.targets) && liveLatency.targets.length > 0)
-    ? liveLatency.targets
-    : []
 
   if (!isAuthenticated) {
     return null
   }
 
+  const bw = telemetry?.bandwidthTraffic
+  const refData = telemetry?.referral
+  const boostData = telemetry?.turboBoost
+  const ontData = telemetry?.opticalTerminal
+  const latencyData = telemetry?.liveLatency
+  const hubsData: any[] = Array.isArray(telemetry?.peeringHubs) ? telemetry.peeringHubs : []
+  const tier1Data = telemetry?.tier1Peering
+
+  const greetingFirstName =
+    telemetry?.subscriber?.firstName ||
+    user?.firstName ||
+    (user?.name ? user.name.trim().split(/\s+/)[0] : '') ||
+    user?.username ||
+    'Subscriber'
+
   return (
     <div className="container mx-auto px-4 py-8 max-w-6xl space-y-8">
+      {/* Payment Settled Success Banner */}
+      {paidBannerVisible && paidInvoiceId && (
+        <div className="rounded-2xl border border-emerald-500/30 bg-emerald-500/10 p-4 sm:p-5 flex flex-col sm:flex-row sm:items-center justify-between gap-4 animate-in fade-in slide-in-from-top-2">
+          <div className="flex items-center gap-3">
+            <div className="h-10 w-10 rounded-xl bg-emerald-500 text-white flex items-center justify-center shadow-sm shrink-0">
+              <CheckCircle2 size={22} className="stroke-[2.5]" />
+            </div>
+            <div>
+              <div className="flex items-center gap-2">
+                <h3 className="font-bold text-foreground text-sm sm:text-base">Payment Settled Successfully</h3>
+                <Badge className="bg-emerald-600 text-white text-[10px]">Paid</Badge>
+              </div>
+              <p className="text-xs text-muted-foreground mt-0.5">
+                Invoice <strong className="font-mono text-primary font-bold">{paidInvoiceId}</strong> has been confirmed by the gateway. Your subscriber account balance is updated.
+              </p>
+            </div>
+          </div>
+          <div className="flex items-center gap-2 shrink-0">
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={async () => {
+                setDownloadingPdf(true)
+                await downloadInvoicePdf(paidInvoiceId)
+                setDownloadingPdf(false)
+              }}
+              disabled={downloadingPdf}
+              className="text-xs h-8 gap-1.5"
+            >
+              <Download className="h-3.5 w-3.5" />
+              <span>{downloadingPdf ? 'Downloading…' : 'Download Receipt'}</span>
+            </Button>
+            <Button
+              size="sm"
+              variant="ghost"
+              onClick={() => setPaidBannerVisible(false)}
+              className="text-xs h-8 text-muted-foreground"
+            >
+              Dismiss
+            </Button>
+          </div>
+        </div>
+      )}
+
       {/* Top Banner */}
       <div className="relative overflow-hidden rounded-2xl bg-gradient-to-r from-primary/95 to-primary p-8 text-primary-foreground shadow-lg">
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-6 relative z-10">
           <div>
             <div className="flex flex-wrap items-center gap-2 mb-3">
-              {/* The pill reflects the account's real status from the login
-                  payload — a suspended line must not be shown as
-                  "connection active", and there is no tier system to badge. */}
               {accountStatus === 'registered' ? (
                 <div className="inline-flex items-center gap-1.5 rounded-full bg-blue-400/20 text-blue-100 border border-blue-300/40 px-3 py-1 text-xs font-semibold backdrop-blur-sm">
-                  <span className="h-2 w-2 rounded-full bg-blue-300"></span>
+                  <span className="h-2 w-2 rounded-full bg-blue-300" />
                   Registered — buy a plan to activate
                 </div>
               ) : accountStatus === 'cancelled' ? (
                 <div className="inline-flex items-center gap-1.5 rounded-full bg-amber-400/20 text-amber-100 border border-amber-300/40 px-3 py-1 text-xs font-semibold backdrop-blur-sm">
-                  <span className="h-2 w-2 rounded-full bg-amber-300"></span>
+                  <span className="h-2 w-2 rounded-full bg-amber-300" />
                   Subscription cancelled
                 </div>
               ) : accountStatus === 'suspended' || accountStatus === 'blocked' ? (
                 <div className="inline-flex items-center gap-1.5 rounded-full bg-amber-400/20 text-amber-100 border border-amber-300/40 px-3 py-1 text-xs font-semibold backdrop-blur-sm">
-                  <span className="h-2 w-2 rounded-full bg-amber-300"></span>
+                  <span className="h-2 w-2 rounded-full bg-amber-300" />
                   Line suspended — contact support
                 </div>
               ) : (
                 <div className="inline-flex items-center gap-1.5 rounded-full bg-white/20 px-3 py-1 text-xs font-semibold backdrop-blur-sm">
-                  <span className="h-2 w-2 rounded-full bg-emerald-400 animate-pulse"></span>
+                  <span className="h-2 w-2 rounded-full bg-emerald-400 animate-pulse" />
                   {t('connectionActive')}
                 </div>
               )}
+
+              <Badge className="bg-white/15 text-white border-white/25 text-[11px] font-mono">
+                {telemetryOnline === true
+                  ? `Live Telemetry • ${lastUpdated}`
+                  : telemetryOnline === false
+                    ? 'Telemetry Offline'
+                    : 'Connecting…'}
+              </Badge>
             </div>
             <h1 className="text-3xl font-black tracking-tight text-white">
-              {t('welcomeBack')}, {user?.name || user?.username || 'there'}!
+              Hi, {greetingFirstName}!
             </h1>
+            <p className="text-xs text-primary-foreground/80 mt-1">
+              Active Plan: <strong className="text-white">{accountPackageName}</strong>
+              {allocatedSpeedMbps > 0 ? ` (${allocatedSpeedMbps} Mbps Symmetrical Optical)` : ''}
+            </p>
           </div>
 
           <div className="flex flex-wrap items-center gap-2.5">
-            {!isPaymentWindowOpen ? (
-              <Badge className="bg-amber-400 text-amber-950 font-bold border-none text-xs py-1 px-3 shadow-xs">
-                ⚠️ Window: 5th–10th Only
-              </Badge>
-            ) : (
-              <Badge className="bg-emerald-500 text-white font-bold border-none text-xs py-1 px-3 shadow-xs">
-                ✓ Window Open: Pay {dueMonthName}
-              </Badge>
-            )}
-            {/* Requirement 22: Interactive Pay Current Bill */}
-            <Button 
-              onClick={handleOpenPayModal}
-              className="bg-white text-primary hover:bg-white/90 shadow font-bold"
+            <Button
+              variant="secondary"
+              size="sm"
+              onClick={() => loadDashboardLive(false)}
+              className="bg-white/15 text-white hover:bg-white/25 border border-white/25 text-xs font-semibold"
             >
-              <CreditCard className="mr-2 h-4 w-4 text-primary" />
-              {t('payCurrentBill')}
+              <RefreshCw className="mr-1.5 h-3.5 w-3.5" />
+              Refresh Live Data
             </Button>
+            <Link href="/cancel">
+              <Button className="bg-white text-destructive hover:bg-white/90 shadow font-bold">
+                <Ban className="mr-2 h-4 w-4 text-destructive" />
+                My Cancelled Orders
+              </Button>
+            </Link>
           </div>
         </div>
       </div>
 
-      {/* KPI Stats */}
+      {/* KPI Summary Row (Includes Requirement 3 Current Package & Requirement 11 Tier-1 Direct Peering) */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-        <Card className="border shadow-sm flex flex-col justify-between">
+        {/* Current Package Card (Requirement 3) */}
+        <Card className="border shadow-sm flex flex-col justify-between" data-testid="current-package-card">
           <CardContent className="p-6">
             <div className="flex items-center justify-between">
               <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">
@@ -500,17 +441,15 @@ export default function DashboardPage() {
               <Wifi className="h-5 w-5 text-primary" />
             </div>
             <div className="mt-3">
-              <h3 className="text-2xl font-bold">
-                {boostRequested
-                  ? 'Boost Requested'
-                  : accountStatus === 'registered'
-                    ? 'No active plan'
-                    : accountPackageName || 'No active plan'}
+              <h3 className="text-2xl font-bold text-foreground" data-testid="current-package-name">
+                {accountPackageName}
               </h3>
               <p className="text-xs text-muted-foreground mt-1">
                 {accountStatus === 'registered'
                   ? 'Purchase a package to activate your service'
-                  : 'Symmetrical 100% Optical Fiber'}
+                  : allocatedSpeedMbps > 0
+                    ? `${allocatedSpeedMbps} Mbps Symmetrical Optical Fiber`
+                    : 'Symmetrical 100% Optical Fiber'}
               </p>
             </div>
             <div className="pt-3 mt-3 border-t">
@@ -524,45 +463,87 @@ export default function DashboardPage() {
           </CardContent>
         </Card>
 
-        <Card className="border shadow-sm">
+        {/* Next Invoice / Due Date */}
+        <Card className="border shadow-sm flex flex-col justify-between">
           <CardContent className="p-6">
             <div className="flex items-center justify-between">
               <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">
-                {t('dueDate')}
+                Next Billing Due
               </p>
               <Calendar className="h-5 w-5 text-amber-500" />
             </div>
             <div className="mt-3">
-              <h3 className="text-base sm:text-lg lg:text-xl font-bold font-mono tracking-tight text-foreground">
-                {nextDueDateRangeFormatted}
+              <h3 className="text-lg font-bold font-mono tracking-tight text-foreground">
+                {liveSummary?.nextInvoice?.due_date || 'Monthly Cycle (UTC)'}
               </h3>
-              <p className="text-xs text-amber-600 dark:text-amber-400 font-semibold mt-1">
-                Payment window: 5th–10th of every month
+              <p className="text-xs text-muted-foreground mt-1">
+                Unpaid Invoices: <strong className="text-foreground">{liveSummary?.unpaidCount ?? 0}</strong> • Paid:{' '}
+                <strong className="text-emerald-600">{liveSummary?.paidCount ?? 0}</strong>
               </p>
+            </div>
+            <div className="pt-3 mt-3 border-t space-y-2">
+              {((liveSummary?.unpaidCount ?? 0) > 0 || !liveSummary?.isCurrentPeriodPaid) && (telemetry?.subscriber?.packageId || user?.packageId) && (
+                <Link href={`/dashboard/purchase?package=${encodeURIComponent(telemetry?.subscriber?.packageId || user?.packageId || '')}&type=RENEWAL`}>
+                  <Button
+                    size="sm"
+                    className="w-full text-xs font-bold h-8 gap-1.5 cursor-pointer bg-emerald-600 hover:bg-emerald-700 text-white shadow-sm"
+                    aria-label="Pay Monthly Bill"
+                    data-testid="pay-now-btn"
+                  >
+                    <CreditCard className="h-3.5 w-3.5" />
+                    <span>Pay Monthly Bill</span>
+                  </Button>
+                </Link>
+              )}
+              <Link href="/packages">
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="w-full text-xs font-semibold h-8 gap-1.5 cursor-pointer hover:bg-muted focus-visible:ring-2 focus-visible:ring-primary"
+                  aria-label="View Fiber Package Plan"
+                  data-testid="view-fiber-package-plan-btn"
+                >
+                  <ArrowUpRight className="h-3.5 w-3.5 text-primary" />
+                  <span>View Fiber Package Plan</span>
+                </Button>
+              </Link>
             </div>
           </CardContent>
         </Card>
 
-        <Card className="border shadow-sm">
+        {/* Plan Price & Outstanding Balance */}
+        <Card className="border shadow-sm flex flex-col justify-between">
           <CardContent className="p-6">
             <div className="flex items-center justify-between">
               <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">
-                {dueMonthName} Bill Due
+                Plan Rate &amp; Balance
               </p>
               <DollarSign className="h-5 w-5 text-primary" />
             </div>
             <div className="mt-3">
               <h3 className="text-2xl font-bold text-primary font-mono">
-                {invoiceCurrency} {unpaidAmount.toFixed(2)}
+                ${monthlyBillAmount.toFixed(2)}
+                <span className="text-xs font-normal text-muted-foreground"> / mo</span>
               </h3>
               <p className="text-xs text-muted-foreground mt-1">
-                Active: {activePackage?.name || user?.packageName || user?.package || 'Essential'} ({activePackage?.speed || 100} Mbps)
+                Outstanding:{' '}
+                <strong className={Number(liveSummary?.outstanding || 0) > 0 ? 'text-amber-600' : 'text-emerald-600'}>
+                  ${Number(liveSummary?.outstanding || 0).toFixed(2)}
+                </strong>
               </p>
+            </div>
+            <div className="pt-3 mt-3 border-t">
+              <Link href="/dashboard/orders">
+                <Button size="sm" variant="outline" className="w-full text-xs font-semibold h-8">
+                  Pay / Download Receipts
+                </Button>
+              </Link>
             </div>
           </CardContent>
         </Card>
 
-        <Card className="border shadow-sm">
+        {/* Card 11: Tier-1 Direct Peering (KPI & Live Route Status) */}
+        <Card className="border shadow-sm flex flex-col justify-between" data-testid="tier1-peering-card">
           <CardContent className="p-6">
             <div className="flex items-center justify-between">
               <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">
@@ -570,108 +551,229 @@ export default function DashboardPage() {
               </p>
               <Activity className="h-5 w-5 text-emerald-500" />
             </div>
-            <div className="mt-3">
-              <h3 className="text-2xl font-bold text-emerald-600">1.8 ms</h3>
-              <p className="text-xs text-emerald-600 font-semibold mt-1">Cloudflare & AWS Direct Pipe</p>
-            </div>
+            {telemetryLoading && !telemetry ? (
+              <CardSkeleton rows={2} />
+            ) : !tier1Data || telemetryOnline === false ? (
+              <div className="mt-3">
+                <p className="text-sm font-semibold text-muted-foreground">Offline / No data</p>
+                <p className="text-xs text-muted-foreground mt-1">Peering telemetry unavailable</p>
+              </div>
+            ) : (
+              <div className="mt-3 space-y-1.5">
+                <div className="flex items-baseline justify-between gap-2">
+                  <h3 className="text-2xl font-bold text-emerald-600 font-mono">
+                    {tier1Data.avgLatencyMs !== undefined ? `${tier1Data.avgLatencyMs} ms` : '—'}
+                  </h3>
+                  <Badge className="bg-emerald-500/10 text-emerald-600 border-emerald-500/30 text-[10px]">
+                    {tier1Data.routeStatus || 'Optimal BGP'}
+                  </Badge>
+                </div>
+                <p className="text-xs font-semibold text-foreground truncate">{tier1Data.provider}</p>
+                <p className="text-[11px] text-muted-foreground font-mono">
+                  {tier1Data.asn} • {tier1Data.capacityGbps} Gbps • {tier1Data.uptimePercent}% SLA
+                </p>
+              </div>
+            )}
           </CardContent>
         </Card>
       </div>
 
-      {/* Retention Programs (Referral, Turbo Boost, Live Latency). Each card
-          honours its `enabled` flag from the CMS — when the operator disables
-          the programme in the admin panel, the portal card disappears rather
-          than advertising a programme that does not exist. */}
+      {/* Cards 6, 7, 9: Refer a Friend, 1 Gbps On-Demand Turbo Boost, Realtime Ping & Latency */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        {/* 1. Refer & Earn Box — real data from the server */}
-        {referralRewards?.enabled !== false && (
-        <Card className="border-2 border-emerald-500/30 bg-emerald-500/5 shadow-sm">
+        {/* Card 6: Refer a Friend & Earn $25 Credit */}
+        <Card className="border-2 border-emerald-500/30 bg-emerald-500/5 shadow-sm" data-testid="referral-card">
           <CardHeader className="pb-3">
             <div className="flex items-center justify-between">
               <Badge className="bg-emerald-600 text-white font-bold">
                 <Gift className="h-3.5 w-3.5 mr-1" />
                 {t('referAndEarn')}
               </Badge>
-              <span className="text-xs font-bold text-emerald-600">${myReferral?.bonusAmount ?? referralRewards?.bonusAmount ?? 0} Reward</span>
-            </div>
-            <CardTitle className="text-lg mt-2">
-              {myReferral?.title || referralRewards?.title || 'Refer a friend'}
-            </CardTitle>
-            <CardDescription>
-              {myReferral?.description || referralRewards?.description || 'Share your invite link — you get credit when your friend activates and pays.'}
-            </CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            <div className="rounded-xl border bg-card p-3 flex items-center justify-between">
-              <div>
-                <p className="text-[10px] text-muted-foreground uppercase font-bold">Your Referral Code</p>
-                <p className="font-mono font-bold text-sm text-primary">{myReferral?.code || '…'}</p>
-              </div>
-              <Button size="sm" variant="outline" onClick={handleCopyReferral} className="gap-1.5 h-8">
-                {copiedReferral ? <Check className="h-3.5 w-3.5 text-emerald-600" /> : <Copy className="h-3.5 w-3.5" />}
-                <span className="text-xs">{copiedReferral ? 'Copied!' : 'Copy Link'}</span>
-              </Button>
-            </div>
-
-            <div className="flex items-center justify-between text-xs text-muted-foreground pt-1 border-t">
-              <span>Referrals Tracked: <strong className="text-foreground">{myReferral?.referrals?.length ?? 0}</strong></span>
-              <span className="text-emerald-600 font-semibold">Credit: ${(myReferral?.referrals?.length ? myReferral.referrals.length * (myReferral.bonusAmount || 0) : 0).toFixed(2)}</span>
-            </div>
-          </CardContent>
-        </Card>
-        )}
-
-        {/* 2. Turbo Boost on Request */}
-        {boostBandwidth?.enabled !== false && (
-        <Card className="border-2 border-amber-500/30 bg-amber-500/5 shadow-sm">
-          <CardHeader className="pb-3">
-            <div className="flex items-center justify-between">
-              <div>
-                <Badge className="bg-amber-600 text-white font-bold">
-                  <Zap className="h-3.5 w-3.5 mr-1" />
-                  {t('instantBoost')}
-                </Badge>
-                <CardTitle className="text-lg mt-2">
-                  {boostBandwidth?.title || 'Turbo Boost on Request'}
-                </CardTitle>
-              </div>
-              <span className="text-xs font-bold text-amber-600">
-                {myBoost?.activeRequest ? 'Pending' : (boostBandwidth?.status || 'Available')}
+              <span className="text-xs font-bold text-emerald-600">
+                ${Number(refData?.bonusAmount ?? 25).toFixed(0)} Credit
               </span>
             </div>
+            <CardTitle className="text-lg mt-2">
+              {refData?.title || `Refer a Friend & Earn $${Number(refData?.bonusAmount ?? 25).toFixed(0)} Credit`}
+            </CardTitle>
             <CardDescription>
-              {boostBandwidth?.description || 'Request a time-boxed burst and the helpdesk activates it on your line.'}
+              {refData?.description ||
+                'Share your personal invite link — earn account credit when your friend activates and pays.'}
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
-            {myBoost?.activeRequest ? (
-              <div className="space-y-2">
-                <div className="p-3 bg-amber-500/10 rounded-xl border border-amber-500/20 text-center">
-                  <p className="text-xs font-bold text-amber-700 dark:text-amber-400">⚡ Boost request received</p>
-                  <p className="text-[11px] text-muted-foreground mt-1">
-                    Reference: <span className="font-mono font-semibold text-foreground">{myBoost.requests.find(r => r.status === 'requested' || r.status === 'in_progress')?.reference || '—'}</span>
-                    <br />The helpdesk will apply the change on your line and confirm by SMS.
-                  </p>
-                </div>
+            {telemetryLoading && !telemetry ? (
+              <CardSkeleton rows={3} />
+            ) : !refData || telemetryOnline === false ? (
+              <div className="p-4 rounded-xl border bg-card text-center text-xs text-muted-foreground">
+                Offline / No referral data available
               </div>
             ) : (
+              <>
+                <div className="rounded-xl border bg-card p-3 flex items-center justify-between gap-2">
+                  <div className="min-w-0">
+                    <p className="text-[10px] text-muted-foreground uppercase font-bold">Your Referral Code</p>
+                    <p className="font-mono font-bold text-sm text-primary truncate" data-testid="referral-code">
+                      {refData.code || 'Not assigned'}
+                    </p>
+                    {refData.referralLink && (
+                      <p className="text-[10px] text-muted-foreground font-mono truncate mt-0.5">
+                        {refData.referralLink}
+                      </p>
+                    )}
+                  </div>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={handleCopyReferral}
+                    disabled={!refData.code}
+                    className="gap-1.5 h-8 shrink-0"
+                  >
+                    {copiedReferral ? (
+                      <Check className="h-3.5 w-3.5 text-emerald-600" />
+                    ) : (
+                      <Copy className="h-3.5 w-3.5" />
+                    )}
+                    <span className="text-xs">{copiedReferral ? 'Copied!' : 'Copy Link'}</span>
+                  </Button>
+                </div>
+
+                <div className="grid grid-cols-3 gap-2 pt-1 text-center text-xs">
+                  <div className="rounded-lg border bg-card p-2">
+                    <span className="text-[10px] text-muted-foreground block uppercase">Referrals</span>
+                    <strong className="font-mono text-sm text-foreground">{refData.referralCount ?? 0}</strong>
+                  </div>
+                  <div className="rounded-lg border bg-card p-2">
+                    <span className="text-[10px] text-muted-foreground block uppercase">Earned</span>
+                    <strong className="font-mono text-sm text-emerald-600">
+                      ${Number(refData.creditsEarned ?? 0).toFixed(2)}
+                    </strong>
+                  </div>
+                  <div className="rounded-lg border bg-card p-2">
+                    <span className="text-[10px] text-muted-foreground block uppercase">Pending</span>
+                    <strong className="font-mono text-sm text-amber-600">
+                      ${Number(refData.creditsPending ?? 0).toFixed(2)}
+                    </strong>
+                  </div>
+                </div>
+              </>
+            )}
+          </CardContent>
+        </Card>
+
+        {/* Card 7: 1 Gbps On-Demand Turbo Boost */}
+        <Card className="border-2 border-amber-500/30 bg-amber-500/5 shadow-sm" data-testid="turbo-boost-card">
+          <CardHeader className="pb-3">
+            <div className="flex items-center justify-between">
+              <Badge className="bg-amber-600 text-white font-bold">
+                <Zap className="h-3.5 w-3.5 mr-1" />
+                {t('instantBoost')}
+              </Badge>
+              <Badge
+                variant="outline"
+                className={
+                  boostData?.active
+                    ? 'bg-emerald-500/15 text-emerald-600 border-emerald-500/30 font-bold uppercase text-[10px]'
+                    : boostData?.status === 'expired'
+                      ? 'bg-muted text-muted-foreground border-border uppercase text-[10px]'
+                      : 'bg-amber-500/15 text-amber-600 border-amber-500/30 font-bold uppercase text-[10px]'
+                }
+              >
+                {boostData?.active
+                  ? 'Active'
+                  : boostData?.status === 'expired'
+                    ? 'Expired'
+                    : boostData?.status === 'requested'
+                      ? 'Requested'
+                      : 'Available'}
+              </Badge>
+            </div>
+            <CardTitle className="text-lg mt-2">
+              {boostData?.title || '1 Gbps On-Demand Turbo Boost'}
+            </CardTitle>
+            <CardDescription>
+              {boostData?.description ||
+                'Activate an instant symmetrical optical speed burst on your line with real-time countdown.'}
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            {telemetryLoading && !telemetry ? (
+              <CardSkeleton rows={3} />
+            ) : !boostData || telemetryOnline === false ? (
+              <div className="p-4 rounded-xl border bg-card text-center text-xs text-muted-foreground">
+                Offline / No Turbo Boost telemetry available
+              </div>
+            ) : boostData.active ? (
               <div className="space-y-3">
-                <p className="text-xs text-muted-foreground">
-                  Ask the helpdesk for a complimentary {boostBandwidth?.durationHours || 6}-hour burst to {boostBandwidth?.boostSpeed || 1000} Mbps symmetrical.
-                </p>
-                {boostError && (
-                  <p className="text-[11px] text-destructive">{boostError}</p>
-                )}
-                <Button onClick={handleTurboBoost} disabled={boostSending} className="w-full bg-amber-600 hover:bg-amber-700 text-white font-bold gap-2 shadow">
-                  {boostSending ? (
+                <div className="p-3.5 bg-emerald-500/10 rounded-xl border border-emerald-500/30 space-y-2">
+                  <div className="flex items-center justify-between text-xs">
+                    <span className="font-bold text-emerald-700 dark:text-emerald-400 flex items-center gap-1.5">
+                      <Zap className="h-4 w-4" />
+                      {boostData.boostSpeedMbps || 1000} Mbps Active
+                    </span>
+                    <span className="font-mono text-[11px] text-muted-foreground">
+                      Ref: {boostData.activeBoost?.reference || '—'}
+                    </span>
+                  </div>
+                  <div className="flex items-center justify-between pt-1 border-t border-emerald-500/20 text-xs">
+                    <span className="text-muted-foreground flex items-center gap-1">
+                      <Clock className="h-3.5 w-3.5" /> Remaining Time:
+                    </span>
+                    <span className="font-mono font-black text-sm text-foreground" data-testid="boost-remaining-time">
+                      {formatRemainingDuration(boostRemainingSec)}
+                    </span>
+                  </div>
+                </div>
+                {boostError && <p className="text-[11px] text-destructive">{boostError}</p>}
+                <Button
+                  variant="outline"
+                  onClick={handleDeactivateBoost}
+                  disabled={boostActionLoading}
+                  className="w-full border-destructive/40 text-destructive hover:bg-destructive/10 font-bold gap-2 h-9 text-xs"
+                >
+                  {boostActionLoading ? (
                     <>
-                      <RefreshCw className="h-4 w-4 animate-spin" />
-                      Sending…
+                      <RefreshCw className="h-3.5 w-3.5 animate-spin" />
+                      Deactivating…
                     </>
                   ) : (
                     <>
-                      <Zap className="h-4 w-4" />
-                      Request {boostBandwidth?.boostSpeed || 1000}M Turbo Burst
+                      <PowerOff className="h-3.5 w-3.5" />
+                      Deactivate Turbo Boost
+                    </>
+                  )}
+                </Button>
+              </div>
+            ) : (
+              <div className="space-y-3">
+                <div className="rounded-xl border bg-card p-3 flex items-center justify-between text-xs">
+                  <div>
+                    <span className="text-[10px] text-muted-foreground uppercase block font-bold">Burst Profile</span>
+                    <strong className="text-foreground font-mono">
+                      {boostData.boostSpeedMbps || 1000} Mbps ({boostData.durationHours || 6} Hours)
+                    </strong>
+                  </div>
+                  <div className="text-right">
+                    <span className="text-[10px] text-muted-foreground uppercase block font-bold">Last Status</span>
+                    <span className="font-semibold capitalize text-muted-foreground">
+                      {boostData.status || 'Ready'}
+                    </span>
+                  </div>
+                </div>
+                {boostError && <p className="text-[11px] text-destructive">{boostError}</p>}
+                <Button
+                  onClick={handleActivateBoost}
+                  disabled={boostActionLoading}
+                  className="w-full bg-amber-600 hover:bg-amber-700 text-white font-bold gap-2 shadow h-9 text-xs"
+                >
+                  {boostActionLoading ? (
+                    <>
+                      <RefreshCw className="h-4 w-4 animate-spin" />
+                      Activating…
+                    </>
+                  ) : (
+                    <>
+                      <Power className="h-4 w-4" />
+                      Activate {boostData.boostSpeedMbps || 1000} Mbps Turbo Boost
                     </>
                   )}
                 </Button>
@@ -679,672 +781,371 @@ export default function DashboardPage() {
             )}
           </CardContent>
         </Card>
-        )}
 
-        {/* 3. Peering & Latency (reference) */}
-        <Card className="border shadow-sm">
+        {/* Card 9: Realtime Ping & Latency */}
+        <Card className="border shadow-sm" data-testid="live-latency-card">
           <CardHeader className="pb-3">
             <div className="flex items-center justify-between">
               <CardTitle className="text-lg flex items-center gap-1.5">
                 <Radio className="h-4 w-4 text-primary" />
-                {liveLatency?.title || t('livePing')}
+                {latencyData?.title || 'Realtime Ping & Latency'}
               </CardTitle>
-            </div>
-            <CardDescription>
-              Reference round-trip times at the peering points, configured by your operator — not measured from your device.
-            </CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-2.5 text-xs">
-            {latencyTargets.length > 0 ? (
-              latencyTargets.map((tgt: any) => (
-                <div key={tgt.id || tgt.name} className="flex items-center justify-between p-2 rounded-lg bg-muted/30">
-                  <span className="font-medium">{tgt.name}</span>
-                  <Badge className="bg-emerald-500/10 text-emerald-600 border-emerald-500/30 font-mono">
-                    {tgt.ping}
-                  </Badge>
-                </div>
-              ))
-            ) : (
-              <div className="p-2 rounded-lg bg-muted/30 text-muted-foreground">
-                Peering reference times have not been configured yet.
-              </div>
-            )}
-          </CardContent>
-        </Card>
-      </div>
-
-      {/* Usage & Speeds Grid */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        <Card className="lg:col-span-2 border shadow-sm">
-          <CardHeader>
-            <CardTitle>Bandwidth Consumption & Interface Traffic</CardTitle>
-            <CardDescription>
-              Current billing cycle utilization and live allocated bandwidth
-            </CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-6">
-            <div className="space-y-2">
-              <div className="flex justify-between text-sm">
-                <span className="text-muted-foreground">{t('dataConsumed')}</span>
-                <span className="font-bold text-foreground">
-                  {interfaceTraffic?.consumedDataGB || '—'} / {interfaceTraffic?.totalQuota || '—'}
-                </span>
-              </div>
-              {/* The bar is only drawn when the operator reported a real
-                  consumption figure — a fixed percentage would be a made-up
-                  statistic. */}
-              {interfaceTraffic?.consumedDataGB && (
-                <Progress value={35} className="h-3" />
-              )}
-            </div>
-
-            <div className="grid grid-cols-2 gap-4 pt-2">
-              <div className="rounded-xl border p-4 bg-muted/30">
-                <div className="flex items-center gap-2 text-muted-foreground text-sm">
-                  <Download className="h-4 w-4 text-emerald-500" />
-                  {t('downloadRate')}
-                </div>
-                <p className="text-2xl font-bold mt-2 text-foreground">
-                  {interfaceTraffic?.downloadRateMbps ? `${interfaceTraffic.downloadRateMbps} Mbps` : (activePackage?.speed ? `${activePackage.speed} Mbps` : '—')}
-                </p>
-                <p className="text-xs text-muted-foreground">
-                  Allocated: {interfaceTraffic?.allocatedSpeed || activePackage?.speed || '—'} Mbps
-                </p>
-              </div>
-
-              <div className="rounded-xl border p-4 bg-muted/30">
-                <div className="flex items-center gap-2 text-muted-foreground text-sm">
-                  <Upload className="h-4 w-4 text-blue-500" />
-                  {t('uploadRate')}
-                </div>
-                <p className="text-2xl font-bold mt-2 text-foreground">
-                  {interfaceTraffic?.uploadRateMbps ? `${interfaceTraffic.uploadRateMbps} Mbps` : (activePackage?.speed ? `${activePackage.speed} Mbps` : '—')}
-                </p>
-                <p className="text-xs text-muted-foreground">
-                  Allocated: {interfaceTraffic?.allocatedSpeed || activePackage?.speed || '—'} Mbps
-                </p>
-              </div>
-            </div>
-
-            <div className="rounded-xl bg-primary/5 p-4 border border-primary/20 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-              <div>
-                <p className="font-semibold text-sm">Optical GPON Terminal & Gateway</p>
-                <p className="text-xs text-muted-foreground font-mono">
-                  IPv4: {interfaceTraffic?.gatewayIPv4 || '—'} • IPv6: {interfaceTraffic?.gatewayIPv6 || '—'} • OLT Port: {interfaceTraffic?.oltPort || '—'}
-                </p>
-              </div>
-              <Badge className="bg-emerald-100 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-400 border-emerald-200">
-                {interfaceTraffic?.terminalStatus || 'Not reported'}
+              <Badge className="bg-emerald-500/10 text-emerald-600 border-emerald-500/30 text-[10px]">
+                Live Probe
               </Badge>
             </div>
-          </CardContent>
-        </Card>
-
-        {/* Quick Media Hubs */}
-        <Card className="border shadow-sm">
-          <CardHeader>
-            <CardTitle>Cloud Peering Hubs</CardTitle>
-            <CardDescription>Zero-buffering high throughput nodes</CardDescription>
+            <CardDescription>
+              {latencyData?.description || 'Live TCP probe latency, jitter, and packet loss to Tier-1 backbones'}
+            </CardDescription>
           </CardHeader>
-          <CardContent className="space-y-3">
-            {peeringHubs && peeringHubs.length > 0 ? (
-              peeringHubs.map((hub: any) => (
-                <a
-                  key={hub.id || hub.name}
-                  href={hub.url}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="flex items-center justify-between p-3 rounded-lg border hover:bg-muted/50 transition-colors"
-                >
-                  <div className="flex items-center gap-3">
-                    <Activity className="h-5 w-5 text-primary" />
-                    <div>
-                      <p className="font-semibold text-sm">{hub.name}</p>
-                      <p className="text-xs text-muted-foreground font-mono truncate max-w-[180px]">{hub.url}</p>
-                    </div>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <Badge variant="secondary" className="text-xs">{hub.badge}</Badge>
-                    <ArrowUpRight className="h-4 w-4 text-muted-foreground" />
-                  </div>
-                </a>
-              ))
+          <CardContent className="space-y-3 text-xs">
+            {telemetryLoading && !telemetry ? (
+              <CardSkeleton rows={4} />
+            ) : !latencyData || telemetryOnline === false ? (
+              <div className="p-4 rounded-xl border bg-muted/30 text-center text-muted-foreground">
+                Offline / No latency telemetry available
+              </div>
             ) : (
               <>
-                <a 
-                  href={mediaHubs?.speedtestUrl || 'https://speedtest.net'} 
-                  target="_blank" 
-                  rel="noreferrer"
-                  className="flex items-center justify-between p-3 rounded-lg border hover:bg-muted/50 transition-colors"
-                >
-                  <div className="flex items-center gap-3">
-                    <Activity className="h-5 w-5 text-primary" />
-                    <span className="font-semibold text-sm">Speedtest Diagnostic</span>
+                {/* Summary Metrics: Ping, Jitter, Packet Loss */}
+                <div className="grid grid-cols-3 gap-2 text-center">
+                  <div className="rounded-lg border bg-muted/30 p-2">
+                    <span className="text-[10px] text-muted-foreground uppercase block">Avg Ping</span>
+                    <strong className="font-mono text-sm text-emerald-600">
+                      {latencyData.avgPingMs !== undefined ? `${latencyData.avgPingMs} ms` : '—'}
+                    </strong>
                   </div>
-                  <ArrowUpRight className="h-4 w-4 text-muted-foreground" />
-                </a>
+                  <div className="rounded-lg border bg-muted/30 p-2">
+                    <span className="text-[10px] text-muted-foreground uppercase block">Jitter</span>
+                    <strong className="font-mono text-sm text-foreground">
+                      {latencyData.jitterMs !== undefined ? `${latencyData.jitterMs} ms` : '—'}
+                    </strong>
+                  </div>
+                  <div className="rounded-lg border bg-muted/30 p-2">
+                    <span className="text-[10px] text-muted-foreground uppercase block">Packet Loss</span>
+                    <strong className="font-mono text-sm text-foreground">
+                      {latencyData.packetLossPercent !== undefined ? `${latencyData.packetLossPercent}%` : '0%'}
+                    </strong>
+                  </div>
+                </div>
 
-                <a
-                  href={mediaHubs?.ftpUrl || '#'}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="flex items-center justify-between p-3 rounded-lg border hover:bg-muted/50 transition-colors"
-                >
-                  <div>
-                    <p className="font-semibold text-sm">Global Storage CDN</p>
-                    <p className="text-xs text-muted-foreground font-mono">{mediaHubs?.ftpUrl || 'https://storage.nextlink.global'}</p>
+                {/* Live Chart of Recent Ping Samples */}
+                {pingSamples.length > 0 && (
+                  <div className="rounded-lg border bg-muted/20 p-2.5 space-y-1.5">
+                    <div className="flex items-center justify-between text-[10px] text-muted-foreground">
+                      <span className="font-semibold uppercase">Live Latency Telemetry Chart</span>
+                      <span className="font-mono">{pingSamples.length} samples</span>
+                    </div>
+                    <div className="flex items-end gap-1 h-12 pt-1">
+                      {pingSamples.map((s, idx) => {
+                        const maxPing = Math.max(...pingSamples.map((p) => p.ping), 20)
+                        const heightPct = Math.max(18, Math.min(100, Math.round((s.ping / maxPing) * 100)))
+                        return (
+                          <div
+                            key={`${s.time}-${idx}`}
+                            className="flex-1 bg-emerald-500/80 hover:bg-emerald-500 rounded-t transition-all"
+                            style={{ height: `${heightPct}%` }}
+                            title={`${s.time}: ${s.ping} ms (Jitter ${s.jitter} ms)`}
+                          />
+                        )
+                      })}
+                    </div>
                   </div>
-                  <Badge variant="secondary">Gigabit</Badge>
-                </a>
+                )}
 
-                <a
-                  href={mediaHubs?.liveTvUrl || '#'}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="flex items-center justify-between p-3 rounded-lg border hover:bg-muted/50 transition-colors"
-                >
-                  <div>
-                    <p className="font-semibold text-sm">Ultra HD Streaming</p>
-                    <p className="text-xs text-muted-foreground font-mono">{mediaHubs?.liveTvUrl || 'https://tv.nextlink.global'}</p>
+                {/* Per-Target Breakdown */}
+                {Array.isArray(latencyData.targets) && latencyData.targets.length > 0 ? (
+                  <div className="space-y-1.5 max-h-40 overflow-y-auto pr-1">
+                    {latencyData.targets.map((tgt: any) => (
+                      <div
+                        key={tgt.id || tgt.name}
+                        className="flex items-center justify-between p-2 rounded-lg bg-muted/30 border border-border/50"
+                      >
+                        <div className="min-w-0">
+                          <span className="font-medium block truncate">{tgt.name}</span>
+                          <span className="text-[10px] text-muted-foreground font-mono">
+                            {tgt.host} • Jitter: {tgt.jitterMs ?? 0}ms • Loss: {tgt.packetLossPercent ?? 0}%
+                          </span>
+                        </div>
+                        <Badge className="bg-emerald-500/10 text-emerald-600 border-emerald-500/30 font-mono shrink-0">
+                          {tgt.ping}
+                        </Badge>
+                      </div>
+                    ))}
                   </div>
-                  <Badge className="bg-purple-100 text-purple-700 dark:bg-purple-950 dark:text-purple-300">4K HDR</Badge>
-                </a>
+                ) : (
+                  <div className="p-2 rounded-lg bg-muted/30 text-muted-foreground text-center">
+                    No latency targets configured in Live Latency &amp; Ping module.
+                  </div>
+                )}
               </>
             )}
-
-            <div className="p-4 rounded-xl bg-muted/40 text-center">
-              <p className="text-xs text-muted-foreground">Worldwide NOC (24/7 Helpline)</p>
-              <p className="text-lg font-bold text-primary mt-1">+880 1575 XXXXXX</p>
-            </div>
           </CardContent>
         </Card>
       </div>
 
-      {/* ================= LIVE BILLING (NextLink Billing Service) ================= */}
-      <Card className="border shadow-sm">
-        <CardHeader>
-          <div className="flex items-center justify-between gap-3">
-            <div>
-              <CardTitle>Current Bills</CardTitle>
-              <CardDescription>
-                Live invoices issued by the NextLink billing service — settle with bKash, Nagad, SSLCommerz or Rocket
-              </CardDescription>
-            </div>
-            <div className="flex items-center gap-2">
-              <Badge
-                className={
-                  billingOnline === true
-                    ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-400 border-emerald-200'
-                    : billingOnline === false
-                      ? 'bg-amber-100 text-amber-700 dark:bg-amber-950 dark:text-amber-400 border-amber-200'
-                      : 'bg-muted text-muted-foreground border-border'
-                }
-              >
-                {billingOnline === true ? 'Billing Online' : billingOnline === false ? 'Billing Offline' : 'Checking…'}
-              </Badge>
-              <Button variant="outline" size="sm" onClick={loadLiveBilling}>
-                <RefreshCw className="mr-2 h-4 w-4" />
-                Refresh
-              </Button>
-            </div>
-          </div>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          {billingError && (
-            <div className="p-3 rounded-lg bg-destructive/10 border border-destructive/30 text-destructive text-sm flex items-center gap-2">
-              <AlertCircle size={16} className="shrink-0" />
-              <span>{billingError}</span>
-            </div>
-          )}
-
-          {liveSummary && (
-            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-              <div className="rounded-lg border p-3">
-                <p className="text-xs text-muted-foreground">Outstanding</p>
-                <p className="text-lg font-bold text-amber-600">
-                  {invoiceCurrency} {liveSummary.outstanding.toLocaleString('en-US', { maximumFractionDigits: 2 })}
-                </p>
-              </div>
-              <div className="rounded-lg border p-3">
-                <p className="text-xs text-muted-foreground">Unpaid Bills</p>
-                <p className="text-lg font-bold">{liveSummary.unpaidCount}</p>
-              </div>
-              <div className="rounded-lg border p-3">
-                <p className="text-xs text-muted-foreground">Paid Bills</p>
-                <p className="text-lg font-bold text-emerald-600">{liveSummary.paidCount}</p>
-              </div>
-              <div className="rounded-lg border p-3">
-                <p className="text-xs text-muted-foreground">Referral Credit</p>
-                <p className="text-lg font-bold text-emerald-600">
-                  {(liveSummary.subscriber?.creditBalance ?? 0) > 0
-                    ? `${invoiceCurrency} ${(liveSummary.subscriber!.creditBalance).toFixed(2)}`
-                    : '—'}
-                </p>
-              </div>
-            </div>
-          )}
-
-          {billingOnline && liveInvoices.length > 0 && (
-            <div className="flex flex-wrap items-center gap-2">
-              <span className="text-sm text-muted-foreground">Pay using</span>
-              {(['bkash', 'nagad', 'sslcommerz', 'rocket'] as const).map((gateway) => (
-                <Button
-                  key={gateway}
-                  size="sm"
-                  variant={gatewayChoice === gateway ? 'default' : 'outline'}
-                  onClick={() => setGatewayChoice(gateway)}
-                  className="h-8 text-xs"
-                >
-                  {gateway === 'sslcommerz' ? 'SSLCommerz' : gateway === 'bkash' ? 'bKash' : gateway === 'nagad' ? 'Nagad' : 'Rocket'}
-                </Button>
-              ))}
-            </div>
-          )}
-
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="border-b text-muted-foreground text-left">
-                  <th className="py-3 px-4 font-semibold">Invoice ID</th>
-                  <th className="py-3 px-4 font-semibold">Period</th>
-                  <th className="py-3 px-4 font-semibold">Due Date</th>
-                  <th className="py-3 px-4 font-semibold">Amount</th>
-                  <th className="py-3 px-4 font-semibold">Status</th>
-                  <th className="py-3 px-4 font-semibold text-right">Action</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y">
-                {liveInvoices.length === 0 ? (
-                  <tr>
-                    <td colSpan={6} className="text-center py-8 text-muted-foreground">
-                      {billingOnline
-                        ? 'No invoices issued yet. Your first bill will appear after the billing cycle runs.'
-                        : 'Billing service is currently unreachable.'}
-                    </td>
-                  </tr>
-                ) : (
-                  liveInvoices.map((invoice) => (
-                    <tr key={invoice.id} className="hover:bg-muted/30">
-                      <td className="py-3 px-4 font-mono text-xs">{invoice.id}</td>
-                      <td className="py-3 px-4">{invoice.raw_data?.period || '—'}</td>
-                      <td className="py-3 px-4 text-muted-foreground">{invoice.due_date}</td>
-                      <td className="py-3 px-4 font-bold">
-                        {currencyOf(invoice)} {Number(invoice.amount || 0).toLocaleString('en-US', { maximumFractionDigits: 2 })}
-                      </td>
-                      <td className="py-3 px-4">
-                        {invoice.status === 'paid' ? (
-                          <Badge className="bg-emerald-100 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-400 border-emerald-200">
-                            Paid
-                          </Badge>
-                        ) : (
-                          <Badge className="bg-amber-100 text-amber-700 dark:bg-amber-950 dark:text-amber-400 border-amber-200">
-                            Unpaid
-                          </Badge>
-                        )}
-                      </td>
-                      <td className="py-3 px-4 text-right">
-                        {invoice.status === 'paid' ? (
-                          <span className="text-xs text-muted-foreground">Settled</span>
-                        ) : (
-                          <Button
-                            size="sm"
-                            onClick={() => handlePayLiveInvoice(invoice)}
-                            disabled={payingInvoiceId === invoice.id || !billingOnline}
-                            className="h-8 text-xs"
-                          >
-                            {payingInvoiceId === invoice.id ? 'Redirecting…' : 'Pay now'}
-                          </Button>
-                        )}
-                      </td>
-                    </tr>
-                  ))
-                )}
-              </tbody>
-            </table>
-          </div>
-        </CardContent>
-      </Card>
-
-      {/* Bill History Table */}
-      <Card className="border shadow-sm">
-        <CardHeader>
-          <div className="flex items-center justify-between">
-            <div>
-              <CardTitle>{t('billingHistory')}</CardTitle>
-              <CardDescription>International invoices and automated transaction logs</CardDescription>
-            </div>
-            <Button variant="outline" size="sm" onClick={() => window.print()}>
-              <Download className="mr-2 h-4 w-4" />
-              Export Statement
-            </Button>
-          </div>
-        </CardHeader>
-        <CardContent>
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="border-b text-muted-foreground text-left">
-                  <th className="py-3 px-4 font-semibold">Invoice ID</th>
-                  <th className="py-3 px-4 font-semibold">Billing Period</th>
-                  <th className="py-3 px-4 font-semibold">Date Paid</th>
-                  <th className="py-3 px-4 font-semibold">Amount</th>
-                  <th className="py-3 px-4 font-semibold">Payment Method</th>
-                  <th className="py-3 px-4 font-semibold">Transaction Reference</th>
-                  <th className="py-3 px-4 font-semibold">Status</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y">
-                {paymentHistory.length === 0 ? (
-                  <tr>
-                    <td colSpan={7} className="text-center py-8 text-muted-foreground">
-                      No billing records or invoices found.
-                    </td>
-                  </tr>
-                ) : (
-                  paymentHistory.map((item) => (
-                    <tr key={item.id} className="hover:bg-muted/30">
-                      <td className="py-3 px-4 font-mono font-medium">{item.id}</td>
-                      <td className="py-3 px-4">{item.month}</td>
-                      <td className="py-3 px-4 text-muted-foreground">{item.date}</td>
-                      <td className="py-3 px-4 font-bold">{item.amount}</td>
-                      <td className="py-3 px-4">{item.method}</td>
-                      <td className="py-3 px-4 font-mono text-xs text-muted-foreground">{item.trxId}</td>
-                      <td className="py-3 px-4">
-                        <Badge className="bg-emerald-100 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-400 border-emerald-200">
-                          {item.status}
-                        </Badge>
-                      </td>
-                    </tr>
-                  ))
-                )}
-              </tbody>
-            </table>
-          </div>
-        </CardContent>
-      </Card>
-
-      {/* ================= STEP 5 PAYMENT MODAL: SELECT PAYMENT METHOD & AUTHORIZE ================= */}
-      {mounted && payModalOpen && createPortal(
-        <div 
-          className="fixed inset-0 z-[99999] flex items-center justify-center bg-black/80 p-3 sm:p-4 animate-in fade-in overflow-y-auto"
-          role="dialog"
-          aria-modal="true"
-          aria-label="Complete bill payment"
-          onClick={() => setPayModalOpen(false)}
-        >
-          <Card 
-            className="w-full max-w-lg max-h-[85vh] flex flex-col shadow-2xl border-2 animate-in zoom-in-95 overflow-hidden"
-            onClick={(e) => e.stopPropagation()}
-          >
-            {/* Modal Header */}
-            <CardHeader className="relative py-3 px-5 border-b shrink-0 bg-background/95">
-              <button 
-                onClick={() => setPayModalOpen(false)}
-                className="absolute right-4 top-3 p-1.5 rounded-full hover:bg-muted text-muted-foreground transition-colors"
-                aria-label="Close"
-              >
-                <X size={18} />
-              </button>
-              <div className="space-y-0.5 pr-8">
-                <div className="flex items-center gap-2">
-                  <CreditCard className="h-4 w-4 text-primary" />
-                  <CardTitle className="text-base sm:text-lg font-bold">Step 5: Select Payment Method &amp; Authorize</CardTitle>
-                </div>
-                <CardDescription className="text-[11px] text-muted-foreground leading-tight">
-                  All transactions are encrypted with 256-bit SSL and processed directly through verified carrier payment gateways.
+      {/* Cards 5, 8, 10: Bandwidth Consumption & Interface Traffic, Optical GPON Terminal & Gateway, Cloud Peering Hubs */}
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+        {/* Card 5: Bandwidth Consumption & Interface Traffic */}
+        <Card className="lg:col-span-2 border shadow-sm" data-testid="bandwidth-traffic-card">
+          <CardHeader>
+            <div className="flex items-center justify-between">
+              <div>
+                <CardTitle>Bandwidth Consumption &amp; Interface Traffic</CardTitle>
+                <CardDescription>
+                  Real-time throughput, cycle data utilization, and physical interface counters
                 </CardDescription>
               </div>
-            </CardHeader>
+              <Badge variant="outline" className="font-mono text-xs">
+                {bw?.allocatedDownloadMbps ? `${bw.allocatedDownloadMbps} Mbps Plan` : 'Live Link'}
+              </Badge>
+            </div>
+          </CardHeader>
+          <CardContent className="space-y-6">
+            {telemetryLoading && !telemetry ? (
+              <CardSkeleton rows={4} />
+            ) : !bw || telemetryOnline === false ? (
+              <div className="p-6 rounded-xl border bg-muted/30 text-center text-sm text-muted-foreground">
+                Offline / Bandwidth telemetry currently unavailable
+              </div>
+            ) : (
+              <>
+                <div className="space-y-2">
+                  <div className="flex justify-between text-sm">
+                    <span className="text-muted-foreground">{t('dataConsumed')}</span>
+                    <span className="font-bold text-foreground font-mono">
+                      {bw.consumedDataGB} GB / {bw.totalQuotaGB}
+                    </span>
+                  </div>
+                  <Progress value={Number(bw.utilizationPercent || 0)} className="h-3" />
+                  <p className="text-[11px] text-muted-foreground text-right font-mono">
+                    Cycle Utilization: {Number(bw.utilizationPercent || 0)}%
+                  </p>
+                </div>
 
-            {/* Scrollable Modal Body */}
-            <div className="overflow-y-auto px-5 py-3 space-y-3 flex-1">
-              {/* Date Window Warning or Status (Requirement 2) */}
-              {!isPaymentWindowOpen ? (
-                <div className="p-3 rounded-xl bg-amber-500/15 border-2 border-amber-500/40 text-xs flex items-start gap-2.5 text-amber-900 dark:text-amber-200">
-                  <AlertCircle className="h-5 w-5 text-amber-600 dark:text-amber-400 shrink-0 mt-0.5" />
-                  <div className="space-y-1">
-                    <p className="font-bold text-sm text-amber-800 dark:text-amber-300">
-                      Payment Window Warning: Only 5th–10th Allowed
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  <div className="rounded-xl border p-4 bg-muted/30">
+                    <div className="flex items-center gap-2 text-muted-foreground text-sm">
+                      <Download className="h-4 w-4 text-emerald-500" />
+                      {t('downloadRate')}
+                    </div>
+                    <p className="text-2xl font-bold mt-2 text-foreground font-mono">
+                      {bw.downloadRateMbps} Mbps
                     </p>
-                    <p className="text-xs leading-relaxed text-muted-foreground">
-                      Monthly bill payments can only be paid between the <strong className="text-foreground">5th and 10th of each month</strong>. Today is <strong className="text-foreground">{today.toLocaleDateString('en-US', { day: '2-digit', month: 'short', year: 'numeric' })} (Day {currentDay})</strong>. Payments attempted on <strong className="text-foreground">1st–4th</strong> or <strong className="text-foreground">11th–31st</strong> cannot be authorized.
+                    <p className="text-xs text-muted-foreground">
+                      Allocated: {bw.allocatedDownloadMbps} Mbps
                     </p>
                   </div>
+
+                  <div className="rounded-xl border p-4 bg-muted/30">
+                    <div className="flex items-center gap-2 text-muted-foreground text-sm">
+                      <Upload className="h-4 w-4 text-blue-500" />
+                      {t('uploadRate')}
+                    </div>
+                    <p className="text-2xl font-bold mt-2 text-foreground font-mono">
+                      {bw.uploadRateMbps} Mbps
+                    </p>
+                    <p className="text-xs text-muted-foreground">
+                      Allocated: {bw.allocatedUploadMbps} Mbps
+                    </p>
+                  </div>
+                </div>
+
+                {Array.isArray(bw.interfaces) && bw.interfaces.length > 0 ? (
+                  <div className="border rounded-xl overflow-hidden">
+                    <div className="bg-muted/40 px-4 py-2 border-b flex items-center justify-between">
+                      <span className="text-xs font-bold uppercase tracking-wider text-muted-foreground">
+                        Optical &amp; Physical Interfaces
+                      </span>
+                      <span className="text-[11px] text-emerald-600 font-semibold">Live Telemetry</span>
+                    </div>
+                    <div className="divide-y text-xs">
+                      {bw.interfaces.map((iface: any) => (
+                        <div
+                          key={iface.id || iface.name}
+                          className="px-4 py-2.5 flex flex-wrap items-center justify-between gap-2 hover:bg-muted/20"
+                        >
+                          <div>
+                            <span className="font-semibold text-foreground">{iface.name}</span>
+                            <span className="ml-2 text-[10px] font-mono text-muted-foreground px-1.5 py-0.5 rounded bg-muted">
+                              {iface.type}
+                            </span>
+                          </div>
+                          <div className="flex items-center gap-3 font-mono">
+                            <span className="text-emerald-600 dark:text-emerald-400">RX: {iface.rx}</span>
+                            <span className="text-blue-600 dark:text-blue-400">TX: {iface.tx}</span>
+                            <Badge className="bg-emerald-500/15 text-emerald-600 border-emerald-500/30 text-[10px]">
+                              {iface.status}
+                            </Badge>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                ) : (
+                  <div className="p-3 rounded-xl border bg-muted/20 text-xs text-muted-foreground text-center">
+                    No active interface counters reported.
+                  </div>
+                )}
+              </>
+            )}
+          </CardContent>
+        </Card>
+
+        {/* Right Column: Card 8 (Optical GPON Terminal & Gateway) & Card 10 (Cloud Peering Hubs) */}
+        <div className="space-y-6">
+          {/* Card 8: Optical GPON Terminal & Gateway */}
+          <Card className="border shadow-sm" data-testid="optical-terminal-card">
+            <CardHeader className="pb-3">
+              <div className="flex items-center justify-between">
+                <CardTitle className="text-base flex items-center gap-2">
+                  <Cpu className="h-4 w-4 text-primary" />
+                  Optical GPON Terminal &amp; Gateway
+                </CardTitle>
+                {ontData && (
+                  <Badge
+                    className={
+                      String(ontData.ontStatus).toLowerCase().includes('online') ||
+                      String(ontData.ontStatus).toLowerCase().includes('sync')
+                        ? 'bg-emerald-500/15 text-emerald-600 border-emerald-500/30 text-[10px]'
+                        : 'bg-amber-500/15 text-amber-600 border-amber-500/30 text-[10px]'
+                    }
+                  >
+                    {ontData.ontStatus}
+                  </Badge>
+                )}
+              </div>
+              <CardDescription className="text-xs">
+                Live ONT optical signal level, gateway routing, and device uptime
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-3 text-xs">
+              {telemetryLoading && !telemetry ? (
+                <CardSkeleton rows={3} />
+              ) : !ontData || telemetryOnline === false ? (
+                <div className="p-4 rounded-xl border bg-muted/30 text-center text-muted-foreground">
+                  Offline / ONT telemetry unreachable
                 </div>
               ) : (
-                <div className="p-2.5 rounded-xl bg-emerald-500/10 border border-emerald-500/30 text-[11px] flex items-start gap-2 text-emerald-800 dark:text-emerald-300">
-                  <CheckCircle2 className="h-3.5 w-3.5 text-emerald-600 dark:text-emerald-400 shrink-0 mt-0.5" />
-                  <div className="space-y-0.5 leading-tight">
-                    <p className="font-bold">
-                      Billing Window Open (5th–10th Active)
-                    </p>
-                    <p className="text-muted-foreground">
-                      Clearing invoice for <strong className="text-foreground">{dueMonthName} {dueYearStr}</strong>. Bills must be cleared by the 10th.
-                    </p>
+                <div className="space-y-2.5">
+                  <div className="grid grid-cols-2 gap-2">
+                    <div className="p-2.5 rounded-lg border bg-muted/30">
+                      <span className="text-[10px] text-muted-foreground uppercase block">Optical Signal (RX/TX)</span>
+                      <strong className="font-mono text-foreground">
+                        {ontData.signalRxDbm} dBm / {ontData.signalTxDbm} dBm
+                      </strong>
+                      <span className="block text-[10px] text-emerald-600 font-semibold mt-0.5">
+                        {ontData.signalQuality}
+                      </span>
+                    </div>
+                    <div className="p-2.5 rounded-lg border bg-muted/30">
+                      <span className="text-[10px] text-muted-foreground uppercase block">Terminal Uptime</span>
+                      <strong className="font-mono text-foreground">{ontData.uptime}</strong>
+                      <span className="block text-[10px] text-muted-foreground mt-0.5">
+                        Temp: {ontData.temperatureC}°C
+                      </span>
+                    </div>
+                  </div>
+                  <div className="rounded-lg border bg-muted/20 p-2.5 space-y-1 font-mono text-[11px]">
+                    <div className="flex justify-between">
+                      <span className="text-muted-foreground">Gateway IPv4:</span>
+                      <span className="text-foreground font-semibold">{ontData.gatewayIpv4}</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-muted-foreground">Gateway IPv6:</span>
+                      <span className="text-foreground truncate max-w-[160px]">{ontData.gatewayIpv6}</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-muted-foreground">OLT Port:</span>
+                      <span className="text-foreground">{ontData.oltPort}</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-muted-foreground">ONU Model:</span>
+                      <span className="text-foreground">{ontData.onuModel}</span>
+                    </div>
                   </div>
                 </div>
               )}
-
-              {/* Active Package Bill Summary (Requirement 1 & Requirement 3) */}
-              <div className="rounded-xl bg-muted/50 p-2.5 sm:p-3 border flex items-center justify-between text-xs">
-                <div>
-                  <span className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider block">
-                    Active Subscription · {dueMonthName} {dueYearStr} Bill
-                  </span>
-                  <p className="font-bold text-sm text-foreground mt-0.5">
-                    {activePackage?.name || user?.packageName || user?.package || 'Essential'} ({activePackage?.speed || 100} Mbps)
-                  </p>
-                  <p className="text-[10px] text-muted-foreground">
-                    {String(invoiceCurrency)} · 100% Symmetrical Optical Fiber Drop
-                  </p>
-                </div>
-                <div className="text-right">
-                  <span className="text-[10px] font-semibold text-muted-foreground uppercase block">Amount Due</span>
-                  <p className="text-xl font-black text-primary font-mono">
-                    {invoiceCurrency} {unpaidAmount.toFixed(2)}
-                  </p>
-                  <span className="text-[10px] text-muted-foreground font-medium">per month</span>
-                </div>
-              </div>
-
-              {/* Monthly Policy Reminder Alert */}
-              <div className="p-2.5 rounded-xl bg-amber-500/10 border border-amber-500/30 text-[11px] flex items-start gap-2">
-                <Calendar className="h-3.5 w-3.5 text-amber-600 dark:text-amber-400 shrink-0 mt-0.5" />
-                <div className="space-y-0.5 leading-tight">
-                  <p className="font-bold text-amber-800 dark:text-amber-300">
-                    Monthly Policy &amp; Email Reminder Schedule
-                  </p>
-                  <p className="text-muted-foreground">
-                    Bills must be cleared by the <strong className="text-foreground">10th of each month</strong>. Daily reminder emails are sent between the <strong className="text-foreground">5th and 10th</strong> to <span className="font-mono text-foreground font-semibold">{user?.email || 'user@nextlink.global'}</span>.
-                  </p>
-                </div>
-              </div>
-
-              {/* Gateway Options Grid */}
-              <div>
-                <Label className="text-[11px] font-semibold uppercase text-muted-foreground block mb-1.5">
-                  Payment Method
-                </Label>
-                <div className="grid grid-cols-2 sm:grid-cols-3 gap-1.5">
-                  {[
-                    { id: 'bkash', label: 'bKash', icon: Smartphone },
-                    { id: 'nagad', label: 'Nagad', icon: Smartphone },
-                    { id: 'sslcommerz', label: 'SSLCommerz', icon: CreditCard },
-                    { id: 'rocket', label: 'Rocket', icon: Globe2 },
-                  ].map((gw) => {
-                    const Icon = gw.icon
-                    const isSelected = gatewayChoice === gw.id
-                    return (
-                      <button
-                        key={gw.id}
-                        type="button"
-                        onClick={() => setGatewayChoice(gw.id as typeof gatewayChoice)}
-                        className={`p-2 rounded-lg border-2 text-left transition-all flex items-center gap-1.5 ${
-                          isSelected
-                            ? 'border-primary bg-primary/10 text-primary font-bold shadow-xs'
-                            : 'border-border hover:bg-muted/40 text-foreground'
-                        }`}
-                      >
-                        <Icon className="h-3.5 w-3.5 shrink-0" />
-                        <span className="text-[11px] leading-tight truncate">{gw.label}</span>
-                      </button>
-                    )
-                  })}
-                </div>
-              </div>
-
-              {/* Form Input Fields */}
-              <div className="border rounded-xl p-3 bg-card shadow-xs space-y-2.5">
-                <div className="space-y-1.5">
-                  <Label className="text-[11px]">
-                    {gatewayChoice === 'bkash'
-                      ? 'bKash Mobile Account Number'
-                      : gatewayChoice === 'nagad'
-                        ? 'Nagad Mobile Account Number'
-                        : gatewayChoice === 'sslcommerz'
-                          ? 'Cardholder Full Name'
-                          : 'Rocket Mobile Account Number'}
-                  </Label>
-                  <Input
-                    placeholder={
-                      gatewayChoice === 'sslcommerz'
-                        ? 'e.g. Alexander Wright'
-                        : '+880 1700 000000'
-                    }
-                    value={mobileWalletNumber}
-                    onChange={(e) => setMobileWalletNumber(e.target.value)}
-                    className="h-8 text-xs font-mono"
-                  />
-                  <p className="text-[10px] text-muted-foreground">
-                    You will be redirected to the {gatewayChoice === 'sslcommerz' ? 'SSLCommerz' : gatewayChoice.toUpperCase()} checkout to authorise the payment.
-                  </p>
-                </div>
-
-                {/* Final Charged Amount Line */}
-                <div className="pt-2 border-t flex justify-between items-center text-xs">
-                  <span className="font-semibold text-muted-foreground">Final Charged Amount:</span>
-                  <span className="font-mono font-black text-base text-primary">
-                    {invoiceCurrency} {unpaidAmount.toFixed(2)}
-                  </span>
-                </div>
-              </div>
-            </div>
-
-            {/* Modal Fixed Footer Button */}
-            <div className="p-3 border-t bg-muted/20 shrink-0 space-y-1.5">
-              <Button 
-                onClick={handleProcessPayment} 
-                className={`w-full font-bold shadow-md h-10 text-xs gap-2 ${
-                  !isPaymentWindowOpen ? 'bg-amber-600 hover:bg-amber-600/90 text-white cursor-not-allowed opacity-90' : ''
-                }`}
-                disabled={isProcessingPay || !isPaymentWindowOpen}
-              >
-                {!isPaymentWindowOpen ? (
-                  <>
-                    <AlertCircle className="h-3.5 w-3.5" />
-                    <span>Payment Window Closed (Allowed 5th–10th Only)</span>
-                  </>
-                ) : isProcessingPay ? (
-                  <>
-                    <RefreshCw className="h-4 w-4 animate-spin" />
-                    <span>Processing &amp; Authorizing Payment...</span>
-                  </>
-                ) : (
-                  <>
-                    <Lock className="h-3.5 w-3.5" />
-                    <span>Confirm &amp; Pay {invoiceCurrency} {unpaidAmount.toFixed(2)}</span>
-                  </>
-                )}
-              </Button>
-              {!isPaymentWindowOpen && (
-                <p className="text-[10px] text-center text-amber-700 dark:text-amber-400 font-medium">
-                  * Warning: Bill payments can only be processed from the 5th to the 10th of the month.
-                </p>
-              )}
-            </div>
-          </Card>
-        </div>,
-        document.body
-      )}
-
-      {/* ================= PAYMENT RECEIPT MODAL (Requirement 22) ================= */}
-      {mounted && receiptModalOpen && latestReceipt && createPortal(
-        <div 
-          className="fixed inset-0 z-[99999] flex items-center justify-center bg-black/80 p-4 animate-in fade-in overflow-y-auto"
-          role="dialog"
-          aria-modal="true"
-          aria-label="Payment receipt"
-          onClick={() => setReceiptModalOpen(false)}
-        >
-          <Card 
-            className="w-full max-w-md shadow-2xl border-2 animate-in zoom-in-95"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <CardHeader className="text-center pb-2 border-b bg-muted/20">
-              <div className="h-14 w-14 rounded-full bg-emerald-100 dark:bg-emerald-900/30 text-emerald-600 flex items-center justify-center mx-auto mb-2">
-                <CheckCircle2 size={32} />
-              </div>
-              <CardTitle className="text-xl font-black">{t('receiptTitle')}</CardTitle>
-              <CardDescription className="text-xs">Thank you for your payment. Your receipt is confirmed.</CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-4 pt-4">
-              <div className="space-y-2 text-xs border rounded-xl p-4 bg-card font-mono">
-                <div className="flex justify-between">
-                  <span className="text-muted-foreground">Receipt Number:</span>
-                  <span className="font-bold text-foreground">{latestReceipt.receiptNo}</span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-muted-foreground">Billing Period:</span>
-                  <span className="font-bold text-primary">{latestReceipt.month || `${dueMonthName} ${dueYearStr}`}</span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-muted-foreground">{t('transactionId')}:</span>
-                  <span className="font-bold text-primary">{latestReceipt.trxId}</span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-muted-foreground">Date & Time:</span>
-                  <span className="text-foreground">{latestReceipt.date}</span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-muted-foreground">Payment Method:</span>
-                  <span className="text-foreground">{latestReceipt.method}</span>
-                </div>
-                <div className="border-t pt-2 flex justify-between text-sm font-bold">
-                  <span className="text-foreground">{t('paidAmount')}:</span>
-                  <span className="text-emerald-600 text-base">{latestReceipt.amount}</span>
-                </div>
-                <div className="flex justify-between text-xs text-muted-foreground">
-                  <span>Balance Remaining:</span>
-                  <span className="text-emerald-600 font-bold">
-                    {invoiceCurrency} {(liveSummary?.outstanding !== undefined
-                      ? Number(liveSummary.outstanding)
-                      : 0
-                    ).toFixed(2)}
-                  </span>
-                </div>
-              </div>
-
-              <div className="flex gap-2">
-                <Button 
-                  onClick={() => window.print()} 
-                  variant="outline" 
-                  className="flex-1 font-semibold gap-1.5"
-                >
-                  <Printer size={15} />
-                  <span>{t('printReceipt')}</span>
-                </Button>
-                <Button 
-                  onClick={() => setReceiptModalOpen(false)} 
-                  className="flex-1 font-bold"
-                >
-                  {t('close')}
-                </Button>
-              </div>
             </CardContent>
           </Card>
-        </div>,
-        document.body
-      )}
+
+          {/* Card 10: Cloud Peering Hubs */}
+          <Card className="border shadow-sm" data-testid="cloud-peering-hubs-card">
+            <CardHeader className="pb-3">
+              <div className="flex items-center justify-between">
+                <CardTitle className="text-base flex items-center gap-2">
+                  <Network className="h-4 w-4 text-primary" />
+                  Cloud Peering Hubs
+                </CardTitle>
+                <Badge variant="secondary" className="text-[10px] font-mono">
+                  {hubsData.length} Nodes
+                </Badge>
+              </div>
+              <CardDescription className="text-xs">
+                Direct zero-buffering IXP &amp; cloud exchange interconnects
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-2.5">
+              {telemetryLoading && !telemetry ? (
+                <CardSkeleton rows={3} />
+              ) : telemetryOnline === false ? (
+                <div className="p-4 rounded-xl border bg-muted/30 text-center text-xs text-muted-foreground">
+                  Offline / Cloud peering hubs unreachable
+                </div>
+              ) : hubsData.length === 0 ? (
+                <div className="p-4 rounded-xl border bg-muted/30 text-center text-xs text-muted-foreground">
+                  No cloud peering hubs configured in backend.
+                </div>
+              ) : (
+                hubsData.map((hub: any) => (
+                  <a
+                    key={hub.id || hub.name}
+                    href={hub.url}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="flex items-center justify-between p-2.5 rounded-lg border hover:bg-muted/50 transition-colors"
+                  >
+                    <div className="flex items-center gap-2.5 min-w-0">
+                      <Server className="h-4 w-4 text-primary shrink-0" />
+                      <div className="min-w-0">
+                        <p className="font-semibold text-xs text-foreground truncate">{hub.name}</p>
+                        <p className="text-[10px] text-muted-foreground font-mono truncate">{hub.url}</p>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-1.5 shrink-0">
+                      <Badge variant="secondary" className="text-[10px]">
+                        {hub.badge}
+                      </Badge>
+                      <ArrowUpRight className="h-3.5 w-3.5 text-muted-foreground" />
+                    </div>
+                  </a>
+                ))
+              )}
+
+              {brand?.phone && (
+                <div className="p-3 rounded-xl bg-muted/40 text-center mt-2">
+                  <p className="text-[11px] text-muted-foreground">Worldwide NOC (24/7 Helpline)</p>
+                  <p className="text-sm font-bold text-primary mt-0.5 font-mono">{brand.phone}</p>
+                </div>
+              )}
+            </CardContent>
+          </Card>
+        </div>
+      </div>
     </div>
+  )
+}
+
+export default function DashboardPage() {
+  return (
+    <Suspense
+      fallback={
+        <div className="min-h-[60vh] flex items-center justify-center">
+          <RefreshCw className="h-6 w-6 animate-spin text-primary" />
+        </div>
+      }
+    >
+      <DashboardContent />
+    </Suspense>
   )
 }

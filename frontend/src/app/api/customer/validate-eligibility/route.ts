@@ -137,32 +137,20 @@ async function validateCustomer(customerId: string) {
       );
     }
 
-    // Check outstanding bills
-    if (balance > 0) {
-      return NextResponse.json(
-        {
-          success: true,
-          eligible: false,
-          status: 'active',
-          hasOutstandingDue: true,
-          balance,
-          restrictionCode: 'OUTSTANDING_BALANCE',
-          message: `Outstanding Balance: You have an overdue balance of $${balance.toFixed(2)}. Please settle your pending invoice before upgrading or ordering additional plans.`,
-          subscriber,
-        },
-        { headers: corsHeaders }
-      );
-    }
-
-    // Customer is completely active and eligible!
+    // Subscribers with an overdue balance (Scenario 3) remain eligible for checkout;
+    // the backend billing quote engine includes their carried-over previous month fee(s)
+    // and configurable late fee(s) in the Subscriber Plan Invoice Preview.
     return NextResponse.json(
       {
         success: true,
         eligible: true,
-        status: 'active',
-        hasOutstandingDue: false,
+        status: status === 'registered' ? 'registered' : 'active',
+        hasOutstandingDue: balance > 0,
         balance,
-        message: 'Customer verified and fully eligible for package purchase.',
+        message:
+          balance > 0
+            ? `Overdue balance of $${balance.toFixed(2)} detected — carried-over dues and late fee will be included in your invoice preview.`
+            : 'Customer verified and fully eligible for package purchase.',
         subscriber: {
           id: subscriber.id,
           name: subscriber.name,

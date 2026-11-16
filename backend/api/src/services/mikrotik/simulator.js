@@ -3,13 +3,15 @@
 /**
  * In-memory MikroTik simulator.
  *
- * Behaves like a RouterOS core router for the operations the billing engine
- * needs (PPPoE secret enable/disable, profile changes, session kicks, queues).
- * Used when MIKROTIK_MODE=simulator so the whole automation pipeline can be
- * exercised without physical hardware.
+ * Behaves like a RouterOS core router for the operations the billing and
+ * provisioning engines need:
+ *   - PPPoE secret enable/disable/create/profile update
+ *   - Static IP simple queue rate limiting and bandwidth shaping
+ *   - Firewall address-list manipulation (e.g. suspended_subscribers)
+ *   - Active session drop / reconnection kicks
  *
- * The simulator intentionally mirrors the RouterOsClient public API so the
- * service layer can switch between real and simulated routers transparently.
+ * Used when MIKROTIK_MODE=simulator or as a safe fallback when router
+ * hardware is unreachable, ensuring zero crashes and full audit logging.
  */
 
 const crypto = require('crypto');
@@ -24,6 +26,7 @@ class RouterOsSimulator {
     this.secrets = new Map();
     this.queues = new Map();
     this.sessions = new Map();
+    this.addressLists = new Map();
     this._seedDefaults();
   }
 
@@ -42,12 +45,14 @@ class RouterOsSimulator {
       target: '10.10.10.0/24',
       maxLimit: '10M/10M',
       disabled: false,
+      comment: 'Default 10M plan queue',
     });
     this.queues.set('guest-profile', {
       name: 'guest-profile',
       target: '10.10.10.0/24',
       maxLimit: '2M/2M',
       disabled: true,
+      comment: 'Guest queue',
     });
   }
 
@@ -77,16 +82,15 @@ class RouterOsSimulator {
 
   /**
    * Ensure a PPPoE secret exists for a subscriber.
-   * Mirrors a real router where the secret is created at activation time.
    */
-  ensureSecret(name, { profile = 'default-10m', comment = '' } = {}) {
+  ensureSecret(name, { profile = 'default-10m', comment = '', remoteAddress = '', address = '10.10.10.1' } = {}) {
     if (!this.secrets.has(name)) {
       this.secrets.set(name, {
         name,
         profile,
         service: 'pppoe',
-        remoteAddress: `10.10.10.${(this.secrets.size % 200) + 10}`,
-        address: '10.10.10.1',
+        remoteAddress: remoteAddress || `10.10.10.${(this.secrets.size % 200) + 10}`,
+        address,
         disabled: false,
         comment,
       });
@@ -108,7 +112,6 @@ class RouterOsSimulator {
     }
     secret.disabled = Boolean(disabled);
     if (disabled) {
-      // A disabled secret drops any live session for that user.
       for (const [id, session] of this.sessions.entries()) {
         if (session.name === name) this.sessions.delete(id);
       }
@@ -151,12 +154,59 @@ class RouterOsSimulator {
     return { name, maxLimit };
   }
 
+  async setQueueDisabled(name, disabled) {
+    const queue = this.queues.get(name);
+    if (queue) {
+      queue.disabled = Boolean(disabled);
+      return { name, disabled: queue.disabled };
+    }
+    return { name, disabled: Boolean(disabled) };
+  }
+
+  async ensureQueue(name, { target = '0.0.0.0/0', maxLimit = '10M/10M', comment = '', disabled = false } = {}) {
+    const existing = this.queues.get(name);
+    if (existing) {
+      if (maxLimit) existing.maxLimit = maxLimit;
+      if (target) existing.target = target;
+      if (disabled !== undefined) existing.disabled = Boolean(disabled);
+      if (comment) existing.comment = comment;
+      return { name, created: false, ...existing };
+    }
+    const newQueue = { name, target, maxLimit, comment, disabled: Boolean(disabled) };
+    this.queues.set(name, newQueue);
+    return { name, created: true, ...newQueue };
+  }
+
+  async removeQueue(name) {
+    const existed = this.queues.delete(name);
+    return { name, removed: existed };
+  }
+
+  async addAddressList(list, address, { comment = '', disabled = false } = {}) {
+    const key = `${list}:${address}`;
+    this.addressLists.set(key, {
+      list,
+      address,
+      comment,
+      disabled: Boolean(disabled),
+    });
+    return { list, address, added: true };
+  }
+
+  async removeAddressList(list, address) {
+    const key = `${list}:${address}`;
+    const existed = this.addressLists.delete(key);
+    return { list, address, removed: existed };
+  }
+
+  async listAddressList(listName) {
+    const all = Array.from(this.addressLists.values());
+    if (!listName) return all;
+    return all.filter((entry) => entry.list === listName);
+  }
+
   /**
-   * The generic RouterOS command API, exactly like the real client.
-   *
-   * The service layer talks to the router through `send()`, so the simulator
-   * has to implement the same contract — otherwise provisioning a new secret
-   * fails in simulator mode with "client.send is not a function".
+   * The generic RouterOS command API, matching RouterOsClient.send().
    */
   async send(command, attrs = {}) {
     const path = String(command || '');
@@ -249,15 +299,91 @@ class RouterOsSimulator {
       }
       if (attrs['max-limit']) target.maxLimit = attrs['max-limit'];
       if (attrs.disabled !== undefined) target.disabled = attrs.disabled === 'yes' || attrs.disabled === true;
+      if (attrs.target) target.target = attrs.target;
+      return { ret: id };
+    }
+
+    if (path === '/queue/simple/add') {
+      const name = attrs.name;
+      if (name && !this.queues.has(name)) {
+        this.queues.set(name, {
+          name,
+          target: attrs.target || '0.0.0.0/0',
+          maxLimit: attrs['max-limit'] || '10M/10M',
+          disabled: attrs.disabled === 'yes' || attrs.disabled === true,
+          comment: attrs.comment || '',
+        });
+      }
+      return { ret: `*${this.queues.size}` };
+    }
+
+    if (path === '/queue/simple/remove') {
+      const id = attrs['.id'];
+      for (const [name, queue] of this.queues.entries()) {
+        const idx = Array.from(this.queues.values()).indexOf(queue);
+        if (`*${idx}` === id || name === id) {
+          this.queues.delete(name);
+          break;
+        }
+      }
+      return { ret: id };
+    }
+
+    if (path === '/ip/firewall/address-list/print') {
+      const list = attrs['?list'];
+      const address = attrs['?address'];
+      return Array.from(this.addressLists.values())
+        .filter((item) => (!list || item.list === list) && (!address || item.address === address))
+        .map((item, index) => ({ '.id': `*${index}`, ...item }));
+    }
+
+    if (path === '/ip/firewall/address-list/add') {
+      const list = attrs.list;
+      const address = attrs.address;
+      if (list && address) {
+        const key = `${list}:${address}`;
+        this.addressLists.set(key, {
+          list,
+          address,
+          comment: attrs.comment || '',
+          disabled: attrs.disabled === 'yes' || attrs.disabled === true,
+        });
+      }
+      return { ret: `*${this.addressLists.size}` };
+    }
+
+    if (path === '/ip/firewall/address-list/set') {
+      const id = attrs['.id'];
+      const list = attrs.list;
+      const address = attrs.address;
+      for (const item of this.addressLists.values()) {
+        if ((list && address && item.list === list && item.address === address) || id) {
+          if (attrs.disabled !== undefined) item.disabled = attrs.disabled === 'yes' || attrs.disabled === true;
+          if (attrs.comment !== undefined) item.comment = attrs.comment;
+          break;
+        }
+      }
+      return { ret: id || `${list}:${address}` };
+    }
+
+    if (path === '/ip/firewall/address-list/remove') {
+      const id = attrs['.id'];
+      for (const [key, item] of this.addressLists.entries()) {
+        const idx = Array.from(this.addressLists.values()).indexOf(item);
+        if (`*${idx}` === id || (attrs.list === item.list && attrs.address === item.address)) {
+          this.addressLists.delete(key);
+          break;
+        }
+      }
       return { ret: id };
     }
 
     if (path === '/system/identity/print') {
-      return { name: this.identity };
+      return [{ name: this.identity }];
     }
 
     if (path === '/system/resource/print') {
-      return { version: this.version, boardName: this.boardName, uptime: '1w2d3h4m' };
+      return [{ version: this.version, 'board-name': this.boardName, uptime: '1w2d3h4m', 'cpu-load': '5', 'free-memory': '213500000' }];
     }
 
     const error = new Error(`Simulator does not implement: ${path}`);
@@ -276,9 +402,6 @@ class RouterOsSimulator {
     return this.secrets.get(String(id)) || null;
   }
 
-  /**
-   * Simulate a subscriber logging in (used by tests and the "connect" demo).
-   */
   simulateLogin(name) {
     const secret = this.secrets.get(name);
     if (!secret || secret.disabled) {

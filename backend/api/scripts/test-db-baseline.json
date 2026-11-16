@@ -1,0 +1,196 @@
+{
+  "timestamp": "2026-11-15T11:00:38.195Z",
+  "createdNewDatabase": false,
+  "keyTablesBaseline": {
+    "packages": {
+      "nextlink_db_before": 8,
+      "nextlink_db_after": 8,
+      "nextlink_test_db": 8
+    },
+    "subscribers": {
+      "nextlink_db_before": 133,
+      "nextlink_db_after": 133,
+      "nextlink_test_db": 135
+    },
+    "subscriber_credentials": {
+      "nextlink_db_before": 123,
+      "nextlink_db_after": 123,
+      "nextlink_test_db": 123
+    },
+    "subscriber_billing": {
+      "nextlink_db_before": 132,
+      "nextlink_db_after": 132,
+      "nextlink_test_db": 132
+    },
+    "connection_requests": {
+      "nextlink_db_before": 128,
+      "nextlink_db_after": 128,
+      "nextlink_test_db": 136
+    },
+    "coverage_areas": {
+      "nextlink_db_before": 10,
+      "nextlink_db_after": 10,
+      "nextlink_test_db": 10
+    },
+    "orders": {
+      "nextlink_db_before": 10,
+      "nextlink_db_after": 10,
+      "nextlink_test_db": 10
+    },
+    "invoices": {
+      "nextlink_db_before": 469,
+      "nextlink_db_after": 469,
+      "nextlink_test_db": 512
+    },
+    "cancellations": {
+      "nextlink_db_before": 1,
+      "nextlink_db_after": 1,
+      "nextlink_test_db": 1
+    },
+    "tickets": {
+      "nextlink_db_before": 99,
+      "nextlink_db_after": 99,
+      "nextlink_test_db": 99
+    },
+    "billing_events": {
+      "nextlink_db_before": 2409,
+      "nextlink_db_after": 2409,
+      "nextlink_test_db": 2483
+    },
+    "audit_log": {
+      "nextlink_db_before": 6971,
+      "nextlink_db_after": 6971,
+      "nextlink_test_db": 7422
+    }
+  },
+  "allTablesBaseline": {
+    "roles": {
+      "nextlink_db": 4,
+      "nextlink_test_db": 4
+    },
+    "packages": {
+      "nextlink_db": 8,
+      "nextlink_test_db": 8
+    },
+    "admin_users": {
+      "nextlink_db": 1,
+      "nextlink_test_db": 1
+    },
+    "api_users": {
+      "nextlink_db": 4,
+      "nextlink_test_db": 4
+    },
+    "app_settings": {
+      "nextlink_db": 9,
+      "nextlink_test_db": 9
+    },
+    "system_settings": {
+      "nextlink_db": 7,
+      "nextlink_test_db": 7
+    },
+    "coverage_areas": {
+      "nextlink_db": 10,
+      "nextlink_test_db": 10
+    },
+    "technicians": {
+      "nextlink_db": 4,
+      "nextlink_test_db": 4
+    },
+    "network_devices": {
+      "nextlink_db": 2,
+      "nextlink_test_db": 2
+    },
+    "subscribers": {
+      "nextlink_db": 133,
+      "nextlink_test_db": 135
+    },
+    "subscriber_credentials": {
+      "nextlink_db": 123,
+      "nextlink_test_db": 123
+    },
+    "subscriber_billing": {
+      "nextlink_db": 132,
+      "nextlink_test_db": 132
+    },
+    "user_preferences": {
+      "nextlink_db": 2,
+      "nextlink_test_db": 2
+    },
+    "connection_requests": {
+      "nextlink_db": 128,
+      "nextlink_test_db": 136
+    },
+    "orders": {
+      "nextlink_db": 10,
+      "nextlink_test_db": 10
+    },
+    "invoices": {
+      "nextlink_db": 469,
+      "nextlink_test_db": 512
+    },
+    "cancellations": {
+      "nextlink_db": 1,
+      "nextlink_test_db": 1
+    },
+    "billing_cycles": {
+      "nextlink_db": 14,
+      "nextlink_test_db": 22
+    },
+    "payment_transactions": {
+      "nextlink_db": 182,
+      "nextlink_test_db": 205
+    },
+    "payment_webhooks": {
+      "nextlink_db": 400,
+      "nextlink_test_db": 529
+    },
+    "billing_events": {
+      "nextlink_db": 2409,
+      "nextlink_test_db": 2483
+    },
+    "tickets": {
+      "nextlink_db": 99,
+      "nextlink_test_db": 99
+    },
+    "ticket_details": {
+      "nextlink_db": 99,
+      "nextlink_test_db": 99
+    },
+    "ticket_messages": {
+      "nextlink_db": 127,
+      "nextlink_test_db": 127
+    },
+    "mikrotik_sync_log": {
+      "nextlink_db": 1739,
+      "nextlink_test_db": 1739
+    },
+    "sms_messages": {
+      "nextlink_db": 3876,
+      "nextlink_test_db": 3948
+    },
+    "referral_codes": {
+      "nextlink_db": 21,
+      "nextlink_test_db": 21
+    },
+    "referrals": {
+      "nextlink_db": 25,
+      "nextlink_test_db": 25
+    },
+    "referral_rewards": {
+      "nextlink_db": 6,
+      "nextlink_test_db": 6
+    },
+    "turbo_boost_requests": {
+      "nextlink_db": 28,
+      "nextlink_test_db": 28
+    },
+    "notifications": {
+      "nextlink_db": 87,
+      "nextlink_test_db": 212
+    },
+    "audit_log": {
+      "nextlink_db": 6971,
+      "nextlink_test_db": 7422
+    }
+  }
+}

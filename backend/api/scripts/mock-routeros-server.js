@@ -3,10 +3,10 @@
 /**
  * A RouterOS API protocol server used to verify the live MikroTik code path.
  *
- * It speaks the real RouterOS wire protocol (length-prefixed words over TCP)
- * and answers the commands the billing engine issues. This proves the
- * `RouterOsClient` works against a genuine protocol implementation rather than
- * only against the in-memory simulator.
+ * Speaks the real RouterOS wire protocol (standard variable-length binary
+ * framing and legacy 4-byte LE framing over TCP) and answers the commands
+ * the billing and subscriber provisioning engines issue for both PPPoE and
+ * Static IP subscriber queues and firewall address-lists.
  *
  * Usage:
  *   node scripts/mock-routeros-server.js [port]
@@ -23,21 +23,108 @@ const EXPECTED_USER = process.env.MOCK_ROUTEROS_USER || 'admin';
 const EXPECTED_PASSWORD = process.env.MOCK_ROUTEROS_PASSWORD || 'nextlink';
 
 /**
- * Encode a list of words into a RouterOS sentence.
+ * Encode word length in standard RouterOS API variable length.
  */
-function encode(words) {
+function encodeLength(len) {
+  if (len < 0x80) {
+    return Buffer.from([len]);
+  }
+  if (len < 0x4000) {
+    return Buffer.from([(len >> 8) | 0x80, len & 0xff]);
+  }
+  if (len < 0x200000) {
+    return Buffer.from([(len >> 16) | 0xc0, (len >> 8) & 0xff, len & 0xff]);
+  }
+  if (len < 0x10000000) {
+    return Buffer.from([(len >> 24) | 0xe0, (len >> 16) & 0xff, (len >> 8) & 0xff, len & 0xff]);
+  }
+  const buf = Buffer.alloc(5);
+  buf[0] = 0xf0;
+  buf.writeUInt32BE(len, 1);
+  return buf;
+}
+
+/**
+ * Encode a list of words into a RouterOS sentence buffer.
+ * Supports both standard variable-length framing and 4-byte LE framing.
+ */
+function encode(words, format = 'standard') {
+  if (format === 'le') {
+    const chunks = [];
+    for (const word of words) {
+      const data = Buffer.from(word, 'utf8');
+      const length = Buffer.alloc(4);
+      length.writeUInt32LE(data.length + 4, 0);
+      chunks.push(length, data);
+    }
+    const terminator = Buffer.alloc(4);
+    terminator.writeUInt32LE(4, 0);
+    chunks.push(terminator);
+    return Buffer.concat(chunks);
+  }
+
   const chunks = [];
   for (const word of words) {
     const data = Buffer.from(word, 'utf8');
-    const length = Buffer.alloc(4);
-    length.writeUInt32LE(data.length + 4, 0);
-    chunks.push(length, data);
+    chunks.push(encodeLength(data.length));
+    chunks.push(data);
   }
-  // Empty word terminator: the length field still counts its own 4 bytes.
-  const terminator = Buffer.alloc(4);
-  terminator.writeUInt32LE(4, 0);
-  chunks.push(terminator);
+  // Standard RouterOS API terminator is empty word (single 0x00 byte)
+  chunks.push(Buffer.from([0x00]));
   return Buffer.concat(chunks);
+}
+
+/**
+ * Decode next word length from buffer. Returns null if not enough bytes yet.
+ */
+function decodeWord(buf) {
+  if (buf.length < 1) return null;
+  const b0 = buf[0];
+
+  // Detect 4-byte LE framing (bytes 1..3 are 0x00 and length >= 4)
+  if (buf.length >= 4 && buf[1] === 0 && buf[2] === 0 && buf[3] === 0) {
+    const leLen = buf.readUInt32LE(0);
+    if (leLen >= 4) {
+      const payloadLen = leLen - 4;
+      if (buf.length < 4 + payloadLen) return null;
+      const payload = buf.subarray(4, 4 + payloadLen).toString('utf8');
+      return { payload, bytesConsumed: 4 + payloadLen, isTerminator: payload === '', format: 'le' };
+    }
+  }
+
+  // Standard variable length framing:
+  if (b0 === 0x00) {
+    // Sentence terminator (empty word)
+    return { payload: '', bytesConsumed: 1, isTerminator: true, format: 'standard' };
+  }
+
+  let len = 0;
+  let prefixLen = 0;
+
+  if (b0 < 0x80) {
+    len = b0;
+    prefixLen = 1;
+  } else if (b0 < 0xc0) {
+    if (buf.length < 2) return null;
+    len = ((b0 & 0x3f) << 8) | buf[1];
+    prefixLen = 2;
+  } else if (b0 < 0xe0) {
+    if (buf.length < 3) return null;
+    len = ((b0 & 0x1f) << 16) | (buf[1] << 8) | buf[2];
+    prefixLen = 3;
+  } else if (b0 < 0xf0) {
+    if (buf.length < 4) return null;
+    len = ((b0 & 0x0f) << 24) | (buf[1] << 16) | (buf[2] << 8) | buf[3];
+    prefixLen = 4;
+  } else if (b0 === 0xf0) {
+    if (buf.length < 5) return null;
+    len = buf.readUInt32BE(1);
+    prefixLen = 5;
+  }
+
+  if (buf.length < prefixLen + len) return null;
+  const payload = buf.subarray(prefixLen, prefixLen + len).toString('utf8');
+  return { payload, bytesConsumed: prefixLen + len, isTerminator: false, format: 'standard' };
 }
 
 /**
@@ -54,15 +141,12 @@ const state = {
     ['guest-profile', { name: 'guest-profile', target: '10.10.10.0/24', 'max-limit': '2M/2M', disabled: 'yes' }],
   ]),
   sessions: new Map(),
+  addressLists: new Map(),
   authenticated: false,
 };
 
 /**
  * Build the attribute words for a record.
- *
- * RouterOS sends every attribute of a record as a "=key" word followed by a
- * "=value" word. The ".id" attribute comes first so the client can tell the
- * records apart.
  */
 function toWords(record) {
   const words = [];
@@ -91,9 +175,9 @@ function handleCommand(words) {
 
   if (!command) return { error: 'no command' };
 
-  // Login.
+  // Login (RouterOS v6 & v7 plaintext or challenge).
   if (command === '/login') {
-    if (attributes.name === EXPECTED_USER && attributes.password === EXPECTED_PASSWORD) {
+    if (attributes.name === EXPECTED_USER && (attributes.password === EXPECTED_PASSWORD || attributes.response)) {
       state.authenticated = true;
       return { words: ['=ret=challenge'] };
     }
@@ -125,7 +209,6 @@ function handleCommand(words) {
       '.id': `*${index + 1}`,
     }));
 
-    // RouterOS supports "?key=value" query attributes to filter the reply.
     let filtered = rows;
     for (const [key, value] of Object.entries(attributes)) {
       if (!key.startsWith('?')) continue;
@@ -136,7 +219,6 @@ function handleCommand(words) {
     return { words: filtered.flatMap((row) => toWords(row)) };
   }
   if (command === '/ppp/secret/set') {
-    // RouterOS addresses a record by its internal ".id".
     const targetId = attributes['.id'];
     const target = Array.from(state.secrets.values()).find((secret, index) => {
       if (targetId) return `*${index + 1}` === targetId;
@@ -145,6 +227,7 @@ function handleCommand(words) {
     if (target) {
       if (attributes.disabled !== undefined) target.disabled = attributes.disabled;
       if (attributes.profile !== undefined) target.profile = attributes.profile;
+      if (attributes.password !== undefined) target.password = attributes.password;
     }
     return { words: [] };
   }
@@ -162,6 +245,17 @@ function handleCommand(words) {
     }
     return { words: [] };
   }
+  if (command === '/ppp/secret/remove') {
+    const targetId = attributes['.id'];
+    for (const [name, secret] of state.secrets.entries()) {
+      const idx = Array.from(state.secrets.values()).indexOf(secret);
+      if (`*${idx + 1}` === targetId || attributes.name === name) {
+        state.secrets.delete(name);
+        break;
+      }
+    }
+    return { words: [] };
+  }
   if (command === '/ppp/active/print') {
     const rows = Array.from(state.sessions.entries()).map(([id, session]) => ({ ...session, '.id': id }));
     return { words: rows.flatMap((row) => toWords(row)) };
@@ -173,12 +267,100 @@ function handleCommand(words) {
   }
   if (command === '/queue/simple/print') {
     const rows = Array.from(state.queues.values()).map((queue, index) => ({ ...queue, '.id': `*${index + 1}` }));
-    return { words: rows.flatMap((row) => toWords(row)) };
+    let filtered = rows;
+    for (const [key, value] of Object.entries(attributes)) {
+      if (!key.startsWith('?')) continue;
+      const field = key.slice(1);
+      filtered = filtered.filter((row) => String(row[field] ?? '') === String(value));
+    }
+    return { words: filtered.flatMap((row) => toWords(row)) };
   }
   if (command === '/queue/simple/set') {
-    const target = state.queues.get(attributes.name);
-    if (target && attributes['max-limit'] !== undefined) {
-      target['max-limit'] = attributes['max-limit'];
+    const targetId = attributes['.id'];
+    const target = Array.from(state.queues.values()).find((q, index) => {
+      if (targetId) return `*${index + 1}` === targetId;
+      return q.name === attributes.name;
+    });
+    if (target) {
+      if (attributes['max-limit'] !== undefined) target['max-limit'] = attributes['max-limit'];
+      if (attributes.disabled !== undefined) target.disabled = attributes.disabled;
+      if (attributes.target !== undefined) target.target = attributes.target;
+    }
+    return { words: [] };
+  }
+  if (command === '/queue/simple/add') {
+    const name = attributes.name;
+    if (name && !state.queues.has(name)) {
+      state.queues.set(name, {
+        name,
+        target: attributes.target || '0.0.0.0/0',
+        'max-limit': attributes['max-limit'] || '10M/10M',
+        disabled: attributes.disabled || 'no',
+        comment: attributes.comment || '',
+      });
+    }
+    return { words: [] };
+  }
+  if (command === '/queue/simple/remove') {
+    const targetId = attributes['.id'];
+    for (const [name, q] of state.queues.entries()) {
+      const idx = Array.from(state.queues.values()).indexOf(q);
+      if (`*${idx + 1}` === targetId || attributes.name === name) {
+        state.queues.delete(name);
+        break;
+      }
+    }
+    return { words: [] };
+  }
+  if (command === '/ip/firewall/address-list/print') {
+    const rows = Array.from(state.addressLists.values()).map((item, index) => ({
+      ...item,
+      '.id': `*${index + 1}`,
+    }));
+    let filtered = rows;
+    for (const [key, value] of Object.entries(attributes)) {
+      if (!key.startsWith('?')) continue;
+      const field = key.slice(1);
+      filtered = filtered.filter((row) => String(row[field] ?? '') === String(value));
+    }
+    return { words: filtered.flatMap((row) => toWords(row)) };
+  }
+  if (command === '/ip/firewall/address-list/add') {
+    const list = attributes.list;
+    const address = attributes.address;
+    if (list && address) {
+      const key = `${list}:${address}`;
+      if (!state.addressLists.has(key)) {
+        state.addressLists.set(key, {
+          list,
+          address,
+          comment: attributes.comment || '',
+          disabled: attributes.disabled || 'no',
+        });
+      }
+    }
+    return { words: [] };
+  }
+  if (command === '/ip/firewall/address-list/set') {
+    const targetId = attributes['.id'];
+    const target = Array.from(state.addressLists.values()).find((item, index) => {
+      if (targetId) return `*${index + 1}` === targetId;
+      return item.list === attributes.list && item.address === attributes.address;
+    });
+    if (target) {
+      if (attributes.disabled !== undefined) target.disabled = attributes.disabled;
+      if (attributes.comment !== undefined) target.comment = attributes.comment;
+    }
+    return { words: [] };
+  }
+  if (command === '/ip/firewall/address-list/remove') {
+    const targetId = attributes['.id'];
+    for (const [key, item] of state.addressLists.entries()) {
+      const idx = Array.from(state.addressLists.values()).indexOf(item);
+      if (`*${idx + 1}` === targetId || (attributes.list === item.list && attributes.address === item.address)) {
+        state.addressLists.delete(key);
+        break;
+      }
     }
     return { words: [] };
   }
@@ -189,24 +371,19 @@ function handleCommand(words) {
 const server = net.createServer((socket) => {
   let buffer = Buffer.alloc(0);
   let words = [];
+  let clientFormat = 'standard';
 
   socket.on('data', (chunk) => {
     buffer = Buffer.concat([buffer, chunk]);
 
     for (;;) {
-      if (buffer.length < 4) return;
-      const length = buffer.readUInt32LE(0);
-      if (length < 4) {
-        console.error('bad word length from client');
-        socket.destroy();
-        return;
-      }
-      if (buffer.length < length) return;
+      const decoded = decodeWord(buffer);
+      if (!decoded) return;
 
-      const payload = buffer.subarray(4, length).toString('utf8');
-      buffer = buffer.subarray(length);
+      buffer = buffer.subarray(decoded.bytesConsumed);
+      clientFormat = decoded.format;
 
-      if (payload === '') {
+      if (decoded.isTerminator) {
         const sentence = words;
         words = [];
         let result;
@@ -220,13 +397,13 @@ const server = net.createServer((socket) => {
           console.log('<-', sentence.join(' '));
         }
         if (result.trap) {
-          socket.write(encode([`!trap=${result.trap}`]));
+          socket.write(encode([`!trap=${result.trap}`], clientFormat));
         } else {
-          socket.write(encode([...result.words, '!done']));
+          socket.write(encode([...result.words, '!done'], clientFormat));
         }
         continue;
       }
-      words.push(payload);
+      words.push(decoded.payload);
     }
   });
 

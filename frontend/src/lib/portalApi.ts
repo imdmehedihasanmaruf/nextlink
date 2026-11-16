@@ -18,8 +18,16 @@ export interface PortalInvoice {
   id: string;
   subscriber_id: string;
   amount: string | number;
+  installation_fee?: string | number;
+  tax_fee?: string | number;
+  late_fee?: string | number;
+  carried_over_amount?: string | number;
+  late_fee_applied?: boolean;
   status: 'paid' | 'unpaid' | string;
   due_date: string;
+  package_name?: string;
+  package_speed?: number;
+  package_price?: number;
   raw_data: any;
   created_at: string;
 }
@@ -39,7 +47,12 @@ export interface PortalSummary {
   unpaidCount: number;
   paidCount: number;
   paidTotal: number;
-  nextInvoice: { id: string; due_date: string; amount: string | number } | null;
+  nextInvoice: { id: string | null; due_date: string; amount: string | number; isEstimated?: boolean } | null;
+  isCurrentPeriodPaid?: boolean;
+  alreadyPaid?: boolean;
+  paidMonthYear?: string;
+  nextDueDate?: string;
+  paidNotice?: string;
   subscriber: {
     id: string;
     name: string;
@@ -119,7 +132,22 @@ export async function portalFetch<T = any>(
 
   if (auth) {
     const token = getSubscriberToken();
-    if (token) requestHeaders.Authorization = `Bearer ${token}`;
+    if (token) {
+      requestHeaders.Authorization = `Bearer ${token}`;
+    } else if (typeof window !== 'undefined') {
+      try {
+        const storedAuth =
+          window.localStorage.getItem('nextlink-subscriber-auth') ||
+          window.localStorage.getItem('nextlink-auth');
+        if (storedAuth) {
+          const parsed = JSON.parse(storedAuth);
+          const userId = parsed?.state?.user?.id;
+          if (userId) {
+            requestHeaders['x-subscriber-id'] = userId;
+          }
+        }
+      } catch {}
+    }
   }
 
   try {
@@ -155,19 +183,66 @@ export async function fetchMySummary() {
   return portalFetch<{ summary: PortalSummary }>('/api/portal/my-summary');
 }
 
+export interface PaymentGatewayItem {
+  id: string;
+  name: string;
+  supported: boolean;
+  method?: string;
+  description?: string;
+}
+
+export interface PaymentInitiateResult {
+  transactionId: string;
+  gatewayTransactionId: string;
+  redirectUrl: string;
+  amount: number;
+  currency: string;
+  invoiceId: string;
+}
+
+/**
+ * Fetch available payment gateways and active mode from backend.
+ */
+export async function fetchPaymentGateways() {
+  return portalFetch<{
+    mode: string;
+    gateways: PaymentGatewayItem[];
+  }>('/api/payments/gateways', { auth: false });
+}
+
 /**
  * Start a payment for an invoice. Returns the gateway redirect URL.
  */
-export async function payInvoice(invoiceId: string, gateway: string) {
-  return portalFetch<{
-    redirectUrl: string;
-    gatewayTransactionId: string;
-    transactionId: string;
-    amount: number;
-    currency: string;
-  }>('/api/portal/pay', {
+export async function payInvoice(
+  invoiceId: string,
+  gateway: string,
+  customer?: { name?: string; email?: string; phone?: string; address?: string }
+) {
+  // Try /api/payments/initiate first, falling back to /api/portal/pay
+  const res = await portalFetch<PaymentInitiateResult>('/api/payments/initiate', {
+    method: 'POST',
+    body: JSON.stringify({ invoiceId, gateway, customer }),
+  });
+  if (res.success && res.redirectUrl) return res;
+  return portalFetch<PaymentInitiateResult>('/api/portal/pay', {
     method: 'POST',
     body: JSON.stringify({ invoiceId, gateway }),
+  });
+}
+
+/**
+ * Verify a payment transaction against the gateway (reconciliation check).
+ */
+export async function verifyPaymentTransaction(gateway: string, transactionId: string) {
+  return portalFetch<{
+    success: boolean;
+    status: string;
+    transactionId: string;
+    amount?: number;
+    error?: string;
+  }>('/api/payments/verify', {
+    method: 'POST',
+    body: JSON.stringify({ gateway, transactionId }),
   });
 }
 
@@ -258,6 +333,7 @@ export interface PortalTicket {
   description?: string;
   assigned_to_name?: string | null;
   sla_due_at?: string | null;
+  raw_data?: any;
   created_at: string;
   updated_at: string;
 }
@@ -329,8 +405,12 @@ export async function fetchMyTurboBoost() {
   }>('/api/customer/turbo-boost');
 }
 
-/** Request a turbo boost. */
-export async function requestTurboBoost(payload: { durationHours: number; requestedMbps: number }) {
+/** Request or immediately activate a turbo boost. */
+export async function requestTurboBoost(payload: {
+  durationHours: number;
+  requestedMbps: number;
+  action?: 'activate' | 'request';
+}) {
   return portalFetch<{
     reference: string;
     request: {
@@ -341,8 +421,165 @@ export async function requestTurboBoost(payload: { durationHours: number; reques
       requestedMbps: number;
       ticketId: string | null;
       createdAt: string;
+      expiresAt?: string | null;
+      remainingSeconds?: number;
     };
   }>('/api/customer/turbo-boost', { method: 'POST', body: JSON.stringify(payload) });
+}
+
+/** Deactivate the currently active turbo boost. */
+export async function deactivateTurboBoost(id?: string) {
+  return portalFetch<{
+    request: {
+      id: string;
+      reference: string;
+      status: string;
+    };
+  }>('/api/customer/turbo-boost/deactivate', {
+    method: 'POST',
+    body: JSON.stringify(id ? { id } : {}),
+  });
+}
+
+/** Fetch real-time live telemetry for dashboard cards 5–11 and authoritative subscriber package. */
+export async function fetchLiveTelemetry() {
+  return portalFetch<{
+    telemetry: {
+      timestamp: string;
+      subscriber: {
+        id: string;
+        firstName: string;
+        lastName: string;
+        name: string;
+        status: string;
+        packageId: string;
+        packageName: string;
+        speedMbps: number;
+        price: number;
+      };
+      bandwidthTraffic: {
+        enabled: boolean;
+        downloadRateMbps: number;
+        uploadRateMbps: number;
+        allocatedDownloadMbps: number;
+        allocatedUploadMbps: number;
+        consumedDataGB: number;
+        totalQuotaGB: string | number;
+        utilizationPercent: number;
+        interfaces: Array<{
+          id: string;
+          name: string;
+          type: string;
+          rx: string;
+          tx: string;
+          status: string;
+        }>;
+      };
+      referral: {
+        enabled: boolean;
+        title: string;
+        description: string;
+        code: string;
+        referralLink: string;
+        bonusAmount: number;
+        referralCount: number;
+        qualifiedCount: number;
+        pendingCount: number;
+        creditsEarned: number;
+        creditsPending: number;
+        referrals: any[];
+      };
+      turboBoost: {
+        enabled: boolean;
+        title: string;
+        description: string;
+        boostSpeedMbps: number;
+        durationHours: number;
+        status: 'active' | 'expired' | 'requested' | 'available';
+        active: boolean;
+        remainingSeconds: number;
+        activeBoost: any | null;
+        latestBoost: any | null;
+        historyCount: number;
+      };
+      opticalTerminal: {
+        ontStatus: string;
+        signalRxDbm: number;
+        signalTxDbm: number;
+        signalQuality: string;
+        uptime: string;
+        gatewayIpv4: string;
+        gatewayIpv6: string;
+        oltPort: string;
+        macAddress: string;
+        onuModel: string;
+        temperatureC: number;
+      };
+      liveLatency: {
+        enabled: boolean;
+        title: string;
+        description: string;
+        avgPingMs: number;
+        jitterMs: number;
+        packetLossPercent: number;
+        targets: Array<{
+          id: string;
+          name: string;
+          host: string;
+          port: number;
+          status: string;
+          pingMs: number | null;
+          ping: string;
+          jitterMs: number;
+          packetLossPercent: number;
+          measuredAt: string;
+        }>;
+      };
+      peeringHubs: Array<{
+        id: string;
+        name: string;
+        url: string;
+        badge: string;
+        status: string;
+        capacityGbps: number;
+      }>;
+      tier1Peering: {
+        title: string;
+        provider: string;
+        asn: string;
+        routeStatus: string;
+        capacityGbps: number;
+        uptimePercent: number;
+        avgLatencyMs: number;
+        activeHubCount: number;
+      };
+    };
+  }>('/api/portal/live-telemetry');
+}
+
+/** Download an invoice PDF from the billing service. */
+export async function downloadInvoicePdf(invoiceId: string): Promise<boolean> {
+  try {
+    const token = getSubscriberToken();
+    const headers: Record<string, string> = {};
+    if (token) headers.Authorization = `Bearer ${token}`;
+    const res = await fetch(`${API_BASE_URL}/api/billing/invoices/${encodeURIComponent(invoiceId)}/pdf`, {
+      headers,
+    });
+    if (!res.ok) return false;
+    const blob = await res.blob();
+    const url = window.URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `${invoiceId}.pdf`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    window.URL.revokeObjectURL(url);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 /** Create a support ticket. */
@@ -351,6 +588,7 @@ export async function createTicket(payload: {
   category: string;
   priority: 'low' | 'medium' | 'high' | 'critical';
   description: string;
+  attachment?: { name: string; size: number; type: string; dataUrl?: string } | null;
 }) {
   return portalFetch<{
     ticket: {
@@ -383,3 +621,169 @@ export async function replyToTicket(ticketId: string, body: string) {
     body: JSON.stringify({ body }),
   });
 }
+
+/** Update ticket status (e.g. subscriber closing their resolved ticket). */
+export async function updateTicketStatus(
+  ticketId: string,
+  status: 'open' | 'in_progress' | 'resolved' | 'closed'
+) {
+  return portalFetch<{ ticket: any }>(`/api/tickets/${encodeURIComponent(ticketId)}/status`, {
+    method: 'PATCH',
+    body: JSON.stringify({ status }),
+  });
+}
+
+export interface CancelInfoResponse {
+  has_active_subscription?: boolean;
+  hasActivePackage?: boolean;
+  subscriber: {
+    id: string;
+    name: string;
+    firstName: string;
+    lastName: string;
+    email: string;
+    phone: string;
+    status: string;
+    packageId: string;
+    packageName: string;
+    packageSpeed: number;
+    packageLabel: string;
+    monthlyFee: number;
+    balance: number;
+    hasActivePackage: boolean;
+  };
+  lastPurchase: {
+    purchaseDate: string;
+    purchaseTime: string;
+    city: string;
+    postalCode: string;
+    state: string;
+    country: string;
+    formattedCityPostal: string;
+    formattedStateCountry: string;
+    subscriberId: string;
+    invoiceNumber: string;
+    orderId: string | null;
+    packageName: string;
+    packageSpeed: number;
+    packageLabel: string;
+  };
+  cancellation: any | null;
+  cancelReasons: string[];
+  settings: {
+    effectiveDateRule: string;
+    allowNotSureBuyAgain: boolean;
+  };
+}
+
+export interface CancelInvoiceItem {
+  id: string;
+  invoice_number: string;
+  package_name: string;
+  cancel_date: string;
+  cancel_time: string;
+  reason: string;
+  status: string;
+  total_amount: number;
+  amount_paid: number;
+  city: string;
+  postal_code: string;
+  state: string;
+  country: string;
+  description?: string;
+  buy_again_date?: string;
+  created_at: string;
+  raw_data?: any;
+}
+
+export async function fetchCancelInfo() {
+  return portalFetch<CancelInfoResponse>('/api/portal/cancel-info');
+}
+
+export async function submitCancelRequest(payload: {
+  packageId?: string;
+  packageName?: string;
+  reason: string;
+  description: string;
+  buyAgainDate?: string | null;
+  notSureBuyAgain?: boolean;
+  effectiveDate?: string;
+  cancelSession?: {
+    city?: string;
+    postalCode?: string;
+    state?: string;
+    country?: string;
+  };
+}) {
+  return portalFetch<{
+    cancellation: any;
+    cancelInvoice: any;
+    message?: string;
+  }>('/api/portal/cancel', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function fetchCancelInvoices() {
+  return portalFetch<{ invoices: CancelInvoiceItem[] }>('/api/portal/cancel-invoices');
+}
+
+export async function fetchCancelInvoice(id: string) {
+  return portalFetch<{ invoice: any }>(`/api/portal/cancel-invoices/${encodeURIComponent(id)}`);
+}
+
+/**
+ * Save user UI preferences (theme, themeColor, fontSize, language, autoSave)
+ * Saves to both /api/portal/preferences and /api/customer/preferences
+ */
+export async function saveUserPreferences(prefs: {
+  theme?: string;
+  themeColor?: string;
+  fontSize?: string;
+  language?: string;
+  autoSave?: boolean;
+}) {
+  try {
+    const res = await portalFetch<{ success: boolean; preferences: any; theme?: string }>(
+      '/api/portal/preferences',
+      {
+        method: 'PATCH',
+        body: JSON.stringify(prefs),
+      }
+    );
+    return res;
+  } catch {
+    // Fallback to customer API route
+    const token = getSubscriberToken();
+    const res = await fetch('/api/customer/preferences', {
+      method: 'PATCH',
+      headers: {
+        'Content-Type': 'application/json',
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      },
+      body: JSON.stringify(prefs),
+    });
+    return res.json();
+  }
+}
+
+/**
+ * Fetch authenticated subscriber's saved UI preferences
+ */
+export async function fetchUserPreferences() {
+  try {
+    return await portalFetch<{ success: boolean; preferences: any; theme?: string }>(
+      '/api/portal/preferences'
+    );
+  } catch {
+    const token = getSubscriberToken();
+    const res = await fetch('/api/customer/preferences', {
+      headers: {
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      },
+    });
+    return res.json();
+  }
+}
+

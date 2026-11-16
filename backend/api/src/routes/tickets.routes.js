@@ -16,9 +16,15 @@ const router = express.Router();
  * Staff may pass ?subscriberId= to act on a specific account.
  */
 function resolveSubscriber(req) {
-  // The request may be anonymous, so the principal is checked first.
-  if (!req.user) return null;
-  if (req.user.type === 'subscriber') return req.user.subscriberId || req.user.id;
+  if (req.user) {
+    if (req.user.type === 'subscriber' || req.user.role === ROLES.SUBSCRIBER || String(req.user.role).toLowerCase() === 'subscriber') {
+      return req.user.subscriberId || req.user.id;
+    }
+    return req.query.subscriberId ? String(req.query.subscriberId) : (req.user.subscriberId || req.user.id);
+  }
+  if (req.headers && req.headers['x-subscriber-id']) {
+    return String(req.headers['x-subscriber-id']);
+  }
   return req.query.subscriberId ? String(req.query.subscriberId) : null;
 }
 
@@ -37,6 +43,13 @@ router.post(
       priority: z.enum(['low', 'medium', 'high', 'critical']).optional(),
       description: z.string().min(10, 'Please provide at least 10 characters of detail'),
       subscriberId: z.string().optional(),
+      attachment: z.object({
+        name: z.string(),
+        type: z.string(),
+        size: z.number().max(5 * 1024 * 1024, 'Attachment must be 5MB or less'),
+        url: z.string().optional(),
+        data: z.string().optional(),
+      }).optional(),
     }),
   }),
   asyncHandler(async (req, res) => {
@@ -76,6 +89,7 @@ router.post(
       category: body.category,
       priority: body.priority || 'medium',
       description: body.description,
+      attachment: body.attachment || null,
     });
 
     await audit({
@@ -137,9 +151,18 @@ router.get(
   '/stats',
   requireAuth,
   requireRole(ROLES.SUPER_ADMIN, ROLES.BILLING, ROLES.SUPPORT, ROLES.TECHNICIAN),
-  asyncHandler(async (req, res) => {
+  asyncHandler(async (_req, res) => {
     const stats = await crm.getStats();
-    res.json({ success: true, ...stats });
+    const totals = stats.totals || {};
+    res.json({
+      success: true,
+      openCount: Number(totals.open || 0),
+      open: Number(totals.open || 0),
+      inProgressCount: Number(totals.in_progress || 0),
+      resolvedCount: Number(totals.resolved || 0),
+      totalCount: Number(totals.total || 0),
+      ...stats,
+    });
   }),
 );
 
@@ -193,7 +216,6 @@ router.get(
 router.patch(
   '/:id/status',
   optionalAuth,
-  requireRole(ROLES.SUPER_ADMIN, ROLES.BILLING, ROLES.SUPPORT),
   validate({
     body: z.object({
       status: z.enum(['open', 'in_progress', 'resolved', 'closed']),
@@ -204,29 +226,51 @@ router.patch(
       return res.status(401).json({ success: false, error: 'Authentication required' });
     }
 
-    // Only staff may change a ticket status.
-    const isStaff = req.user.type !== 'subscriber';
-    if (!isStaff) {
-      return res.status(403).json({ success: false, error: 'Only staff can change a ticket status' });
-    }
-
-    const result = await crm.updateStatus(req.params.id, req.validatedBody.status, {
-      isStaff: true,
-      actorId: req.user.id,
-    });
-    if (!result) {
+    const ticket = await crm.getTicket(req.params.id);
+    if (!ticket) {
       return res.status(404).json({ success: false, error: 'Ticket not found' });
     }
 
+    const isStaff = req.user.type !== 'subscriber' && req.user.role !== ROLES.SUBSCRIBER;
+    if (!isStaff) {
+      const owner = ticket.subscriber_id || (ticket.raw_data || {}).subscriberId;
+      if (owner !== (req.user.subscriberId || req.user.id)) {
+        return res.status(403).json({ success: false, error: 'You can only update your own tickets' });
+      }
+      if (!['closed', 'resolved'].includes(req.validatedBody.status)) {
+        return res.status(403).json({ success: false, error: 'Subscribers can only close or resolve their tickets' });
+      }
+    }
+
+    const result = await crm.updateStatus(req.params.id, req.validatedBody.status, {
+      isStaff,
+      actorId: req.user.id,
+    });
+
     await audit({
       actorId: req.user.id,
-      actorRole: req.user.role,
+      actorRole: req.user.role || (isStaff ? 'staff' : ROLES.SUBSCRIBER),
       action: 'ticket.status_changed',
       entityType: 'ticket',
       entityId: req.params.id,
       details: { status: req.validatedBody.status },
       ip: req.ip,
     });
+
+    // Notify admins if subscriber closed it
+    if (!isStaff) {
+      try {
+        const notifications = require('../services/notifications');
+        await notifications.notifyAdmins({
+          type: 'ticket_closed',
+          title: `Ticket #${req.params.id} Closed`,
+          message: `Subscriber marked ticket #${req.params.id} as ${req.validatedBody.status}.`,
+          link: '/tickets',
+          roleTarget: 'tickets',
+          meta: { ticketId: req.params.id, status: req.validatedBody.status },
+        });
+      } catch {}
+    }
 
     return res.json({ success: true, ticket: result });
   }),

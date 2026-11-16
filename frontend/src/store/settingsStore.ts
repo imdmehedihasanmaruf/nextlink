@@ -57,7 +57,7 @@ export interface SettingsState {
 export const useSettingsStore = create<SettingsState>()(
   persist(
     (set) => ({
-      theme: 'system',
+      theme: 'light',
       themeColor: 'blue',
       fontSize: 'md',
       language: 'us',

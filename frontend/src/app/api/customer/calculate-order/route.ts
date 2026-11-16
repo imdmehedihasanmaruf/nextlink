@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
-import { getSubscriberById, getSiteContent, countOverdueInvoices } from '@/lib/db';
-import { authenticate, authError, ownsAccount } from '@/lib/customerAuth';
+import { getSubscriberById, getSiteContent } from '@/lib/db';
+import { authenticate, authError, ownsAccount, billingApiBase, bearerToken } from '@/lib/customerAuth';
 
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
@@ -23,7 +23,7 @@ export async function POST(request: Request) {
     }
 
     const body = await request.json();
-    const { customerId, packageId, purchaseType } = body;
+    const { customerId, packageId, purchaseType, simulateFailure } = body;
 
     if (!packageId) {
       return NextResponse.json(
@@ -50,7 +50,9 @@ export async function POST(request: Request) {
     const siteData = await getSiteContent();
     const packages: any[] = siteData.packages || [];
 
-    const targetPkg = packages.find(p => p.id === packageId || p.name.toLowerCase() === packageId.toLowerCase());
+    const targetPkg = packages.find(
+      (p) => p.id === packageId || p.name.toLowerCase() === String(packageId).toLowerCase()
+    );
     if (!targetPkg) {
       return NextResponse.json(
         { success: false, error: 'Selected package tier not found.' },
@@ -58,61 +60,61 @@ export async function POST(request: Request) {
       );
     }
 
-    const pTypeStr = String(purchaseType || '').toLowerCase();
-    const type = pTypeStr.includes('add') ? 'ADDITIONAL' : 'UPGRADE';
-
-    // The current plan is looked up in the catalogue. An account without a
-    // plan has no current plan — the previous version invented one (a made-up
-    // package, price and speed) and priced the upgrade against it.
     const currentPkg = packages.find(
-      p => (subscriber.packageId && p.id === subscriber.packageId) ||
-           (subscriber.packageName && p.name.toLowerCase() === String(subscriber.packageName).toLowerCase())
+      (p) =>
+        (subscriber.packageId && p.id === subscriber.packageId) ||
+        (subscriber.packageName && p.name.toLowerCase() === String(subscriber.packageName).toLowerCase())
     );
-    if (!currentPkg && type === 'UPGRADE') {
+
+    // Delegate quote calculation strictly to the backend Billing Engine (single source of truth).
+    const token = bearerToken(request);
+    const quoteRes = await fetch(`${billingApiBase()}/api/billing/quote`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        ...(simulateFailure ? { 'x-simulate-quote-failure': '1' } : {}),
+      },
+      body: JSON.stringify({
+        subscriberId: subscriber.id,
+        packageId: targetPkg.id,
+        purchaseType: purchaseType || 'NEW',
+        simulateFailure: Boolean(simulateFailure),
+      }),
+      cache: 'no-store',
+    });
+
+    const quotePayload = await quoteRes.json().catch(() => null);
+    if (!quoteRes.ok || !quotePayload?.success || !quotePayload?.quote) {
       return NextResponse.json(
-        { success: false, error: 'The current plan is not in the catalogue — the operator has to set it before an upgrade can be priced.' },
-        { status: 409, headers: corsHeaders }
+        {
+          success: false,
+          error:
+            quotePayload?.error ||
+            'Unable to verify invoice preview with the Billing Engine. Please retry.',
+        },
+        { status: quoteRes.status >= 400 ? quoteRes.status : 502, headers: corsHeaders }
       );
     }
 
-    const targetPrice = Number(targetPkg.price || 0);
-    const currentPrice = Number(currentPkg?.price || 0);
-
-    // The operator's pricing rule: every package purchase is charged the plan
-    // price PLUS a fixed $18 installation fee. The $5 late fee is only added
-    // when the running-month bill is still unpaid past the grace days — it is
-    // counted on the next cycle, matching recurring billing semantics.
-    // The same fixed fees apply to a one-off package purchase.
-    const INSTALLATION_FEE = 18;
-    const LATE_FEE = 5;
-    const overdueInvoices = await countOverdueInvoices(subscriber.id, 5);
-    const lateFee = overdueInvoices > 0 ? LATE_FEE : 0;
-
-    const remainingSubscriptionValue = 0.00;
-    const proratedAdjustment = 0.00;
-    const installationFee = INSTALLATION_FEE;
-    const taxes = 0.00;
-    const totalPayable = Number((targetPrice + installationFee + lateFee).toFixed(2));
-
-    if (type === 'UPGRADE') {
-      // No proration credit is applied — the plan price is the base.
-    }
-    // An additional connection is simply priced the same way — package price +
-    // fixed fees.
-
-    // Determine next billing date
+    const quote = quotePayload.quote;
     const nextBillingDate = subscriber.dueDate || '';
 
     const calculation = {
       customerName: subscriber.name,
       customerId: subscriber.id,
       connectionId: `CONN-${subscriber.id.replace('SUB-', 'OPT-')}-01`,
+      scenario: quote.scenario,
+      scenarioNumber: quote.scenarioNumber,
+      badge: quote.badge,
+      packageLabel: quote.packageLabel,
+      lines: quote.lines || [],
       currentPackage: currentPkg
         ? {
             id: currentPkg.id,
             name: currentPkg.name,
             speed: currentPkg.speed || 100,
-            price: currentPrice,
+            price: Number(currentPkg.price || 0),
           }
         : null,
       selectedPackage: {
@@ -120,37 +122,63 @@ export async function POST(request: Request) {
         name: targetPkg.name,
         downloadSpeed: targetPkg.speed || targetPkg.downloadSpeed || 100,
         uploadSpeed: targetPkg.uploadSpeed || targetPkg.speed || 100,
-        price: targetPrice,
+        price: quote.packagePrice,
         hardwareReady: targetPkg.hardwareReady || 'Wi-Fi 6 ONU',
       },
-      purchaseType: type,
-      monthlySubscriptionPrice: targetPrice,
-      remainingCurrentSubscriptionValue: remainingSubscriptionValue,
-      proratedAdjustment,
-      installationFee,
-      lateFee,
-      taxes,
-      discount: 0.00,
-      totalPayableToday: totalPayable,
+      purchaseType: quote.scenario === 'NEW_SUBSCRIBER' ? 'NEW' : String(purchaseType || 'RENEWAL').toUpperCase(),
+      monthlySubscriptionPrice: quote.packagePrice,
+      remainingCurrentSubscriptionValue: 0,
+      proratedAdjustment: 0,
+      installationFee: quote.installationFee,
+      lateFee: quote.lateFee,
+      lateFeeType: quote.late_fee_type,
+      lateFeeValue: quote.late_fee_value,
+      lateFeePercent: quote.lateFeePercent,
+      carriedOverAmount: quote.carriedOverAmount,
+      previousDue: quote.previousDue,
+      unpaidInvoiceIds: quote.unpaidInvoiceIds || [],
+      unpaidMonthsCount: quote.unpaidMonthsCount || 0,
+      taxes: quote.taxFee,
+      taxFee: quote.taxFee,
+      discount: 0,
+      totalPayable: quote.totalPayable,
+      totalPayableToday: quote.totalPayable,
+      totalPayableCents: quote.totalPayableCents,
+      formattedTotalPayable: quote.formattedTotalPayable,
       nextBillingDate,
       daysRemainingInCycle: 0,
+      verifiedAt: quote.verifiedAt,
     };
 
     return NextResponse.json(
       {
         success: true,
+        quote,
         calculation,
+        scenario: quote.scenario,
+        badge: quote.badge,
+        alreadyPaid: Boolean(quote.alreadyPaid),
+        isCurrentPeriodPaid: Boolean(quote.isCurrentPeriodPaid),
+        paidMonthYear: quote.paidMonthYear,
+        nextDueDate: quote.nextDueDate,
+        paidNotice: quote.paidNotice,
+        lines: quote.lines,
         currentPackage: currentPkg?.name || '',
         newPackage: targetPkg.name,
-        currentPrice,
-        newPrice: targetPrice,
-        proratedAdjustment,
-        installationFee,
-        lateFee,
-        taxes,
-        discount: 0.00,
-        totalPayable,
-        totalPayableToday: totalPayable,
+        packageLabel: quote.packageLabel,
+        currentPrice: Number(currentPkg?.price || 0),
+        newPrice: quote.packagePrice,
+        proratedAdjustment: 0,
+        installationFee: quote.installationFee,
+        lateFee: quote.lateFee,
+        carriedOverAmount: quote.carriedOverAmount,
+        previousDue: quote.previousDue,
+        taxes: quote.taxFee,
+        taxFee: quote.taxFee,
+        discount: 0,
+        totalPayable: quote.totalPayable,
+        totalPayableToday: quote.totalPayable,
+        formattedTotalPayable: quote.formattedTotalPayable,
         nextBillingDate,
         message: 'Order calculations verified by backend billing engine.',
       },
@@ -159,9 +187,11 @@ export async function POST(request: Request) {
   } catch (err: any) {
     console.error('Error calculating order:', err);
     return NextResponse.json(
-      { success: false, error: err.message || 'Calculation error' },
-      { status: 500, headers: corsHeaders }
+      {
+        success: false,
+        error: err.message || 'Unable to verify quote with the billing engine.',
+      },
+      { status: 502, headers: corsHeaders }
     );
   }
 }
-

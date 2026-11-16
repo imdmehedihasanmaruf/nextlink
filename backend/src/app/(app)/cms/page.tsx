@@ -3,7 +3,8 @@ import { useState, useEffect } from 'react';
 import { 
   Globe, Save, RefreshCw, Download, Upload,
   Plus, Trash2, Layers, Tv, MapPin, 
-  Gift, Zap, Phone, Eye, Menu, HeartHandshake, HelpCircle
+  Gift, Zap, Phone, Eye, Menu, HeartHandshake, HelpCircle,
+  Newspaper, Megaphone, Calendar, Tag, Bell
 } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { Button } from '@/components/ui/button';
@@ -181,11 +182,12 @@ export default function CMSPage() {
 
       {/* Main CMS Tabs */}
       <Tabs defaultValue="hero" className="space-y-6">
-        <TabsList className="grid grid-cols-2 md:grid-cols-7 w-full">
-          <TabsTrigger value="hero">Hero & Notice</TabsTrigger>
+        <TabsList className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-8 w-full">
+          <TabsTrigger value="hero">Banners & Notice</TabsTrigger>
+          <TabsTrigger value="news">News & Updates</TabsTrigger>
           <TabsTrigger value="brand">Brand & Info</TabsTrigger>
           <TabsTrigger value="packages">Packages</TabsTrigger>
-          <TabsTrigger value="retention">Retention (unused)</TabsTrigger>
+          <TabsTrigger value="retention">Retention</TabsTrigger>
           <TabsTrigger value="media">Media & TV</TabsTrigger>
           <TabsTrigger value="coverage">Coverage Map</TabsTrigger>
           <TabsTrigger value="navigation">Nav & Footer</TabsTrigger>
@@ -361,7 +363,180 @@ export default function CMSPage() {
           </Card>
         </TabsContent>
 
-        {/* TAB 2: Brand & Contact */}
+        {/* TAB 2: News & Announcements */}
+        <TabsContent value="news" className="space-y-6">
+          <Card>
+            <CardHeader className="flex flex-row items-center justify-between pb-2">
+              <div>
+                <CardTitle className="text-base flex items-center gap-2">
+                  <Newspaper className="h-4 w-4 text-primary" />
+                  News, Announcements & Service Bulletins
+                </CardTitle>
+                <CardDescription>
+                  Publish network updates, scheduled maintenance, and promotional news directly to the public website and subscriber portal
+                </CardDescription>
+              </div>
+              <div className="flex items-center gap-2">
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => {
+                    const currentNews = Array.isArray(data.news) ? [...data.news] : [];
+                    const newItem = {
+                      id: `NEWS-${Date.now()}`,
+                      title: 'New Service Announcement',
+                      category: 'Network Upgrade',
+                      summary: 'Brief description of the service bulletin or announcement.',
+                      content: '',
+                      publishDate: new Date().toISOString().slice(0, 10),
+                      active: true,
+                      link: '/packages',
+                    };
+                    setData({ ...data, news: [newItem, ...currentNews] });
+                  }}
+                  className="gap-1.5 shadow-sm"
+                >
+                  <Plus className="h-4 w-4" />
+                  Add News Article
+                </Button>
+                <Button
+                  size="sm"
+                  onClick={() => handleSaveSection('News & Announcements')}
+                  className="gap-1.5 shadow-sm"
+                >
+                  <Save className="h-4 w-4" />
+                  Save News
+                </Button>
+              </div>
+            </CardHeader>
+            <CardContent className="space-y-6 pt-4">
+              {(!data.news || data.news.length === 0) ? (
+                <div className="p-8 text-center border-2 border-dashed rounded-xl space-y-2">
+                  <Megaphone className="h-8 w-8 mx-auto text-muted-foreground/50" />
+                  <p className="text-sm font-semibold">No News Articles Configured</p>
+                  <p className="text-xs text-muted-foreground">
+                    Click &ldquo;Add News Article&rdquo; above to publish announcements on the homepage.
+                  </p>
+                </div>
+              ) : (
+                <div className="space-y-4">
+                  {data.news.map((item: any, idx: number) => (
+                    <div
+                      key={item.id || idx}
+                      className="p-4 rounded-xl border bg-muted/10 hover:bg-muted/20 transition-colors space-y-3"
+                    >
+                      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pb-2 border-b">
+                        <div className="flex items-center gap-2 flex-1">
+                          <span className="font-mono text-xs font-bold text-muted-foreground">
+                            #{idx + 1}
+                          </span>
+                          <Input
+                            value={item.title || ''}
+                            onChange={(e) => {
+                              const updated = [...data.news];
+                              updated[idx] = { ...updated[idx], title: e.target.value };
+                              setData({ ...data, news: updated });
+                            }}
+                            placeholder="Announcement Headline"
+                            className="font-bold text-sm h-8"
+                          />
+                        </div>
+
+                        <div className="flex items-center gap-3">
+                          <div className="flex items-center gap-1.5">
+                            <Label className="text-xs text-muted-foreground">Active</Label>
+                            <Switch
+                              checked={item.active !== false}
+                              onCheckedChange={(val) => {
+                                const updated = [...data.news];
+                                updated[idx] = { ...updated[idx], active: val };
+                                setData({ ...data, news: updated });
+                              }}
+                            />
+                          </div>
+
+                          <Button
+                            size="icon"
+                            variant="ghost"
+                            onClick={() => {
+                              const updated = data.news.filter((_: any, i: number) => i !== idx);
+                              setData({ ...data, news: updated });
+                            }}
+                            className="h-8 w-8 text-destructive hover:bg-destructive/10"
+                            title="Delete Article"
+                          >
+                            <Trash2 className="h-4 w-4" />
+                          </Button>
+                        </div>
+                      </div>
+
+                      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                        <div>
+                          <Label className="text-xs">Category / Tag</Label>
+                          <Input
+                            value={item.category || ''}
+                            onChange={(e) => {
+                              const updated = [...data.news];
+                              updated[idx] = { ...updated[idx], category: e.target.value };
+                              setData({ ...data, news: updated });
+                            }}
+                            placeholder="e.g. Network Upgrade, Promo"
+                            className="h-8 text-xs mt-1"
+                          />
+                        </div>
+
+                        <div>
+                          <Label className="text-xs">Publish Date</Label>
+                          <Input
+                            type="date"
+                            value={item.publishDate || ''}
+                            onChange={(e) => {
+                              const updated = [...data.news];
+                              updated[idx] = { ...updated[idx], publishDate: e.target.value };
+                              setData({ ...data, news: updated });
+                            }}
+                            className="h-8 text-xs mt-1"
+                          />
+                        </div>
+
+                        <div>
+                          <Label className="text-xs">Action Link / Route</Label>
+                          <Input
+                            value={item.link || ''}
+                            onChange={(e) => {
+                              const updated = [...data.news];
+                              updated[idx] = { ...updated[idx], link: e.target.value };
+                              setData({ ...data, news: updated });
+                            }}
+                            placeholder="e.g. /packages or /coverage"
+                            className="h-8 text-xs mt-1"
+                          />
+                        </div>
+                      </div>
+
+                      <div>
+                        <Label className="text-xs">Summary Preview (Shown on Homepage Card)</Label>
+                        <Textarea
+                          rows={2}
+                          value={item.summary || ''}
+                          onChange={(e) => {
+                            const updated = [...data.news];
+                            updated[idx] = { ...updated[idx], summary: e.target.value };
+                            setData({ ...data, news: updated });
+                          }}
+                          placeholder="Brief 1-2 sentence overview for the subscriber"
+                          className="text-xs mt-1"
+                        />
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </CardContent>
+          </Card>
+        </TabsContent>
+
+        {/* TAB 3: Brand & Contact */}
         <TabsContent value="brand" className="space-y-6">
           <Card>
             <CardHeader className="flex flex-row items-center justify-between pb-2">

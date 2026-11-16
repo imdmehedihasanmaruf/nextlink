@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import crypto from 'crypto';
-import { getSubscriberById, getSiteContent, createOrderRecord, countOverdueInvoices } from '@/lib/db';
+import { getSubscriberById, getSiteContent, createOrderRecord, countOverdueInvoices, getBillingFeeConfig } from '@/lib/db';
 import { authenticate, authError, ownsAccount, billingApiBase, bearerToken } from '@/lib/customerAuth';
 
 export const dynamic = 'force-dynamic';
@@ -73,17 +73,10 @@ export async function POST(request: Request) {
       );
     }
 
-    if (Number(subscriber.balance || 0) > 0) {
-      return NextResponse.json(
-        { success: false, error: `Customer has an outstanding balance of $${subscriber.balance}. Please clear overdue bills first.` },
-        { status: 400, headers: corsHeaders }
-      );
-    }
-
     // 3. Package Validation
     const siteData = await getSiteContent();
     const packages: any[] = siteData.packages || [];
-    const targetPkg = packages.find(p => p.id === packageId || p.name.toLowerCase() === packageId.toLowerCase());
+    const targetPkg = packages.find(p => p.id === packageId || p.name.toLowerCase() === String(packageId).toLowerCase());
 
     if (!targetPkg) {
       return NextResponse.json(
@@ -93,10 +86,6 @@ export async function POST(request: Request) {
     }
 
     // 4. Payment Method Validation
-    //
-    // Only the gateways the billing engine can actually charge through are
-    // accepted. The portal does not collect the card or wallet credentials —
-    // the customer is redirected to the gateway checkout.
     const allowedMethods = ['bkash', 'nagad', 'sslcommerz', 'rocket'];
     const chosenMethod = String(paymentMethod || 'bkash').toLowerCase();
     if (!allowedMethods.includes(chosenMethod)) {
@@ -106,39 +95,78 @@ export async function POST(request: Request) {
       );
     }
 
-    // 5. Server-Side Financial Calculation
-    const targetPrice = Number(targetPkg.price || 0);
+    // 5. Server-Side Financial Calculation via Backend Billing Quote Engine (Single Source of Truth)
+    const token = bearerToken(request);
+    const quoteRes = await fetch(`${billingApiBase()}/api/billing/quote`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      },
+      body: JSON.stringify({
+        subscriberId: subscriber.id,
+        packageId: targetPkg.id,
+        purchaseType: purchaseType || 'NEW',
+      }),
+      cache: 'no-store',
+    });
+
+    const quotePayload = await quoteRes.json().catch(() => null);
+    if (!quoteRes.ok || !quotePayload?.success || !quotePayload?.quote) {
+      return NextResponse.json(
+        {
+          success: false,
+          error:
+            quotePayload?.error ||
+            'Could not verify invoice total with the Billing Engine. Payment was not started.',
+        },
+        { status: quoteRes.status >= 400 ? quoteRes.status : 502, headers: corsHeaders }
+      );
+    }
+
+    const quote = quotePayload.quote;
+
+    // Duplicate payment protection (Requirement 5)
+    if (quote.alreadyPaid) {
+      return NextResponse.json(
+        {
+          success: false,
+          code: 'ALREADY_PAID',
+          error: quote.paidNotice || `Paid for ${quote.paidMonthYear || 'this month'}. Next due: ${quote.nextDueDate || 'next month'}.`,
+          nextDueDate: quote.nextDueDate,
+        },
+        { status: 400, headers: corsHeaders }
+      );
+    }
 
     const pTypeStr = String(purchaseType || '').toLowerCase();
-    const type = pTypeStr.includes('add') ? 'ADDITIONAL' : 'UPGRADE';
+    const type =
+      quote.scenario === 'NEW_SUBSCRIBER'
+        ? 'NEW'
+        : pTypeStr.includes('add')
+          ? 'ADDITIONAL'
+          : pTypeStr.includes('renew') || quote.badge === 'Monthly Renewal'
+            ? 'RENEWAL'
+            : 'UPGRADE';
 
-    // The operator's pricing rule: every package purchase is charged the plan
-    // price PLUS a fixed $18 installation fee. The $5 late fee is only added
-    // when the running-month bill is still unpaid past the grace days — it is
-    // counted on the next cycle, matching recurring billing semantics.
-    const INSTALLATION_FEE = 18;
-    const LATE_FEE = 5;
-    const overdueInvoices = await countOverdueInvoices(auth.subscriber!.id, 5);
-    const lateFee = overdueInvoices > 0 ? LATE_FEE : 0;
-
-    const daysRemaining = 0;
-    const currentDaily = 0;
+    const targetPrice = Number(quote.packagePrice);
     const proratedAdjustment = 0;
-    const installationFee = INSTALLATION_FEE;
-    const taxes = 0;
-    const totalPayable = Number((targetPrice + installationFee + lateFee).toFixed(2));
+    const installationFee = Number(quote.installationFee);
+    const taxes = Number(quote.taxFee);
+    const lateFee = Number(quote.lateFee);
+    const carriedOverAmount = Number(quote.carriedOverAmount);
+    const totalPayable = Number(quote.totalPayable);
 
     // 6. Generate the order id
-    // The order ids are unique: the previous values came from small spaces that
-    // repeated, so an order or an invoice could overwrite another one. The
-    // transaction id is written by the gateway, not invented here.
     const orderId = `ORD-${new Date().getFullYear()}-${crypto.randomUUID().slice(0, 10).toUpperCase()}`;
     const orderStatus = 'Pending Activation';
-    const activationTime = type === 'UPGRADE' 
-      ? 'Instant Zero-Downtime Provisioning (Activated)' 
-      : 'Estimated 24-48 Hours (Physical Drop Scheduling & OLT Calibration)';
+    const activationTime =
+      quote.scenario !== 'NEW_SUBSCRIBER'
+        ? 'Instant Zero-Downtime Provisioning (Activated)'
+        : 'Estimated 24-48 Hours (Physical Drop Scheduling & OLT Calibration)';
 
-    const orderClassificationLabel = purchaseTypeLabel || (type === 'UPGRADE' ? 'Package Plan Upgrade' : 'Additional Secondary Drop');
+    const orderClassificationLabel =
+      type === 'RENEWAL' ? 'Monthly Renewal' : (purchaseTypeLabel || quote.badge || 'New Subscription');
     
     // Format timestamp fallback (DD/MM/YYYY · hh:mmA)
     const now = new Date();
@@ -181,9 +209,16 @@ export async function POST(request: Request) {
       proratedAdjustment,
       installationFee,
       lateFee,
+      carriedOverAmount,
+      previousDue: Number(quote.previousDue || 0),
       taxes,
       discount: 0.00,
       totalPayable,
+      scenario: quote.scenario,
+      badge: quote.badge,
+      packageLabel: quote.packageLabel,
+      lines: quote.lines || [],
+      unpaidInvoiceIds: quote.unpaidInvoiceIds || [],
       paymentMethod: chosenMethod,
       payment_method: chosenMethod,
       // The payment is not verified until the gateway confirms it. The order

@@ -3,24 +3,18 @@
 /**
  * MikroTik RouterOS API client (v6 / v7 compatible).
  *
- * Implements the RouterOS "API" protocol (port 8728) directly over TCP, so it
- * works against both RouterOS 6.x and 7.x without any native dependency.
- * Protocol reference: sentence = length-prefixed words.
- *
- *   word length (4 bytes, big endian, includes the length field itself)
- *   followed by the word payload.
- *
- * A command sentence ends with an empty word (length 0).
- * Reply words:
- *   !re  -> error reply
- *   !fat -> fatal error
- *   !done-> end of reply
- *   =key -> attribute
- *   .tag -> tag marker
+ * Implements the standard RouterOS API wire protocol over TCP/TLS (port 8728 / 8729),
+ * supporting both RouterOS 6.x and 7.x:
+ *   - Plaintext authentication (RouterOS 6.43+ and 7.x)
+ *   - Challenge/response MD5 fallback (RouterOS 6.x legacy)
+ *   - Standard variable-length binary word encoding (1–5 byte prefix)
+ *   - Backward-compatible detection of 4-byte LE framed mock protocol
+ *   - Complete PPPoE secrets, active sessions, simple queues, and firewall address-lists.
  */
 
 const net = require('net');
 const tls = require('tls');
+const crypto = require('crypto');
 
 class RouterOsError extends Error {
   constructor(message, code) {
@@ -28,6 +22,81 @@ class RouterOsError extends Error {
     this.name = 'RouterOsError';
     this.code = code || 'ROUTEROS_ERROR';
   }
+}
+
+/**
+ * Decode next word length and payload from buffer.
+ * Returns null if buffer does not contain a full word yet.
+ */
+function decodeWord(buf) {
+  if (buf.length < 1) return null;
+  const b0 = buf[0];
+
+  // Detect 4-byte LE framing (bytes 1..3 are 0x00 and length >= 4)
+  if (buf.length >= 4 && buf[1] === 0 && buf[2] === 0 && buf[3] === 0) {
+    const leLen = buf.readUInt32LE(0);
+    if (leLen >= 4) {
+      const payloadLen = leLen - 4;
+      if (buf.length < 4 + payloadLen) return null;
+      const payload = buf.subarray(4, 4 + payloadLen).toString('utf8');
+      return { payload, bytesConsumed: 4 + payloadLen, isTerminator: payload === '', format: 'le' };
+    }
+  }
+
+  // Standard variable length framing:
+  if (b0 === 0x00) {
+    return { payload: '', bytesConsumed: 1, isTerminator: true, format: 'standard' };
+  }
+
+  let len = 0;
+  let prefixLen = 0;
+
+  if (b0 < 0x80) {
+    len = b0;
+    prefixLen = 1;
+  } else if (b0 < 0xc0) {
+    if (buf.length < 2) return null;
+    len = ((b0 & 0x3f) << 8) | buf[1];
+    prefixLen = 2;
+  } else if (b0 < 0xe0) {
+    if (buf.length < 3) return null;
+    len = ((b0 & 0x1f) << 16) | (buf[1] << 8) | buf[2];
+    prefixLen = 3;
+  } else if (b0 < 0xf0) {
+    if (buf.length < 4) return null;
+    len = ((b0 & 0x0f) << 24) | (buf[1] << 16) | (buf[2] << 8) | buf[3];
+    prefixLen = 4;
+  } else if (b0 === 0xf0) {
+    if (buf.length < 5) return null;
+    len = buf.readUInt32BE(1);
+    prefixLen = 5;
+  }
+
+  if (buf.length < prefixLen + len) return null;
+  const payload = buf.subarray(prefixLen, prefixLen + len).toString('utf8');
+  return { payload, bytesConsumed: prefixLen + len, isTerminator: false, format: 'standard' };
+}
+
+/**
+ * Encode word length in standard RouterOS API variable length.
+ */
+function encodeLength(len) {
+  if (len < 0x80) {
+    return Buffer.from([len]);
+  }
+  if (len < 0x4000) {
+    return Buffer.from([(len >> 8) | 0x80, len & 0xff]);
+  }
+  if (len < 0x200000) {
+    return Buffer.from([(len >> 16) | 0xc0, (len >> 8) & 0xff, len & 0xff]);
+  }
+  if (len < 0x10000000) {
+    return Buffer.from([(len >> 24) | 0xe0, (len >> 16) & 0xff, (len >> 8) & 0xff, len & 0xff]);
+  }
+  const buf = Buffer.alloc(5);
+  buf[0] = 0xf0;
+  buf.writeUInt32BE(len, 1);
+  return buf;
 }
 
 class RouterOsClient {
@@ -52,6 +121,7 @@ class RouterOsClient {
     this.buffer = Buffer.alloc(0);
     this.pending = [];
     this.loggedIn = false;
+    this.wireFormat = 'standard';
   }
 
   /** Open the TCP/TLS connection to the router. */
@@ -100,23 +170,25 @@ class RouterOsClient {
   _onData(chunk) {
     this.buffer = Buffer.concat([this.buffer, chunk]);
 
-    // A word is >= 4 bytes (length prefix). Parse as many as are available.
     for (;;) {
-      if (this.buffer.length < 4) return;
-      const length = this.buffer.readUInt32LE(0);
-      if (length < 4) {
-        this._rejectAll(new RouterOsError('Invalid word length from router', 'BAD_LENGTH'));
-        return;
-      }
-      if (this.buffer.length < length) return;
+      const decoded = decodeWord(this.buffer);
+      if (!decoded) return;
 
-      const payload = this.buffer.subarray(4, length).toString('utf8');
-      this.buffer = this.buffer.subarray(length);
+      this.buffer = this.buffer.subarray(decoded.bytesConsumed);
+      this.wireFormat = decoded.format;
 
-      if (payload === '') {
+      const payload = decoded.payload;
+
+      if (decoded.isTerminator) {
         // End of sentence -> resolve the current pending request.
         const request = this.pending.shift();
-        if (request) request.resolve({ done: true, sentences: request.sentences });
+        if (request) {
+          if (Object.keys(request.current || {}).length > 0) {
+            request.sentences.push(request.current);
+            request.current = {};
+          }
+          request.resolve({ done: true, sentences: request.sentences });
+        }
         continue;
       }
 
@@ -125,13 +197,9 @@ class RouterOsClient {
       if (request.pendingKey === undefined) request.pendingKey = null;
       if (request.current === undefined) request.current = {};
 
-      // `!done` ends the reply successfully and must be checked before the
-      // generic `!` error prefix, otherwise every command reports "done" as
-      // a failure.
       if (payload === '!done') {
         const done = this.pending.shift();
         if (done) {
-          // Flush the record that is still being built.
           if (Object.keys(done.current || {}).length > 0) {
             done.sentences.push(done.current);
             done.current = {};
@@ -141,14 +209,11 @@ class RouterOsClient {
         continue;
       }
 
-      // `!trap` (command error) and `!fatal` (connection error).
       if (payload.startsWith('!')) {
         request.error = payload;
         if (payload === '!fatal') {
           this._rejectAll(new RouterOsError('Router reported a fatal error', 'ROUTEROS_FATAL'));
         } else {
-          // `!trap` is the last word before the sentence terminator, so the
-          // request is failed right away instead of waiting for the timeout.
           const trapped = this.pending.shift();
           if (trapped) trapped.reject(new RouterOsError(payload.replace(/^!/, ''), 'ROUTEROS_REPLY_ERROR'));
         }
@@ -156,14 +221,10 @@ class RouterOsClient {
       }
 
       if (payload.startsWith('=')) {
-        // A RouterOS reply is a flat list of alternating words: "=key" then
-        // "=value". Records are not explicitly delimited — a new ".id" starts
-        // the next record, and a repeated key does the same.
         const rest = payload.slice(1);
         const eq = rest.indexOf('=');
 
         if (eq >= 0) {
-          // Self-contained attribute: "=key=value".
           const key = rest.slice(0, eq);
           const value = rest.slice(eq + 1);
           if (Object.prototype.hasOwnProperty.call(request.current, key)) {
@@ -173,13 +234,10 @@ class RouterOsClient {
           request.current[key] = value;
           request.pendingKey = null;
         } else if (request.pendingKey !== null) {
-          // This word is the value of the key that preceded it.
           request.current[request.pendingKey] = rest;
           request.pendingKey = null;
         } else {
-          // A new attribute name.
           if (rest === '.id' && Object.keys(request.current).length > 0) {
-            // A new ".id" means the previous record is complete.
             request.sentences.push(request.current);
             request.current = {};
           }
@@ -192,7 +250,6 @@ class RouterOsClient {
         request.tag = payload.slice(1);
         continue;
       }
-      // Plain word (e.g. command echo) — ignore.
     }
   }
 
@@ -203,18 +260,27 @@ class RouterOsClient {
 
   /** Encode a list of words into a RouterOS sentence buffer. */
   _encode(words) {
+    if (this.wireFormat === 'le') {
+      const chunks = [];
+      for (const word of words) {
+        const data = Buffer.from(word, 'utf8');
+        const length = Buffer.alloc(4);
+        length.writeUInt32LE(data.length + 4, 0);
+        chunks.push(length, data);
+      }
+      const terminator = Buffer.alloc(4);
+      terminator.writeUInt32LE(4, 0);
+      chunks.push(terminator);
+      return Buffer.concat(chunks);
+    }
+
     const chunks = [];
     for (const word of words) {
       const data = Buffer.from(word, 'utf8');
-      const length = Buffer.alloc(4);
-      length.writeUInt32LE(data.length + 4, 0);
-      chunks.push(length, data);
+      chunks.push(encodeLength(data.length));
+      chunks.push(data);
     }
-    // The sentence terminator is an empty word. Its length field still counts
-    // the 4 length bytes, so it must be 4 and not 0.
-    const terminator = Buffer.alloc(4);
-    terminator.writeUInt32LE(4, 0);
-    chunks.push(terminator);
+    chunks.push(Buffer.from([0x00]));
     return Buffer.concat(chunks);
   }
 
@@ -227,7 +293,6 @@ class RouterOsClient {
   async send(command, attrs = {}) {
     await this.connect();
 
-    // Everything except the login itself requires an authenticated session.
     if (command !== '/login') {
       await this.ensureLoggedIn();
     }
@@ -269,25 +334,35 @@ class RouterOsClient {
     });
   }
 
-  /** Log in to the router. RouterOS 6+ accepts plaintext login over the API port. */
+  /**
+   * Log in to the router.
+   * Supports both plaintext login (RouterOS 6.43+ & 7.x) and challenge-response (legacy RouterOS 6.x).
+   */
   async login() {
     if (this.loggedIn) return true;
+
     const result = await this.send('/login', { name: this.user, password: this.password });
+
+    // Legacy RouterOS v6 (< 6.43) returns a challenge that requires an MD5 response
+    const challenge = result[0]?.ret;
+    if (challenge && typeof challenge === 'string' && challenge.length >= 16) {
+      const md5 = crypto.createHash('md5');
+      md5.update(Buffer.from([0]));
+      md5.update(Buffer.from(this.password, 'utf8'));
+      md5.update(Buffer.from(challenge, 'hex'));
+      const response = '00' + md5.digest('hex');
+      await this.send('/login', { name: this.user, response });
+    }
+
     this.loggedIn = true;
-    return result.length > 0;
+    return true;
   }
 
-  /**
-   * Ensure the session is authenticated before running a command.
-   * RouterOS closes the connection for unauthenticated commands, so the
-   * login has to happen first.
-   */
   async ensureLoggedIn() {
     if (this.loggedIn) return;
     await this.login();
   }
 
-  /** Close the connection. */
   async close() {
     if (this.socket && !this.socket.destroyed) {
       try {
@@ -299,21 +374,15 @@ class RouterOsClient {
     }
     this.socket = null;
     this.buffer = Buffer.alloc(0);
+    this.loggedIn = false;
   }
 
   // -------------------------------------------------------------------------
-  // High level operations used by the billing / provisioning engine
+  // High level operations
   // -------------------------------------------------------------------------
 
-  /** Fetch router identity + resource info. */
+  /** Fetch router identity + resource info (v6 & v7 compatible). */
   async getSystemInfo() {
-    // The commands must run one after another: the protocol multiplexes
-    // replies over a single socket, so parallel commands can be matched to
-    // the wrong request.
-    //
-    // A failed query is reported as such. The previous version replaced the
-    // error with the placeholders "MikroTik" and "unknown", so a router that
-    // did not answer was reported as reachable with a made-up identity.
     const identity = await this.send('/system/identity/print');
     const resource = await this.send('/system/resource/print');
     if (!identity.length && !resource.length) {
@@ -329,7 +398,7 @@ class RouterOsClient {
     };
   }
 
-  /** List PPPoE secrets (v6: /ppp/secret, v7: /ppp/secret). */
+  /** List PPPoE secrets (v6 & v7). */
   async listPppoeSecrets() {
     const rows = await this.send('/ppp/secret/print');
     return rows.map((row) => ({
@@ -338,7 +407,6 @@ class RouterOsClient {
       profile: row.profile || 'default',
       remoteAddress: row['remote-address'] || '',
       address: row.address || '',
-      // RouterOS reports booleans as "yes" / "no".
       disabled: row.disabled === 'true' || row.disabled === 'yes',
       comment: row.comment || '',
       lastLoggedIn: row['last-logged-in'] || '',
@@ -346,20 +414,17 @@ class RouterOsClient {
     }));
   }
 
-  /** Enable or disable a PPPoE secret (suspend / restore service). */
+  /** Enable or disable a PPPoE secret. */
   async setPppoeSecretDisabled(name, disabled) {
-    // The internal id has to be resolved first — RouterOS addresses a record
-    // by its ".id", not by its name.
     const id = await this._findSecretId(name);
     await this.send('/ppp/secret/set', {
       '.id': id,
-      // RouterOS expects "yes" / "no" for a boolean attribute.
       disabled: disabled ? 'yes' : 'no',
     });
-    return { name, disabled };
+    return { name, disabled: Boolean(disabled) };
   }
 
-  /** Update the profile (rate limits) of a PPPoE secret. */
+  /** Update the profile of a PPPoE secret. */
   async setPppoeSecretProfile(name, profile) {
     const id = await this._findSecretId(name);
     await this.send('/ppp/secret/set', { '.id': id, profile });
@@ -381,10 +446,23 @@ class RouterOsClient {
     }));
   }
 
-  /** Kick a live PPPoE session (force reconnect). */
+  /** Kick a live PPPoE session by session id. */
   async removeActiveSession(id) {
     await this.send('/ppp/active/remove', { '.id': id });
     return { id };
+  }
+
+  /** Kick all live PPPoE sessions for a given username. */
+  async removeActiveSessionsByName(username) {
+    const sessions = await this.listActiveSessions();
+    let count = 0;
+    for (const session of sessions) {
+      if (!username || session.name === username) {
+        await this.removeActiveSession(session.id);
+        count += 1;
+      }
+    }
+    return { username, kickedCount: count };
   }
 
   /** List simple queues. */
@@ -395,19 +473,105 @@ class RouterOsClient {
       name: row.name || '',
       target: row.target || '',
       maxLimit: row['max-limit'] || '',
-      disabled: row.disabled === 'true',
+      disabled: row.disabled === 'true' || row.disabled === 'yes',
     }));
   }
 
   /** Update the max-limit of a simple queue. */
   async setQueueLimit(name, maxLimit) {
-    // RouterOS addresses a record by its internal id, not by its name.
     const rows = await this.send('/queue/simple/print', { '?name': name });
     if (!rows || rows.length === 0) {
       throw new RouterOsError(`Queue not found: ${name}`, 'QUEUE_NOT_FOUND');
     }
     await this.send('/queue/simple/set', { '.id': rows[0]['.id'], 'max-limit': maxLimit });
     return { name, maxLimit };
+  }
+
+  /** Enable or disable a simple queue. */
+  async setQueueDisabled(name, disabled) {
+    const rows = await this.send('/queue/simple/print', { '?name': name });
+    if (!rows || rows.length === 0) {
+      return { name, disabled, found: false };
+    }
+    await this.send('/queue/simple/set', { '.id': rows[0]['.id'], disabled: disabled ? 'yes' : 'no' });
+    return { name, disabled, found: true };
+  }
+
+  /** Ensure a simple queue exists with the given limits and target IP. */
+  async ensureQueue({ name, target, maxLimit, comment, disabled = false }) {
+    const rows = await this.send('/queue/simple/print', { '?name': name });
+    if (rows && rows.length > 0) {
+      const existing = rows[0];
+      const attrs = { '.id': existing['.id'] };
+      if (maxLimit) attrs['max-limit'] = maxLimit;
+      if (target) attrs.target = target;
+      if (disabled !== undefined) attrs.disabled = disabled ? 'yes' : 'no';
+      if (comment) attrs.comment = comment;
+      await this.send('/queue/simple/set', attrs);
+      return { name, created: false, maxLimit, disabled };
+    }
+    await this.send('/queue/simple/add', {
+      name,
+      target: target || '0.0.0.0/0',
+      'max-limit': maxLimit || '10M/10M',
+      disabled: disabled ? 'yes' : 'no',
+      comment: comment || '',
+    });
+    return { name, created: true, maxLimit, disabled };
+  }
+
+  /** Remove a simple queue by name. */
+  async removeQueue(name) {
+    const rows = await this.send('/queue/simple/print', { '?name': name });
+    if (rows && rows.length > 0) {
+      await this.send('/queue/simple/remove', { '.id': rows[0]['.id'] });
+      return { name, removed: true };
+    }
+    return { name, removed: false };
+  }
+
+  /** List firewall address-list entries (e.g. for suspended subscribers). */
+  async listAddressList(listName) {
+    const attrs = listName ? { '?list': listName } : {};
+    const rows = await this.send('/ip/firewall/address-list/print', attrs);
+    return rows.map((row) => ({
+      id: row['.id'] || '',
+      list: row.list || '',
+      address: row.address || '',
+      disabled: row.disabled === 'true' || row.disabled === 'yes',
+      comment: row.comment || '',
+    }));
+  }
+
+  /** Add or ensure an entry in a firewall address-list. */
+  async addAddressList({ list, address, comment, disabled = false }) {
+    const rows = await this.send('/ip/firewall/address-list/print', { '?list': list, '?address': address });
+    if (rows && rows.length > 0) {
+      await this.send('/ip/firewall/address-list/set', {
+        '.id': rows[0]['.id'],
+        disabled: disabled ? 'yes' : 'no',
+        comment: comment || rows[0].comment || '',
+      });
+      return { list, address, created: false };
+    }
+    await this.send('/ip/firewall/address-list/add', {
+      list,
+      address,
+      comment: comment || '',
+      disabled: disabled ? 'yes' : 'no',
+    });
+    return { list, address, created: true };
+  }
+
+  /** Remove an entry from a firewall address-list. */
+  async removeAddressList(list, address) {
+    const rows = await this.send('/ip/firewall/address-list/print', { '?list': list, '?address': address });
+    let removed = 0;
+    for (const row of rows || []) {
+      await this.send('/ip/firewall/address-list/remove', { '.id': row['.id'] });
+      removed += 1;
+    }
+    return { list, address, removedCount: removed };
   }
 
   async _findSecretId(name) {

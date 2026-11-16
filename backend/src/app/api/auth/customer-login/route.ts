@@ -61,37 +61,35 @@ export async function POST(request: Request) {
       );
     }
 
+    const internalApiUrl = process.env.INTERNAL_API_URL || process.env.API_BASE_URL || 'http://localhost:3100';
+    let authRes;
+    try {
+      authRes = await fetch(`${internalApiUrl}/api/auth/subscriber-login`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Forwarded-For': clientKey,
+        },
+        body: JSON.stringify({ username: username.trim(), password }),
+      });
+    } catch {
+      return NextResponse.json(
+        { success: false, error: 'Authentication service unavailable.' },
+        { status: 503, headers: corsHeaders }
+      );
+    }
+
+    const payload = await authRes.json().catch(() => null);
+    if (!authRes.ok || !payload?.success) {
+      return NextResponse.json(
+        { success: false, error: payload?.error || 'Invalid credentials' },
+        { status: authRes.status || 401, headers: corsHeaders }
+      );
+    }
+
     const subscriber = await findSubscriber(username.trim());
 
-    if (!subscriber) {
-      return NextResponse.json(
-        { success: false, error: 'Customer account not found.' },
-        { status: 404, headers: corsHeaders }
-      );
-    }
-
-    // The stored password must exist and match. An account with no stored
-    // password can never sign in through this route — previously the check
-    // was skipped entirely and anyone could walk into any account.
-    const storedPassword = String(subscriber.password || '');
-    if (!storedPassword) {
-      return NextResponse.json(
-        {
-          success: false,
-          error:
-            'This account has not got a password set. Please reset it through the customer portal.',
-        },
-        { status: 401, headers: corsHeaders }
-      );
-    }
-    if (!password || storedPassword !== String(password)) {
-      return NextResponse.json(
-        { success: false, error: 'Invalid password.' },
-        { status: 401, headers: corsHeaders }
-      );
-    }
-
-    const customerUser = {
+    const customerUser = subscriber ? {
       id: subscriber.id,
       name: subscriber.name,
       username: subscriber.username,
@@ -108,13 +106,15 @@ export async function POST(request: Request) {
       macAddress: subscriber.macAddress,
       connectionType: subscriber.connectionType,
       zone: subscriber.zone,
-    };
+    } : payload.subscriber;
 
     return NextResponse.json(
       {
         success: true,
         message: 'Existing customer authenticated successfully',
         user: customerUser,
+        subscriber: customerUser,
+        token: payload.token,
       },
       { headers: corsHeaders }
     );

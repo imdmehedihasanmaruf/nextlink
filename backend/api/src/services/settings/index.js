@@ -40,12 +40,53 @@ const DEFAULTS = {
     rocket: { merchantId: '', apiKey: '' },
   },
   billing: {
-    timezone: 'Asia/Dhaka',
+    timezone: 'UTC',
     dueDay: 10,
     lateGraceDays: 5,
     suspendAfterDays: 10,
     currency: 'USD',
+    installationFee: 8.99,
+    installation_fee: 8.99,
+    taxFee: 0.99,
+    tax_fee: 0.99,
+    late_fee_type: 'percent',
+    late_fee_value: 10,
+    lateFeeType: 'percent',
+    lateFeeValue: 10,
+    lateFeePercent: 10,
     lateFee: 5,
+    rechargeAfterCancelTreatAsNew: true,
+  },
+  cancellation: {
+    reasons: [
+      'Too expensive',
+      'Slow speed',
+      'Frequent disconnections',
+      'Moving to another location',
+      'Switching provider',
+      'Poor support',
+      'Temporary pause',
+      'Other',
+    ],
+    effectiveDateRule: 'immediate',
+    allowNotSureBuyAgain: true,
+    rechargeAfterCancelTreatAsNew: true,
+  },
+  footer: {
+    version: 'To be implemented',
+  },
+  notifications: {
+    invoiceGenerated: true,
+    paymentReceived: true,
+    paymentFailed: true,
+    lateFeeApplied: true,
+    ticketReply: true,
+    technicianAssigned: true,
+    boostActivated: true,
+    referralCredited: true,
+    adminNewTicket: true,
+    adminNewUser: true,
+    adminFailedPayment: true,
   },
 };
 
@@ -130,6 +171,39 @@ async function setGroup(group, value) {
   // nested inside the SSLCommerz block used to be written as the literal
   // string of bullets.
   const cleaned = stripMaskedSecrets(value);
+  if (group === 'billing' && cleaned && typeof cleaned === 'object') {
+    const incomingType = cleaned.late_fee_type ?? cleaned.lateFeeType;
+    if (incomingType !== undefined) {
+      const normType = String(incomingType).toLowerCase() === 'flat' ? 'flat' : 'percent';
+      cleaned.late_fee_type = normType;
+      cleaned.lateFeeType = normType;
+    }
+    const incomingVal = cleaned.late_fee_value ?? cleaned.lateFeeValue ?? cleaned.lateFeePercent;
+    if (incomingVal !== undefined) {
+      const normVal = Number(incomingVal);
+      if (Number.isFinite(normVal) && normVal >= 0) {
+        cleaned.late_fee_value = normVal;
+        cleaned.lateFeeValue = normVal;
+        cleaned.lateFeePercent = normVal;
+      }
+    }
+    const incomingInstall = cleaned.installation_fee ?? cleaned.installationFee;
+    if (incomingInstall !== undefined) {
+      const normInstall = Number(incomingInstall);
+      if (Number.isFinite(normInstall) && normInstall >= 0) {
+        cleaned.installationFee = normInstall;
+        cleaned.installation_fee = normInstall;
+      }
+    }
+    const incomingTax = cleaned.tax_fee ?? cleaned.taxFee;
+    if (incomingTax !== undefined) {
+      const normTax = Number(incomingTax);
+      if (Number.isFinite(normTax) && normTax >= 0) {
+        cleaned.taxFee = normTax;
+        cleaned.tax_fee = normTax;
+      }
+    }
+  }
   const current = await getGroup(group);
   const merged = merge(current, cleaned);
 

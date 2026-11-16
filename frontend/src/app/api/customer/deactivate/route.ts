@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { getDbPool } from '@/lib/db';
-import { authenticate, authError } from '@/lib/customerAuth';
+import { authenticate, authError, billingApiBase, bearerToken } from '@/lib/customerAuth';
 
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
@@ -18,9 +18,9 @@ export async function OPTIONS() {
 /**
  * Deactivate the subscriber's account.
  *
- * The account is never deleted — the record is kept for the billing history,
- * marked deactivated and taken out of service. The subscriber is signed out
- * on the client afterwards.
+ * Calls Express decommissioning (/api/portal/cancel) so the router line is
+ * suspended, cancel invoice is created, and status is updated. The account
+ * is kept for billing history.
  */
 export async function POST(request: Request) {
   const auth = await authenticate(request);
@@ -29,6 +29,25 @@ export async function POST(request: Request) {
   }
 
   try {
+    const token = bearerToken(request);
+    // Decommission line and subscription on the Express engine
+    try {
+      await fetch(`${billingApiBase()}/api/portal/cancel`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({
+          reason: 'Temporary pause',
+          description: 'Account self-deactivated by subscriber from profile settings.',
+          notSureBuyAgain: true,
+        }),
+      });
+    } catch (err: any) {
+      console.warn('Portal cancel decommissioning attempt during deactivate:', err?.message);
+    }
+
     const pool = getDbPool();
     const row = await pool.query('SELECT raw_data FROM subscribers WHERE id = $1', [
       auth.subscriber!.id,

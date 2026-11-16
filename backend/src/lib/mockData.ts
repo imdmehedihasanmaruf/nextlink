@@ -1,5 +1,5 @@
 export type SubscriberStatus = 'active' | 'suspended' | 'pending' | 'inactive' | 'blocked' | 'deactivated' | 'registered' | 'cancelled';
-export type InvoiceStatus = 'paid' | 'unpaid' | 'overdue';
+export type InvoiceStatus = 'paid' | 'unpaid' | 'overdue' | 'carried_forward' | 'cancelled';
 export type TicketStatus = 'open' | 'in_progress' | 'resolved' | 'closed';
 export type TicketPriority = 'low' | 'medium' | 'high' | 'critical';
 export type TechnicianStatus = 'available' | 'busy' | 'off-duty';
@@ -46,6 +46,8 @@ export interface Package {
 export interface Subscriber {
   id: string;
   name: string;
+  firstName?: string;
+  lastName?: string;
   username?: string;
   phone: string;
   email: string;
@@ -82,6 +84,12 @@ export interface Invoice {
   phone: string;
   packageName: string;
   amount: number;
+  installationFee?: number;
+  taxFee?: number;
+  lateFee?: number;
+  carriedOverAmount?: number;
+  lateFeeApplied?: boolean;
+  lines?: Array<{ code?: string; type?: string; description: string; amount: number; amountCents?: number }>;
   status: InvoiceStatus;
   issueDate: string;
   dueDate: string;

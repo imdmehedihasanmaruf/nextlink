@@ -29,13 +29,25 @@ export async function POST(request: Request) {
 
   try {
     const body = await request.json().catch(() => ({}));
-    const response = await fetch(`${billingApiBase()}/api/customer/subscription/cancel`, {
+    const reason = body?.reason || 'Customer request';
+    const description =
+      body?.description && String(body.description).trim().length >= 10
+        ? String(body.description).trim()
+        : `Subscription cancellation requested by customer: ${reason}`;
+
+    const response = await fetch(`${billingApiBase()}/api/portal/cancel`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
         Authorization: `Bearer ${bearerToken(request)}`,
       },
-      body: JSON.stringify({ reason: body?.reason || null }),
+      body: JSON.stringify({
+        reason,
+        description,
+        notSureBuyAgain: body?.notSureBuyAgain ?? true,
+        buyAgainDate: body?.buyAgainDate || null,
+        cancelSession: body?.cancelSession || {},
+      }),
     });
 
     const payload = await response.json().catch(() => ({}));
@@ -50,8 +62,10 @@ export async function POST(request: Request) {
       {
         success: true,
         message:
-          'Your subscription has been cancelled. The purchase and cancellation dates stay on your profile.',
-        cancelledAt: payload.cancelledAt || null,
+          'Your subscription has been cancelled. The unsubscriber cancel invoice has been generated.',
+        cancellation: payload.cancellation || null,
+        cancelInvoice: payload.cancelInvoice || payload.invoice || null,
+        cancelledAt: payload.cancellation?.created_at || new Date().toISOString(),
       },
       { headers: corsHeaders },
     );

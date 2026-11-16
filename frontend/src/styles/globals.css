@@ -129,3 +129,68 @@
   background-color: var(--primary-hex);
   border-radius: 3px;
 }
+
+/* ============================================================
+   LEAFLET DARK MODE STYLING & HIGH-CONTRAST POPUPS
+   ============================================================ */
+.dark .leaflet-tile {
+  filter: brightness(0.65) invert(1) contrast(3) hue-rotate(200deg) saturate(0.35) brightness(0.7);
+}
+.dark .leaflet-container {
+  background-color: #0b1120 !important;
+}
+.dark .leaflet-popup-content-wrapper,
+.dark .leaflet-popup-tip {
+  background-color: hsl(var(--card)) !important;
+  color: hsl(var(--card-foreground)) !important;
+  border: 1px solid hsl(var(--border)) !important;
+  box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.6) !important;
+}
+.dark .leaflet-popup-close-button {
+  color: hsl(var(--muted-foreground)) !important;
+}
+.dark .leaflet-bar a {
+  background-color: hsl(var(--card)) !important;
+  color: hsl(var(--card-foreground)) !important;
+  border-bottom: 1px solid hsl(var(--border)) !important;
+}
+.dark .leaflet-bar a:hover {
+  background-color: hsl(var(--muted)) !important;
+}
+
+/* ============================================================
+   RECHARTS DARK MODE TOOLTIP CONTRAST
+   ============================================================ */
+.dark .recharts-default-tooltip {
+  background-color: hsl(var(--card)) !important;
+  border-color: hsl(var(--border)) !important;
+  color: hsl(var(--card-foreground)) !important;
+  border-radius: 0.5rem !important;
+  box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.4) !important;
+}
+
+/* ============================================================
+   PRINT VIEW LIGHT LOCK (Requirement 6: Invoices & Print Stay Light)
+   ============================================================ */
+@media print {
+  *,
+  *::before,
+  *::after {
+    background-color: #ffffff !important;
+    color: #0f172a !important;
+    box-shadow: none !important;
+    text-shadow: none !important;
+    border-color: #cbd5e1 !important;
+  }
+  html, body {
+    background: #ffffff !important;
+    color: #0f172a !important;
+  }
+  .dark {
+    --background: 0 0% 100% !important;
+    --foreground: 222.2 84% 4.9% !important;
+    --card: 0 0% 100% !important;
+    --card-foreground: 222.2 84% 4.9% !important;
+    --border: 214.3 31.8% 88% !important;
+  }
+}

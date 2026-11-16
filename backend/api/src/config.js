@@ -126,7 +126,7 @@ const config = {
   },
 
   cors: {
-    origins: (process.env.CORS_ORIGINS || 'http://localhost:3001,http://localhost:8000')
+    origins: (process.env.CORS_ORIGINS || 'http://localhost:3000,http://localhost:3001,http://localhost:8000')
       .split(',')
       .map((origin) => origin.trim())
       .filter(Boolean),
@@ -158,6 +158,19 @@ if (config.env === 'production') {
 
   if (config.payments.mode !== 'live') {
     problems.push('PAYMENT_MODE must be "live" — the mock gateway accepts payments that were never made');
+  } else {
+    // Validate that sandbox credentials/endpoints are never mixed into live production
+    const sandboxChecks = [
+      { name: 'BKASH', url: config.payments.bkash.baseUrl },
+      { name: 'NAGAD', url: config.payments.nagad.baseUrl },
+      { name: 'SSLCOMMERZ', url: config.payments.sslcommerz.baseUrl },
+      { name: 'ROCKET', url: config.payments.rocket.baseUrl },
+    ];
+    for (const gw of sandboxChecks) {
+      if (gw.url && gw.url.toLowerCase().includes('sandbox')) {
+        problems.push(`CREDENTIAL_ISOLATION_ERROR: ${gw.name}_BASE_URL (${gw.url}) points to sandbox in production live mode! Production credentials and endpoints must not mix with sandbox.`);
+      }
+    }
   }
 
   if (config.mikrotik.mode !== 'live') {

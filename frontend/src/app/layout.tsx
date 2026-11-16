@@ -21,6 +21,33 @@ export default function RootLayout({
 }) {
   return (
     <html lang="en" suppressHydrationWarning>
+      <head>
+        <script
+          dangerouslySetInnerHTML={{
+            __html: `
+              (function() {
+                try {
+                  var userTheme = localStorage.getItem('nl_user_theme');
+                  var stored = userTheme || localStorage.getItem('nl_theme') || localStorage.getItem('theme');
+                  var isDark = false;
+                  if (stored === 'dark') {
+                    isDark = true;
+                  } else if (stored === 'light') {
+                    isDark = false;
+                  } else {
+                    isDark = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
+                  }
+                  if (isDark) {
+                    document.documentElement.classList.add('dark');
+                  } else {
+                    document.documentElement.classList.remove('dark');
+                  }
+                } catch (e) {}
+              })();
+            `,
+          }}
+        />
+      </head>
       <body className={`${inter.className} min-h-screen flex flex-col antialiased`}>
         <ThemeProvider>
           <AppShell>

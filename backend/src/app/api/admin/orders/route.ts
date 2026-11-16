@@ -78,7 +78,7 @@ export async function PUT(request: Request) {
       success: false,
     };
 
-    if (status === 'Active' && getApiToken()) {
+    if (status === 'Active') {
       provisioning = { attempted: true, success: false };
       try {
         const orders = await getAllOrders();
@@ -88,13 +88,27 @@ export async function PUT(request: Request) {
           // The password is random. The previous `NL-${orderId}` was
           // predictable from the order id alone.
           const provisionPassword = crypto.randomBytes(12).toString('base64url');
+          const authHeader = request.headers.get('authorization') || '';
+          const internalApiUrl = process.env.INTERNAL_API_URL || process.env.API_BASE_URL || 'http://localhost:3100';
 
-          const result = await apiPost('/api/mikrotik/provision', {
-            subscriberId: order.customer_id,
-            username: order.customer_id,
-            password: provisionPassword,
-            // The profile is derived from the subscriber's plan by the API.
+          const headers: Record<string, string> = {
+            'Content-Type': 'application/json',
+          };
+          if (authHeader) {
+            headers.Authorization = authHeader;
+          }
+
+          const res = await fetch(`${internalApiUrl}/api/mikrotik/provision`, {
+            method: 'POST',
+            headers,
+            body: JSON.stringify({
+              subscriberId: order.customer_id,
+              username: order.customer_id,
+              password: provisionPassword,
+            }),
           });
+
+          const result = await res.json().catch(() => ({ success: false, error: 'Non-JSON response from API' }));
 
           if (result.success) {
             provisioning = {

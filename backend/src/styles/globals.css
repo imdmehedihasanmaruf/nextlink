@@ -118,3 +118,44 @@
 .btn-primary:hover {
   background: var(--primary-dark);
 }
+
+/* ============================================================
+   RECHARTS DARK MODE TOOLTIP CONTRAST
+   ============================================================ */
+.dark .recharts-default-tooltip {
+  background-color: hsl(var(--card)) !important;
+  border-color: hsl(var(--border)) !important;
+  color: hsl(var(--card-foreground)) !important;
+  border-radius: 0.5rem !important;
+  box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.4) !important;
+}
+
+.dark .recharts-tooltip-item {
+  color: hsl(var(--card-foreground)) !important;
+}
+
+/* ============================================================
+   PRINT VIEW LIGHT LOCK (Requirement 6: Invoices & Print Stay Light)
+   ============================================================ */
+@media print {
+  *,
+  *::before,
+  *::after {
+    background-color: #ffffff !important;
+    color: #0f172a !important;
+    box-shadow: none !important;
+    text-shadow: none !important;
+    border-color: #cbd5e1 !important;
+  }
+  html, body {
+    background: #ffffff !important;
+    color: #0f172a !important;
+  }
+  .dark {
+    --background: 0 0% 100% !important;
+    --foreground: 222.2 84% 4.9% !important;
+    --card: 0 0% 100% !important;
+    --card-foreground: 222.2 84% 4.9% !important;
+    --border: 214.3 31.8% 88% !important;
+  }
+}

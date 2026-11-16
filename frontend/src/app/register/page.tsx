@@ -3,22 +3,23 @@
 import React, { useState } from 'react'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
-import { Wifi, User, Phone, Mail, Lock, AlertCircle, ArrowLeft, CheckCircle2 } from 'lucide-react'
+import { Wifi, AlertCircle, ArrowLeft, CheckCircle2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
 import { useTranslation } from '@/store/settingsStore'
 import { useAuthStore } from '@/store/authStore'
+import { setSubscriberToken } from '@/lib/portalApi'
 
 export default function RegisterPage() {
   useTranslation()
   const router = useRouter()
-  // We only mirror a lightweight session so the user lands on the purchase page
   const { login } = useAuthStore()
 
   const [form, setForm] = useState({
-    fullName: '',
+    firstName: '',
+    lastName: '',
     username: '',
     phone: '',
     email: '',
@@ -36,17 +37,42 @@ export default function RegisterPage() {
     e.preventDefault()
     setError(null)
 
+    const firstName = form.firstName.trim()
+    const lastName = form.lastName.trim()
+    if (!firstName) {
+      setError('First Name is required')
+      return
+    }
+    if (!lastName) {
+      setError('Last Name is required')
+      return
+    }
+    if (form.password.length < 8) {
+      setError('Password must be at least 8 characters')
+      return
+    }
     if (form.password !== form.confirmPassword) {
       setError('Passwords do not match')
       return
     }
+
+    const fullName = `${firstName} ${lastName}`.trim()
 
     setSaving(true)
     try {
       const res = await fetch('/api/auth/register', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(form),
+        body: JSON.stringify({
+          firstName,
+          lastName,
+          fullName,
+          username: form.username.trim(),
+          phone: form.phone.trim(),
+          email: form.email.trim(),
+          password: form.password,
+          confirmPassword: form.confirmPassword,
+        }),
       })
       const payload = await res.json().catch(() => ({}))
       if (!res.ok || payload.success === false) {
@@ -54,13 +80,18 @@ export default function RegisterPage() {
         return
       }
 
-      // Light session mirror so the purchase wizard can read the user details.
+      if (payload.token) {
+        setSubscriberToken(payload.token)
+      }
+
       login({
         id: payload.subscriberId || form.username,
-        name: form.fullName,
-        username: form.username,
-        phone: form.phone,
-        email: form.email,
+        firstName: payload.firstName || firstName,
+        lastName: payload.lastName || lastName,
+        name: payload.fullName || fullName,
+        username: form.username.trim(),
+        phone: form.phone.trim(),
+        email: form.email.trim(),
         package: '',
         packageId: '',
         address: '',
@@ -92,6 +123,12 @@ export default function RegisterPage() {
           <p className="text-sm text-muted-foreground mt-1">
             Register first — your service activates only after you purchase a package plan.
           </p>
+          <div className="mt-3 p-3 rounded-xl bg-primary/5 border border-primary/20 text-xs flex items-center justify-between gap-2">
+            <span className="text-muted-foreground">Looking to request a new broadband fiber connection?</span>
+            <Link href="/apply" className="font-bold text-primary hover:underline shrink-0">
+              Apply with NID →
+            </Link>
+          </div>
         </div>
 
         {success ? (
@@ -119,9 +156,31 @@ export default function RegisterPage() {
                 </div>
               )}
               <form onSubmit={handleSubmit} className="space-y-3.5">
-                <div className="space-y-1.5">
-                  <Label htmlFor="fullName" className="text-xs font-semibold">Full Name *</Label>
-                  <Input id="fullName" required value={form.fullName} onChange={handleChange('fullName')} className="h-9" placeholder="e.g. Tanvir Ahmed" />
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div className="space-y-1.5">
+                    <Label htmlFor="firstName" className="text-xs font-semibold">First Name *</Label>
+                    <Input
+                      id="firstName"
+                      required
+                      value={form.firstName}
+                      onChange={handleChange('firstName')}
+                      className="h-9"
+                      placeholder="e.g. Tanvir"
+                      autoComplete="given-name"
+                    />
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label htmlFor="lastName" className="text-xs font-semibold">Last Name *</Label>
+                    <Input
+                      id="lastName"
+                      required
+                      value={form.lastName}
+                      onChange={handleChange('lastName')}
+                      className="h-9"
+                      placeholder="e.g. Ahmed"
+                      autoComplete="family-name"
+                    />
+                  </div>
                 </div>
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                   <div className="space-y-1.5">

@@ -6,6 +6,8 @@ import { clearSubscriberToken } from '@/lib/portalApi'
 
 export interface SubscriberUser {
   id: string
+  firstName?: string
+  lastName?: string
   name: string
   username: string
   email?: string
@@ -24,6 +26,7 @@ export interface SubscriberUser {
   macAddress?: string
   connectionType?: string
   zone?: string
+  theme?: string
 }
 
 interface AuthState {
@@ -42,7 +45,24 @@ export const useAuthStore = create<AuthState>()(
       user: null,
       isAuthenticated: false,
       hasHydrated: false,
-      login: (userData) => set({ user: userData, isAuthenticated: true }),
+      login: (userData) => {
+        if (userData?.theme && typeof window !== 'undefined') {
+          try {
+            localStorage.setItem('nl_user_theme', userData.theme)
+            localStorage.setItem('nl_theme', userData.theme)
+            if (userData.theme === 'dark') {
+              document.documentElement.classList.add('dark')
+            } else if (userData.theme === 'light') {
+              document.documentElement.classList.remove('dark')
+            } else if (userData.theme === 'system') {
+              const isDark = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches
+              if (isDark) document.documentElement.classList.add('dark')
+              else document.documentElement.classList.remove('dark')
+            }
+          } catch (e) {}
+        }
+        set({ user: userData, isAuthenticated: true })
+      },
       updateUser: (data) =>
         set((state) => ({
           user: state.user ? { ...state.user, ...data } : null,
@@ -52,6 +72,11 @@ export const useAuthStore = create<AuthState>()(
       // token and show their invoices.
       logout: () => {
         clearSubscriberToken()
+        if (typeof window !== 'undefined') {
+          try {
+            localStorage.removeItem('nl_user_theme')
+          } catch (e) {}
+        }
         set({ user: null, isAuthenticated: false })
       },
       setHasHydrated: (state) => set({ hasHydrated: state }),
@@ -60,6 +85,11 @@ export const useAuthStore = create<AuthState>()(
       name: 'nextlink-subscriber-auth',
       onRehydrateStorage: () => (state) => {
         state?.setHasHydrated(true)
+        if (state?.user?.theme && typeof window !== 'undefined') {
+          try {
+            localStorage.setItem('nl_user_theme', state.user.theme)
+          } catch (e) {}
+        }
       },
     }
   )
