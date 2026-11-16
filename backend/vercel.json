@@ -1,0 +1,77 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "services": {
+    "app": {
+      "root": ".",
+      "framework": "nextjs",
+      "bindings": [
+        {
+          "type": "service",
+          "service": "api",
+          "format": "url",
+          "env": "INTERNAL_API_URL"
+        }
+      ]
+    },
+    "api": {
+      "root": "api",
+      "framework": "express"
+    }
+  },
+  "rewrites": [
+    {
+      "source": "/api/data",
+      "destination": {
+        "service": "app"
+      }
+    },
+    {
+      "source": "/api/backup",
+      "destination": {
+        "service": "app"
+      }
+    },
+    {
+      "source": "/api/content",
+      "destination": {
+        "service": "app"
+      }
+    },
+    {
+      "source": "/api/users",
+      "destination": {
+        "service": "app"
+      }
+    },
+    {
+      "source": "/api/admin/delete-record",
+      "destination": {
+        "service": "app"
+      }
+    },
+    {
+      "source": "/api/admin/orders",
+      "destination": {
+        "service": "app"
+      }
+    },
+    {
+      "source": "/api/auth/customer-login",
+      "destination": {
+        "service": "app"
+      }
+    },
+    {
+      "source": "/api/(.*)",
+      "destination": {
+        "service": "api"
+      }
+    },
+    {
+      "source": "/(.*)",
+      "destination": {
+        "service": "app"
+      }
+    }
+  ]
+}

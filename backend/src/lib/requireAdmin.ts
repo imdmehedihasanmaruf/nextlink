@@ -10,9 +10,6 @@
  * be read or overwritten by an anonymous caller.
  */
 
-// Server-to-server verification target — the internal Express service.
-const API_BASE =
-  process.env.INTERNAL_API_URL?.replace(/\/api$/, '') || 'http://localhost:3100';
 
 export interface AdminPrincipal {
   id: string;
@@ -94,8 +91,10 @@ export async function requireAdmin(
   }
 
   try {
-    // Server-to-server call — no CORS headers involved.
-    const response = await fetch(`${API_BASE}/api/auth/me`, {
+    // Server-to-server call — uses the bound INTERNAL_API_URL from Vercel services
+    const internalApiUrl = process.env.INTERNAL_API_URL || 'http://localhost:3100';
+    const targetUrl = new URL('/api/auth/me', internalApiUrl);
+    const response = await fetch(targetUrl, {
       headers: { Authorization: `Bearer ${token}` },
       cache: 'no-store',
     });

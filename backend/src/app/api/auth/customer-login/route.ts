@@ -64,7 +64,8 @@ export async function POST(request: Request) {
     const internalApiUrl = process.env.INTERNAL_API_URL || process.env.API_BASE_URL || 'http://localhost:3100';
     let authRes;
     try {
-      authRes = await fetch(`${internalApiUrl}/api/auth/subscriber-login`, {
+      const targetUrl = new URL('/api/auth/subscriber-login', internalApiUrl);
+      authRes = await fetch(targetUrl, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',

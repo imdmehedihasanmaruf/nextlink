@@ -79,12 +79,13 @@ export async function GET(request: Request) {
     // token, the same pattern requireAdmin uses.)
     let staffUsers: any[] | null = null;
     try {
-      const API_BASE =
-        process.env.INTERNAL_API_URL?.replace(/\/api$/, '') ||
-        process.env.NEXT_PUBLIC_BILLING_API_URL?.replace(/\/api$/, '') ||
+      const internalApiUrl =
+        process.env.INTERNAL_API_URL ||
+        process.env.NEXT_PUBLIC_BILLING_API_URL ||
         'http://localhost:3100';
+      const staffUrl = new URL('/api/settings/staff', internalApiUrl);
       const headerToken = request.headers.get('authorization') || '';
-      const staffRes = await fetch(`${API_BASE}/api/settings/staff`, {
+      const staffRes = await fetch(staffUrl, {
         headers: { Authorization: headerToken },
         cache: 'no-store',
       });

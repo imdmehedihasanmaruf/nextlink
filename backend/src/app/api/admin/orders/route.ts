@@ -90,6 +90,7 @@ export async function PUT(request: Request) {
           const provisionPassword = crypto.randomBytes(12).toString('base64url');
           const authHeader = request.headers.get('authorization') || '';
           const internalApiUrl = process.env.INTERNAL_API_URL || process.env.API_BASE_URL || 'http://localhost:3100';
+          const targetUrl = new URL('/api/mikrotik/provision', internalApiUrl);
 
           const headers: Record<string, string> = {
             'Content-Type': 'application/json',
@@ -98,7 +99,7 @@ export async function PUT(request: Request) {
             headers.Authorization = authHeader;
           }
 
-          const res = await fetch(`${internalApiUrl}/api/mikrotik/provision`, {
+          const res = await fetch(targetUrl, {
             method: 'POST',
             headers,
             body: JSON.stringify({
